@@ -109,7 +109,7 @@ def _call_list_len(h, list_handle: int) -> int:
 
 
 def test_list_get_alias_reads_slot(h):
-    a = place_int(h, 0x7800, [0x11])
+    a = place_int(h, 0x7E00, [0x11])
     b = place_int(h, 0x6100, [0x22])
     L = place_list(h, 0x6200, [a, b])
     assert _call_seq_get_via_list(h, L, 0) == a
@@ -117,7 +117,7 @@ def test_list_get_alias_reads_slot(h):
 
 
 def test_list_len_alias(h):
-    a = place_int(h, 0x7800, [0x11])
+    a = place_int(h, 0x7E00, [0x11])
     L = place_list(h, 0x6100, [a, a, a, a])
     assert _call_list_len(h, L) == 4
 
@@ -138,7 +138,7 @@ def _call_list_set(h, list_handle: int, index: int, child: int) -> None:
 
 
 def test_list_set_replaces_slot(h):
-    a = place_int(h, 0x7800, [0x11])
+    a = place_int(h, 0x7E00, [0x11])
     b = place_int(h, 0x6100, [0x22])
     new_child = place_int(h, 0x6200, [0xFF])
     L = place_list(h, 0x6300, [a, b])
@@ -147,7 +147,7 @@ def test_list_set_replaces_slot(h):
 
 
 def test_list_set_does_not_change_o_len(h):
-    a = place_int(h, 0x7800, [0x11])
+    a = place_int(h, 0x7E00, [0x11])
     new_child = place_int(h, 0x6100, [0xFF])
     L = place_list(h, 0x6200, [a, a, a])
     _call_list_set(h, L, 1, new_child)
@@ -190,7 +190,7 @@ def test_append_to_empty_list_grows_and_writes(h):
 
 def test_append_within_capacity_no_grow(h):
     """List with slack capacity: append must not realloc."""
-    a = place_int(h, 0x7800, [0x11])
+    a = place_int(h, 0x7E00, [0x11])
     b = place_int(h, 0x6100, [0x22])
     # Capacity 4, length 2.
     L = place_list(h, 0x6200, [a, b], capacity=4)
@@ -236,7 +236,7 @@ def test_grow_preserves_existing_elements(h):
     L = h.alloc_list(2)
     obj = h.read_word(L + H_PTR)
     # Manually set elements to recognisable handle-shaped values.
-    a = place_int(h, 0x7800, [0xAA])
+    a = place_int(h, 0x7E00, [0xAA])
     b = place_int(h, 0x6100, [0xBB])
     h.write_word(obj + O_HEADER, a)
     h.write_word(obj + O_HEADER + 2, b)
@@ -290,7 +290,7 @@ def _call_val_eq(h, a: int, b: int) -> int:
 
 
 def test_val_eq_lists_equal_payloads(h):
-    a1 = place_int(h, 0x7800, [0x01])
+    a1 = place_int(h, 0x7E00, [0x01])
     b1 = place_int(h, 0x6100, [0x02])
     L1 = place_list(h, 0x6200, [a1, b1])
 
@@ -302,7 +302,7 @@ def test_val_eq_lists_equal_payloads(h):
 
 
 def test_val_eq_lists_differ(h):
-    a1 = place_int(h, 0x7800, [0x01])
+    a1 = place_int(h, 0x7E00, [0x01])
     b1 = place_int(h, 0x6100, [0x02])
     L1 = place_list(h, 0x6200, [a1, b1])
 
@@ -316,7 +316,7 @@ def test_val_eq_lists_differ(h):
 def test_val_eq_list_ne_tuple_same_payload(h):
     """Type tag distinguishes list from tuple even when contents match."""
     from test_tuple import place_tuple
-    a = place_int(h, 0x7800, [0x11])
+    a = place_int(h, 0x7E00, [0x11])
     L = place_list(h, 0x6100, [a])
     T = place_tuple(h, 0x6200, [a])
     assert _call_val_eq(h, L, T) == 0

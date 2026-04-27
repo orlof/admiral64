@@ -121,6 +121,12 @@ parser_eval:
     rs_push_const(STR_NAME_HEX)
     rs_push_const(BUILTIN_HEX)
     jsr scope_set
+    rs_push_const(STR_NAME_REPR)
+    rs_push_const(BUILTIN_REPR)
+    jsr scope_set
+    rs_push_const(STR_NAME_SORT)
+    rs_push_const(BUILTIN_SORT)
+    jsr scope_set
 
     // Default result if source is empty: NONE.
     lda #<NONE

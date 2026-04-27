@@ -8,7 +8,7 @@ from test_int_add import place_int, read_int
 
 def run_normalize(h, a_bytes: list[int]) -> list[int]:
     rsp_initial = h.rsp
-    a = place_int(h, 0x7800, a_bytes)
+    a = place_int(h, 0x7E00, a_bytes)
     h.rs_push(a)
     h.call("int_normalize")
     assert h.rsp == rsp_initial, "int_normalize violated stack discipline"

@@ -527,11 +527,12 @@ _brs_loop:
     lda (W2),y
     sta W3+1
 
-    // Recursive: builtin_str(element). Consumes 1 RS arg; RV = element_str.
+    // Recursive: builtin_repr(element) — matches Python: containers always
+    // render their elements via repr, so strings come out quoted.
     rs_push(W3)
-    jsr builtin_str
+    jsr builtin_repr
 
-    // accum ++= element_str. RS is [container, accum] (builtin_str consumed
+    // accum ++= element_str. RS is [container, accum] (builtin_repr consumed
     // its arg). We need [a, b] for array_merge: dup accum, push element_str.
     rs_peek(W3)
     rs_push(W3)                       // RS: [container, accum, accum_dup]
@@ -631,13 +632,13 @@ _brd_loop:
 
     rs_pop(W3)                         // drop entry. RS: [dict, accum]
 
-    // accum ++= str(key). builtin_str(key):
+    // accum ++= repr(key). builtin_repr(key):
     lda B0
     sta W3
     lda B1
     sta W3+1
     rs_push(W3)
-    jsr builtin_str                    // RV = key_str
+    jsr builtin_repr                   // RV = key_str (quoted if str)
     rs_peek(W3)
     rs_push(W3)
     rs_push(RV)
@@ -653,13 +654,13 @@ _brd_loop:
     rs_pop(W3)
     rs_push(RV)
 
-    // accum ++= str(value).
+    // accum ++= repr(value).
     lda B2
     sta W3
     lda B3
     sta W3+1
     rs_push(W3)
-    jsr builtin_str                    // RV = value_str
+    jsr builtin_repr                   // RV = value_str (quoted if str)
     rs_peek(W3)
     rs_push(W3)
     rs_push(RV)
@@ -689,6 +690,217 @@ _brd_close:
     rs_push_const(STR_RCURLY)
     jsr array_merge
     rts
+
+// =============================================================================
+// builtin_sort(S) — return a sorted version of S.
+//   in:  RS slot 0 = me (TYPE_STR, TYPE_TUPLE, or TYPE_LIST).
+//   out: RV = sorted result. STR/TUPLE return a fresh sorted copy. LIST is
+//        sorted in place (RV = same handle).
+//
+// Insertion sort. STR sorts bytes; TUPLE/LIST sort handles via val_cmp. The
+// `reverse` arg from original Admiral is not supported here (would require
+// optional positional args, which our parser doesn't model yet).
+// =============================================================================
+builtin_sort:
+    preamble_args(1, 0)
+    rs_peek(W0)
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_STR
+    bne !next+
+    jmp _bsort_str
+!next:
+    cmp #TYPE_TUPLE
+    bne !next+
+    jmp _bsort_tuple
+!next:
+    cmp #TYPE_LIST
+    bne !next+
+    jmp _bsort_list
+!next:
+    lda #ERR_TYPE
+    sta ERROR_CODE
+    jmp error_handler
+
+_bsort_str:
+    // Clone via `array_repeat` with n=1.
+    rs_peek(W0)
+    rs_push(W0)
+    rs_push_const(INT_1)
+    jsr array_repeat                  // RV = clone (TYPE_STR)
+    rs_push(RV)                       // RS: [me, clone]
+
+    rs_peek(W0)
+    jsr deref_W0_to_W2                // W2 = clone payload, A = len
+    sta B0
+    lda W2
+    sta W3
+    lda W2+1
+    sta W3+1                          // W3 = clone payload
+    jsr _bsort_bytes
+    rs_pop(RV)                        // RV = clone (sorted)
+    jmp postamble
+
+_bsort_tuple:
+    rs_peek(W0)
+    rs_push(W0)
+    rs_push_const(INT_1)
+    jsr array_repeat                  // RV = clone (TYPE_TUPLE preserved)
+    rs_push(RV)
+    rs_peek(W0)
+    jsr deref_W0_to_W2                // W2 = clone payload, A = element count
+    sta B0
+    lda W2
+    sta W3
+    lda W2+1
+    sta W3+1
+    jsr _bsort_handles
+    rs_pop(RV)
+    jmp postamble
+
+_bsort_list:
+    // In-place. Set up W3 = payload, B0 = count, then sort.
+    rs_peek(W0)
+    jsr deref_W0_to_W2
+    sta B0
+    lda W2
+    sta W3
+    lda W2+1
+    sta W3+1
+    jsr _bsort_handles
+    rs_peek(RV)                       // return same list handle
+    jmp postamble
+
+// Insertion sort over bytes at (W3),y for y in 0..B0-1.
+// Clobbers: A, X, Y, B1..B4.
+_bsort_bytes:
+    lda #1
+    sta B1                            // i
+_bsb_o:
+    lda B1
+    cmp B0
+    bcs _bsb_d
+    sta B2                            // j = i
+_bsb_in:
+    lda B2
+    beq _bsb_on
+    ldy B2
+    dey
+    lda (W3),y
+    sta B3                            // arr[j-1]
+    iny
+    lda (W3),y                        // arr[j]
+    cmp B3
+    bcs _bsb_on                       // arr[j] >= arr[j-1] → no swap
+    sta B4                            // save arr[j]
+    lda B3
+    sta (W3),y                        // arr[j] = arr[j-1]
+    dey
+    lda B4
+    sta (W3),y                        // arr[j-1] = old arr[j]
+    dec B2
+    jmp _bsb_in
+_bsb_on:
+    inc B1
+    jmp _bsb_o
+_bsb_d:
+    rts
+
+// Insertion sort over handles at (W3),y for slot 0..B0-1 (2 bytes/slot).
+// Comparator: val_cmp. W3 must point at payload start. val_cmp preserves
+// W0..W3, B0..B7 across the call (V4'), so we can re-read W0/W1 after.
+_bsort_handles:
+    lda #1
+    sta B1
+_bsh_o:
+    lda B1
+    cmp B0
+    bcs _bsh_d
+    sta B2
+_bsh_in:
+    lda B2
+    beq _bsh_on
+
+    // Read arr[j-1] → W0, arr[j] → W1.
+    ldy B2
+    dey
+    tya
+    asl
+    tay                                // Y = 2*(j-1)
+    lda (W3),y
+    sta W0
+    iny
+    lda (W3),y
+    sta W0+1
+    iny
+    lda (W3),y
+    sta W1
+    iny
+    lda (W3),y
+    sta W1+1
+
+    rs_push(W0)
+    rs_push(W1)
+    jsr val_cmp                        // A = -1/0/+1
+    cmp #1
+    bne _bsh_on                        // not greater → done with this j
+
+    // Swap. W0/W1 still hold old arr[j-1] and arr[j].
+    ldy B2
+    dey
+    tya
+    asl
+    tay
+    lda W1
+    sta (W3),y
+    iny
+    lda W1+1
+    sta (W3),y
+    iny
+    lda W0
+    sta (W3),y
+    iny
+    lda W0+1
+    sta (W3),y
+
+    dec B2
+    jmp _bsh_in
+_bsh_on:
+    inc B1
+    jmp _bsh_o
+_bsh_d:
+    rts
+
+// =============================================================================
+// builtin_repr(x) — Python-style repr(): like str() but quotes top-level
+// strings. Container elements are always rendered through repr (matches
+// Python and Admiral's `dict_repr`/`list_repr` calling `repr` per element),
+// so the container renderer below now delegates to builtin_repr too.
+// =============================================================================
+builtin_repr:
+    preamble_args(1, 0)
+    rs_peek(W0)
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_STR
+    beq _brepr_quote
+
+    // Non-string: same rendering as str(). Re-push the arg so builtin_str
+    // sees its own copy to consume.
+    rs_push(W0)
+    jsr builtin_str
+    jmp postamble
+
+_brepr_quote:
+    // Build "'" ++ me ++ "'" via two array_merge calls.
+    rs_push_const(STR_QUOTE)         // RS: [me, "'"]
+    rs_peek_at(W0, 1)
+    rs_push(W0)                      // RS: [me, "'", me]
+    jsr array_merge                  // RV = "'me"; consumes top 2; RS: [me]
+    rs_push(RV)                      // RS: [me, "'me"]
+    rs_push_const(STR_QUOTE)         // RS: [me, "'me", "'"]
+    jsr array_merge                  // RV = "'me'"; consumes top 2; RS: [me]
+    jmp postamble
 
 // =============================================================================
 // builtin_type(x) — return INT holding the H_TYPE tag byte.
@@ -1145,6 +1357,442 @@ _bew_false:
     sta RV+1
     jmp postamble
 
+// --- str.split(sep) — list of substrings split on sep ----------------------
+//   in:  RS slot 1 = me, slot 0 = sep
+//   out: RV = TYPE_LIST of TYPE_STR. Args consumed.
+//
+// Sep-required form (no whitespace mode for now). Empty sep → ERR_TYPE.
+// Empty me with any sep → list with one empty string. Consecutive seps
+// produce empty strings (Python `"a,,b".split(",")` → ["a","","b"]).
+// =============================================================================
+builtin_str_split:
+    preamble_args(2, 0)
+
+    rs_peek_at(W0, 1)
+    rs_peek_at(W1, 0)
+    jsr deref_W0_to_W2                // W2=me payload, A=me_len
+    sta B0
+    jsr deref_W1_to_W3                // W3=sep payload, A=sep_len
+    sta B1
+
+    lda B1
+    bne !ok+
+    lda #ERR_TYPE
+    sta ERROR_CODE
+    jmp error_handler
+!ok:
+
+    // Allocate empty list (capacity 0). _array_alloc_init clobbers B0,
+    // so re-load me_len/sep_len after.
+    lda #0
+    ldx #TYPE_LIST
+    jsr _array_alloc_init             // RV = list
+    rs_push(RV)                       // RS: [me, sep, list]
+
+    rs_peek_at(W0, 2)
+    rs_peek_at(W1, 1)
+    jsr deref_W0_to_W2                // A = me_len
+    sta B0
+    jsr deref_W1_to_W3                // A = sep_len
+    sta B1
+
+    lda #0
+    sta B3                            // pos
+    sta B4                            // segment start
+
+_bsp_loop:
+    lda B3
+    cmp B0
+    bcc !go+
+    jmp _bsp_done
+!go:
+
+    lda B3
+    clc
+    adc B1
+    bcc !ovr_ok+
+    jmp _bsp_adv
+!ovr_ok:
+    cmp B0
+    beq _bsp_chk
+    bcc _bsp_chk
+    jmp _bsp_adv
+
+_bsp_chk:
+    jsr _bsr_match_at_pos
+    cmp #0
+    bne !go+
+    jmp _bsp_adv
+!go:
+
+    // Match — emit me[B4..B3] then bump past sep.
+    jsr _bsp_emit_segment
+    lda B3
+    clc
+    adc B1
+    sta B4
+    sta B3
+    rs_peek_at(W0, 2)
+    rs_peek_at(W1, 1)
+    jsr deref_W0_to_W2
+    jsr deref_W1_to_W3
+    jmp _bsp_loop
+
+_bsp_adv:
+    inc B3
+    jmp _bsp_loop
+
+_bsp_done:
+    // Emit final segment me[B4..me_len].
+    lda B0
+    sta B3
+    jsr _bsp_emit_segment
+
+    rs_peek(RV)
+    jmp postamble
+
+// Helper: alloc TYPE_STR of B3-B4 bytes, copy me[B4..B3] into it, append to
+// list. Caller's RS at entry: [me, sep, list]. Helper must NOT change that.
+//
+// Preserves: B0, B1, B2, B4. Clobbers: A, X, Y, B5..B7, W0..W3, RV.
+// Re-derefs me/sep for the caller via the helper's tail (same as caller's
+// re-deref pattern), so the helper's caller doesn't need to re-deref before
+// emitting; but it DOES need to re-deref for the next loop iteration.
+_bsp_emit_segment:
+    sec
+    lda B3
+    sbc B4
+    sta B5                            // B5 = segment len
+    sta ALLOC_SIZE
+    lda #0
+    sta ALLOC_SIZE+1
+    lda #TYPE_STR
+    sta ALLOC_TYPE
+    jsr alloc                         // RV = new str
+    rs_push(RV)                       // RS: [me, sep, list, seg]
+
+    // Copy me[B4..B4+B5] into seg. seg payload first (W3), me payload after (W2).
+    rs_peek(W0)                       // seg (slot 0)
+    jsr deref_W0_to_W2                // W2 = seg payload
+    lda W2
+    sta W3
+    lda W2+1
+    sta W3+1                          // W3 = seg payload (saved)
+
+    rs_peek_at(W0, 3)                 // me
+    jsr deref_W0_to_W2                // W2 = me payload
+    lda W2
+    clc
+    adc B4
+    sta W2
+    bcc !+
+    inc W2+1
+!:
+    ldy #0
+_bsp_cp:
+    cpy B5
+    beq _bsp_cpd
+    lda (W2),y
+    sta (W3),y
+    iny
+    jmp _bsp_cp
+_bsp_cpd:
+
+    // Append seg to list: stage [list, seg] on top of RS.
+    rs_peek_at(W0, 1)                 // list (slot 1)
+    rs_push(W0)
+    rs_peek_at(W0, 1)                 // seg (now at slot 1 due to push)
+    rs_push(W0)
+    jsr list_append                   // consumes top 2; list grew
+
+    rs_pop(W0)                        // drop the seg root; RS: [me, sep, list]
+    rts
+
+// --- str.replace(old, new) — replace all occurrences. ----------------------
+//   in:  RS slot 2 = me, slot 1 = old, slot 0 = new (all TYPE_STR)
+//   out: RV = new TYPE_STR with substitutions applied. Args consumed.
+//
+// Two-pass algorithm: pass 1 counts matches, pass 2 copies. Empty `old`
+// panics ERR_TYPE (Python's behaviour is to insert `new` between every char,
+// not worth the complexity). Total result must fit in 255 bytes else ERR_OOM.
+// =============================================================================
+builtin_str_replace:
+    preamble_args(3, 0)
+
+    // Lengths into B0..B2.
+    rs_peek_at(W0, 2)
+    rs_peek_at(W1, 1)
+    jsr deref_W0_to_W2                // A = me_len, W2 = me payload
+    sta B0
+    jsr deref_W1_to_W3                // A = old_len, W3 = old payload
+    sta B1
+
+    lda B1
+    bne !ok+
+    lda #ERR_TYPE
+    sta ERROR_CODE
+    jmp error_handler
+!ok:
+    rs_peek(W0)                       // new
+    jsr deref_W0_to_W2                // A = new_len (W2 trampled)
+    sta B2
+
+    // Re-establish W2=me, W3=old after the new-deref.
+    rs_peek_at(W0, 2)
+    rs_peek_at(W1, 1)
+    jsr deref_W0_to_W2
+    jsr deref_W1_to_W3
+
+    // ----- Pass 1: count matches into B5 -----
+    lda #0
+    sta B3
+    sta B5
+_bsr_p1:
+    lda B3
+    clc
+    adc B1
+    bcs _bsr_p1d
+    cmp B0
+    beq _bsr_p1c
+    bcs _bsr_p1d
+_bsr_p1c:
+    jsr _bsr_match_at_pos
+    cmp #0
+    beq _bsr_p1m
+    inc B5
+    lda B3
+    clc
+    adc B1
+    sta B3
+    jmp _bsr_p1
+_bsr_p1m:
+    inc B3
+    jmp _bsr_p1
+_bsr_p1d:
+
+    // Compute output_len = me_len + B5*(B2 - B1) into W0:W0+1 (16-bit).
+    lda B0
+    sta W0
+    lda #0
+    sta W0+1
+    ldx B5
+    beq _bsr_olok
+_bsr_olax:
+    lda W0
+    clc
+    adc B2
+    sta W0
+    bcc !+
+    inc W0+1
+!:
+    lda W0
+    sec
+    sbc B1
+    sta W0
+    bcs !+
+    dec W0+1
+!:
+    dex
+    bne _bsr_olax
+_bsr_olok:
+    lda W0+1
+    beq _bsr_alloc
+    lda #ERR_OOM
+    sta ERROR_CODE
+    jmp error_handler
+_bsr_alloc:
+    lda W0
+    sta ALLOC_SIZE
+    lda #0
+    sta ALLOC_SIZE+1
+    lda #TYPE_STR
+    sta ALLOC_TYPE
+    jsr alloc                         // RV = new str
+    rs_push(RV)                       // RS: [me, old, new, out]
+
+    // Re-deref me, old (heap may have moved during alloc).
+    rs_peek_at(W0, 3)
+    rs_peek_at(W1, 2)
+    jsr deref_W0_to_W2
+    jsr deref_W1_to_W3
+
+    // ----- Pass 2: build output -----
+    lda #0
+    sta B3                            // src pos
+    sta B4                            // dst pos
+_bsr_p2:
+    lda B3
+    cmp B0
+    bcc !skip+
+    jmp _bsr_p2d
+!skip:
+
+    lda B3
+    clc
+    adc B1
+    bcc !nooverflow+
+    jmp _bsr_p2byte
+!nooverflow:
+    cmp B0
+    beq _bsr_p2chk
+    bcc _bsr_p2chk
+    jmp _bsr_p2byte
+_bsr_p2chk:
+    jsr _bsr_match_at_pos
+    cmp #0
+    bne !skip+
+    jmp _bsr_p2byte
+!skip:
+
+    // Match — copy new bytes to out[B4..B4+B2].
+    rs_peek_at(W0, 1)                 // new (slot 1)
+    jsr deref_W0_to_W2                // W2 = new payload
+    rs_peek(W1)                       // out (slot 0)
+    jsr deref_W1_to_W3                // W3 = out payload
+    lda W3
+    clc
+    adc B4
+    sta W3
+    bcc !+
+    inc W3+1
+!:
+    ldy #0
+_bsr_pcn:
+    cpy B2
+    beq _bsr_pcnd
+    lda (W2),y
+    sta (W3),y
+    iny
+    jmp _bsr_pcn
+_bsr_pcnd:
+    lda B4
+    clc
+    adc B2
+    sta B4
+    lda B3
+    clc
+    adc B1
+    sta B3
+    jmp _bsr_p2_redo
+
+_bsr_p2byte:
+    // No match: copy me[B3] to out[B4].
+    ldy B3
+    lda (W2),y
+    sta B7
+    rs_peek(W0)
+    jsr deref_W0_to_W2                // W2 = out payload
+    ldy B4
+    lda B7
+    sta (W2),y
+    inc B3
+    inc B4
+
+_bsr_p2_redo:
+    rs_peek_at(W0, 3)
+    rs_peek_at(W1, 2)
+    jsr deref_W0_to_W2
+    jsr deref_W1_to_W3
+    jmp _bsr_p2
+
+_bsr_p2d:
+    rs_peek(RV)
+    jmp postamble
+
+// Leaf helper: compare (W2 + B3)[0..B1-1] vs W3[0..B1-1].
+// Returns A=1 if equal else 0. Clobbers A, X, Y, B7.
+_bsr_match_at_pos:
+    ldx #0
+_bsr_mat:
+    cpx B1
+    beq _bsr_matok
+    txa
+    clc
+    adc B3
+    tay
+    lda (W2),y
+    sta B7
+    txa
+    tay
+    lda (W3),y
+    cmp B7
+    bne _bsr_matno
+    inx
+    jmp _bsr_mat
+_bsr_matok:
+    lda #1
+    rts
+_bsr_matno:
+    lda #0
+    rts
+
+// --- str.isalpha() — TRUE iff every byte is A-Z or a-z (and len > 0) -------
+//   in:  RS slot 0 = me
+// =============================================================================
+builtin_str_isalpha:
+    preamble_args(1, 0)
+    rs_peek(W0)
+    jsr deref_W0_to_W2                // A = O_LEN, W2 = payload
+    sta B0
+    beq _bia_false                    // empty → False (Python rule)
+    ldy #0
+_bia_loop:
+    lda (W2),y
+    cmp #$41                          // 'A'
+    bcc _bia_false
+    cmp #$5B                          // 'Z'+1
+    bcc _bia_next
+    cmp #$61                          // 'a'
+    bcc _bia_false
+    cmp #$7B                          // 'z'+1
+    bcs _bia_false
+_bia_next:
+    iny
+    cpy B0
+    bcc _bia_loop
+    lda #<TRUE
+    sta RV
+    lda #>TRUE
+    sta RV+1
+    jmp postamble
+_bia_false:
+    lda #<FALSE
+    sta RV
+    lda #>FALSE
+    sta RV+1
+    jmp postamble
+
+// --- str.isdigit() — TRUE iff every byte is 0-9 (and len > 0) --------------
+//   in:  RS slot 0 = me
+// =============================================================================
+builtin_str_isdigit:
+    preamble_args(1, 0)
+    rs_peek(W0)
+    jsr deref_W0_to_W2
+    sta B0
+    beq _bid_false
+    ldy #0
+_bid_loop:
+    lda (W2),y
+    cmp #$30                          // '0'
+    bcc _bid_false
+    cmp #$3A                          // '9'+1
+    bcs _bid_false
+    iny
+    cpy B0
+    bcc _bid_loop
+    lda #<TRUE
+    sta RV
+    lda #>TRUE
+    sta RV+1
+    jmp postamble
+_bid_false:
+    lda #<FALSE
+    sta RV
+    lda #>FALSE
+    sta RV+1
+    jmp postamble
+
 // --- list.append(item) — push item; returns NONE -----------------------------
 //   in:  RS slot 1 = me (TYPE_LIST), slot 0 = item
 // =============================================================================
@@ -1478,6 +2126,10 @@ str_methods:
     .word STR_NAME_M_FIND, BUILTIN_STR_FIND
     .word STR_NAME_M_STARTSWITH, BUILTIN_STR_STARTSWITH
     .word STR_NAME_M_ENDSWITH, BUILTIN_STR_ENDSWITH
+    .word STR_NAME_M_ISALPHA, BUILTIN_STR_ISALPHA
+    .word STR_NAME_M_ISDIGIT, BUILTIN_STR_ISDIGIT
+    .word STR_NAME_M_REPLACE, BUILTIN_STR_REPLACE
+    .word STR_NAME_M_SPLIT, BUILTIN_STR_SPLIT
     .word 0
 
 list_methods:

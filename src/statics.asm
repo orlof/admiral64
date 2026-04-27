@@ -309,6 +309,26 @@ BUILTIN_HEX_OBJ:
     .word 2
     .word builtin_hex
 
+BUILTIN_REPR:
+    .word BUILTIN_REPR_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_REPR_OBJ:
+    .word 2
+    .word builtin_repr
+
+BUILTIN_SORT:
+    .word BUILTIN_SORT_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_SORT_OBJ:
+    .word 2
+    .word builtin_sort
+
 // --- Method builtins (resolved via per-type method tables in builtins.asm) ---
 BUILTIN_STR_UPPER:
     .word BUILTIN_STR_UPPER_OBJ
@@ -359,6 +379,46 @@ BUILTIN_STR_ENDSWITH:
 BUILTIN_STR_ENDSWITH_OBJ:
     .word 2
     .word builtin_str_endswith
+
+BUILTIN_STR_ISALPHA:
+    .word BUILTIN_STR_ISALPHA_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_STR_ISALPHA_OBJ:
+    .word 2
+    .word builtin_str_isalpha
+
+BUILTIN_STR_ISDIGIT:
+    .word BUILTIN_STR_ISDIGIT_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_STR_ISDIGIT_OBJ:
+    .word 2
+    .word builtin_str_isdigit
+
+BUILTIN_STR_REPLACE:
+    .word BUILTIN_STR_REPLACE_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_STR_REPLACE_OBJ:
+    .word 2
+    .word builtin_str_replace
+
+BUILTIN_STR_SPLIT:
+    .word BUILTIN_STR_SPLIT_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_STR_SPLIT_OBJ:
+    .word 2
+    .word builtin_str_split
 
 BUILTIN_LIST_APPEND:
     .word BUILTIN_LIST_APPEND_OBJ
@@ -574,6 +634,26 @@ STR_NAME_HEX_OBJ:
     .word 3
     .byte $68, $65, $78             // "hex"
 
+STR_NAME_REPR:
+    .word STR_NAME_REPR_OBJ
+    .word 6
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_REPR_OBJ:
+    .word 4
+    .byte $72, $65, $70, $72       // "repr"
+
+STR_NAME_SORT:
+    .word STR_NAME_SORT_OBJ
+    .word 6
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_SORT_OBJ:
+    .word 4
+    .byte $73, $6F, $72, $74       // "sort"
+
 // --- Method names. Prefixed `STR_NAME_M_` so they don't collide with the ----
 // global-builtin name strings above. ----------------------------------------
 STR_NAME_M_UPPER:
@@ -625,6 +705,46 @@ STR_NAME_M_ENDSWITH:
 STR_NAME_M_ENDSWITH_OBJ:
     .word 8
     .byte $65, $6E, $64, $73, $77, $69, $74, $68  // "endswith"
+
+STR_NAME_M_ISALPHA:
+    .word STR_NAME_M_ISALPHA_OBJ
+    .word 9
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_M_ISALPHA_OBJ:
+    .word 7
+    .byte $69, $73, $61, $6C, $70, $68, $61  // "isalpha"
+
+STR_NAME_M_ISDIGIT:
+    .word STR_NAME_M_ISDIGIT_OBJ
+    .word 9
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_M_ISDIGIT_OBJ:
+    .word 7
+    .byte $69, $73, $64, $69, $67, $69, $74  // "isdigit"
+
+STR_NAME_M_REPLACE:
+    .word STR_NAME_M_REPLACE_OBJ
+    .word 9
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_M_REPLACE_OBJ:
+    .word 7
+    .byte $72, $65, $70, $6C, $61, $63, $65  // "replace"
+
+STR_NAME_M_SPLIT:
+    .word STR_NAME_M_SPLIT_OBJ
+    .word 7
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_M_SPLIT_OBJ:
+    .word 5
+    .byte $73, $70, $6C, $69, $74          // "split"
 
 STR_NAME_M_APPEND:
     .word STR_NAME_M_APPEND_OBJ
@@ -788,6 +908,17 @@ STR_COLON_SPACE:
 STR_COLON_SPACE_OBJ:
     .word 2
     .byte $3A, $20                  // ": "
+
+// Single-quote singleton, used by builtin_repr to wrap TYPE_STR.
+STR_QUOTE:
+    .word STR_QUOTE_OBJ
+    .word 3
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_QUOTE_OBJ:
+    .word 1
+    .byte $27                       // "'"
 
 // Parent-link key used by scope-chain lookup. Function-call setup stores
 // `dict_set(new_scope, "_", old_scope)` so `scope_get` can walk outward
