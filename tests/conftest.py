@@ -105,8 +105,8 @@ TYPE_DICT = 0x26
 TYPE_FLOAT = 0x27
 
 # Heap region bounds (must stay in sync with src/defs.asm).
-HEAP_DATA_START = 0x8500
-HEAP_HANDLE_START = 0xC000
+HEAP_DATA_START = 0x8800
+HEAP_HANDLE_START = 0xD000
 
 # C64 BASIC ROM image (8 KB, mapped at $A000-$BFFF when bit 0 of $01 is set).
 # Located in the local VICE installation. Tests that exercise float arithmetic

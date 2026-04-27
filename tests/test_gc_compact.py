@@ -143,15 +143,15 @@ def test_compact_handles_addresses_distinct_from_h_ptr_order(h):
     """After free-list reuse, handle addresses and H_PTRs can diverge. As
     long as the reserved list is in H_PTR-ascending order (alloc's invariant),
     compact works correctly."""
-    h1 = h.alloc_int(4)                     # handle $BFF8, data $8500
-    h2 = h.alloc_int(4)                     # handle $BFF0, data $8506
+    h1 = h.alloc_int(4)                     # handle $CFF8, data $8800
+    h2 = h.alloc_int(4)                     # handle $CFF0, data $8806
     h.call("gc_sweep")                      # both freed (no marks)
     reused2 = h.alloc_int(4)                # reuses h2 (LIFO pop)
     reused1 = h.alloc_int(4)                # reuses h1
-    # Reserved list order = alloc order = H_PTR order ($850C, $8512).
+    # Reserved list order = alloc order = H_PTR order ($880C, $8812).
     assert _reserved_list(h) == [reused2, reused1]
-    assert _h_ptr(h, reused2) == 0x850C
-    assert _h_ptr(h, reused1) == 0x8512
+    assert _h_ptr(h, reused2) == HEAP_DATA_START + 12
+    assert _h_ptr(h, reused1) == HEAP_DATA_START + 18
     h.call("gc_compact")
     assert _h_ptr(h, reused2) == HEAP_DATA_START
     assert _h_ptr(h, reused1) == HEAP_DATA_START + 6

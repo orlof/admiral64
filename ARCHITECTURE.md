@@ -186,18 +186,19 @@ Target C64 runtime config: `$01 = $36` — LORAM=0 (BASIC ROM off), HIRAM=1 (KER
 | `$0400-$07FF` | 1 KB | **VIC-II text screen** ($0400-$07E7 used; screen codes, NOT PETSCII) |
 | `$0801-$7FFF` | ~30 KB | Our code + BSS. `$0801` holds the BASIC upstart (`10 SYS2061`); `boot:` at `$080D`. |
 | `$8000-$83FF` | 1 KB | **FS** — frame stack (~45 nested 22-byte frames) |
-| `$8400-$84FF` | 256 B | **RS** — root stack (128 handles max) |
-| `$8500-$BFFF` | ~15 KB | **Heap** — data grows UP from $8500, handles grow DOWN from $C000 |
-| `$C000-$CFFF` | 4 KB | Spare RAM (always available, no ROM shadow) |
+| `$8400-$87FF` | 1 KB | **RS** — root stack (512 handle slots) |
+| `$8800-$CFFF` | ~18 KB | **Heap** — data grows UP from $8800, handles grow DOWN from $D000 (just below VIC I/O) |
 | `$D000-$DFFF` | 4 KB | I/O: VIC-II ($D000-$D3FF, incl. `$D020` border = `$0D` light green, `$D021` bg = `$05` dark green), SID, CIAs, Color RAM ($D800-$DBE7 — 4-bit per cell, dual-ported, default `$0D`) |
 | `$E000-$FFFF` | 8 KB | KERNAL ROM |
+
+The code segment is capped at `$8000` — `admiral.asm` ends with a KickAss `.if (* > $8000) { .error }` guard so an overflow into stack/heap territory fails the build.
 
 ### Heap constants (`defs.asm`)
 
 | Constant | Value | Role |
 |---|---|---|
-| `HEAP_DATA_START` | `$8500` | Data heap grows UP from here |
-| `HEAP_HANDLE_START` | `$C000` | Handle table grows DOWN from here |
+| `HEAP_DATA_START` | `$8800` | Data heap grows UP from here |
+| `HEAP_HANDLE_START` | `$D000` | Handle table grows DOWN from here |
 
 ### Stack constants (`stacks.asm`)
 
@@ -206,7 +207,7 @@ Target C64 runtime config: `$01 = $36` — LORAM=0 (BASIC ROM off), HIRAM=1 (KER
 | `FS_BEGIN` | `$8000` | Frame stack low bound (inclusive) |
 | `FS_END` | `$8400` | Frame stack high bound (empty FSP sentinel) |
 | `RS_BEGIN` | `$8400` | Root stack low bound |
-| `RS_END` | `$8500` | Root stack high bound (empty RSP sentinel) |
+| `RS_END` | `$8800` | Root stack high bound (empty RSP sentinel) |
 
 ### BASIC FP interop
 

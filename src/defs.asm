@@ -264,8 +264,10 @@
 // Heap lives in $8500..$BFFF — the 16KB freed by switching BASIC ROM off,
 // minus the 1.25KB consumed by FS ($8000-$83FF) and RS ($8400-$84FF).
 // Data grows UP from $8500; handles grow DOWN from $C000 (wall below I/O).
-.const HEAP_DATA_START   = $8500   // data heap grows UP from here
-.const HEAP_HANDLE_START = $C000   // handle table grows DOWN from here
+.const HEAP_DATA_START   = $8800   // data heap grows UP from here
+.const HEAP_HANDLE_START = $D000   // handle table grows DOWN from here (just
+                                   // below VIC-II I/O at $D000-$DFFF when
+                                   // KERNAL+I/O are banked in via $01=$36)
 
 // --- VIC-II / screen layout (bank 0 default) ---------------------------------
 // Text mode in VIC-II bank 0. See ARCHITECTURE.md for future bank-3 migration.

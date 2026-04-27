@@ -25,12 +25,13 @@
 
 // --- Stack regions (fixed layout) --------------------------------------------
 // Both stacks sit at the low end of the BASIC-ROM-freed area ($8000-$BFFF).
-// Heap begins at HEAP_DATA_START = $8500 (defs.asm), directly above RS.
+// Heap begins at HEAP_DATA_START = $8800 (defs.asm), directly above RS.
 // FS is 1 KB (~45 nested 22-byte frames, plus body pushes and caller args).
+// RS is 1 KB (512 handle slots — each is a 16-bit handle pointer).
 .const FS_BEGIN = $8000     // frame stack low bound (inclusive)
 .const FS_END   = $8400     // frame stack high bound (exclusive; = empty FSP)
 .const RS_BEGIN = $8400     // root stack low bound
-.const RS_END   = $8500     // root stack high bound (256 slots / 128 handles)
+.const RS_END   = $8800     // root stack high bound (1 KB / 512 handle slots)
 
 // FSP, RSP, and FP are declared in defs.asm as ZP pointers.
 

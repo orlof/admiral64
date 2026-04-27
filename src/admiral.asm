@@ -90,3 +90,11 @@ error_handler:
 #import "scope.asm"
 #import "builtins.asm"
 #import "parser.asm"
+
+// -----------------------------------------------------------------------------
+// Code-segment cap: must end strictly below $8000 so it doesn't collide with
+// the frame stack at $8000. KickAss errors out if `*` (current PC) ≥ $8000.
+// -----------------------------------------------------------------------------
+.if (* > $8000) {
+    .error "Code segment overran $8000 — stacks/heap area corrupted (current end = " + toHexString(*) + ")"
+}

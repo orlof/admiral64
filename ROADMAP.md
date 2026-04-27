@@ -152,6 +152,76 @@ Bundle `admiral.prg` + sample programs onto a `.d64`. Custom IRQ for cursor blin
 
 ---
 
+## Future memory layout: bank out KERNAL + I/O
+
+Current default `$01 = $36` keeps KERNAL ROM at `$E000-$FFFF` and I/O at
+`$D000-$DFFF` mapped at all times. That gives ~18 KB of heap (`$8800-$CFFF`).
+
+We can reclaim 12 KB more by switching the default to `$01 = $34` — both
+ROMs and I/O banked out, full RAM at `$D000-$FFFF`. The PLA only enables I/O
+at `$D000` when at least one of LORAM (BASIC) or HIRAM (KERNAL) is on, so I/O
+goes away simultaneously with the ROMs; we can't keep one without the other
+in the always-mapped state.
+
+New layout (all RAM, IRQ window banks I/O+KERNAL back in):
+
+| Range | What |
+|---|---|
+| `$8800` → up | heap data (unchanged) |
+| ← `$FFF7` | heap handles, just below the IRQ vectors |
+| `$FFFA-$FFFF` | NMI / RESET / IRQ vectors — must live in our RAM |
+
+Heap = `$8800-$FFF7` ≈ 30 KB.
+
+### What we'd have to write
+
+1. **IRQ handler** in our code segment (below `$8000`, never shadowed):
+   ```
+   my_irq:  pha; txa; pha; tya; pha
+            lda $01; pha
+            lda #$36              ; KERNAL+I/O+no BASIC for the IRQ window
+            sta $01
+            jsr $FF9F             ; SCNKEY — KERNAL is in scope here
+            lda $DC0D             ; ack CIA1
+            pla; sta $01          ; back to $34
+            pla; tay; pla; tax; pla
+            rti
+   ```
+2. **Vector setup at boot** — write the address of `my_irq` to `$FFFE-$FFFF`
+   (and a minimal `rti` handler to `$FFFA-$FFFB` for NMI / RESTORE), then
+   `lda #$34; sta $01`.
+3. **NMI handler** — minimal `rti` if RESTORE is ignored.
+4. **Color-RAM / VIC writes** in user code — wrap with explicit `$01` flips:
+   ```
+   lda $01; pha
+   lda #$36; sta $01
+   sta $D020              ; or whatever I/O write
+   pla; sta $01
+   ```
+   `screen_init` sets the theme once at boot, so this overhead doesn't apply
+   to the steady-state text path (writes to `$0400+` are normal RAM).
+5. **`GETIN` callers** — KERNAL fills the keyboard buffer at `$0277-$0280`
+   (RAM) from the IRQ handler. We can either bank KERNAL in for a JSR to
+   `$FFE4`, or just dequeue from the buffer ourselves (~10 lines).
+
+### What KERNAL gives us today
+
+Surveying actual usage: only `GETIN` (`$FFE4`) and the IRQ-driven keyboard
+scan at `$FF48` → `$FF9F` (`SCNKEY`). Nothing else — we don't use KERNAL
+for screen output (direct VIC), disk, tape, RS-232, or screen-edit. So the
+only work to replace KERNAL is the keyboard pipeline above.
+
+### Total cost vs. gain
+
+~150-200 bytes of new code, +12 KB heap on real hardware. Not blocking; do
+when a program needs the headroom (probably around Stage 11+ when we have
+real Admiral source loaded into a list of statements).
+
+py65 is unaffected by this change — banking is a no-op in the simulator,
+so the testing-only `hfp` heap stays at its current ~6 KB regardless.
+
+---
+
 ## Test strategy
 
 py65 stays the workhorse. Each stage adds `tests/test_<module>.py`. End-to-end Admiral programs become possible at Stage 11 — add `tests/programs/*.admiral` with expected stdout, run them through a `repl_runner` fixture. VICE stays the manual smoke check after each visible-output stage (11, 12, 14).
