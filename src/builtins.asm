@@ -777,6 +777,199 @@ _bsu_store:
 _bsu_done:
     jmp postamble
 
+// --- str.lower() — fold ASCII letters DOWN ----------------------------------
+//   in:  RS slot 0 = me (TYPE_STR)
+// =============================================================================
+builtin_str_lower:
+    preamble_args(1, 0)
+    rs_peek(W0)
+    jsr deref_W0_to_W2
+    sta B0
+
+    lda B0
+    sta ALLOC_SIZE
+    lda #0
+    sta ALLOC_SIZE+1
+    lda #TYPE_STR
+    sta ALLOC_TYPE
+    jsr alloc
+
+    rs_peek(W0)
+    jsr deref_W0_to_W2
+    lda W2
+    sta W3
+    lda W2+1
+    sta W3+1
+
+    ldy #H_PTR
+    lda (RV),y
+    sta W2
+    iny
+    lda (RV),y
+    sta W2+1
+    clc
+    lda W2
+    adc #O_HEADER
+    sta W2
+    bcc !+
+    inc W2+1
+!:
+
+    ldy B0
+    beq _bsl_done
+_bsl_loop:
+    dey
+    lda (W3),y
+    cmp #$41                          // 'A'
+    bcc _bsl_store
+    cmp #$5B                          // 'Z'+1
+    bcs _bsl_store
+    clc
+    adc #$20                          // → lowercase
+_bsl_store:
+    sta (W2),y
+    cpy #0
+    bne _bsl_loop
+_bsl_done:
+    jmp postamble
+
+// --- str.find(sub) — return first position or -1 ----------------------------
+//   in:  RS slot 1 = me (TYPE_STR), slot 0 = sub (TYPE_STR)
+//
+// str_find_pos expects RS = [needle (deeper), haystack (top)]; method-call
+// layout gives [me, sub] so we swap before delegating.
+// =============================================================================
+builtin_str_find:
+    preamble_args(2, 0)
+    rs_pop(W1)                        // sub (top)
+    rs_pop(W0)                        // me (was deeper)
+    rs_push(W1)                       // sub becomes new deeper
+    rs_push(W0)                       // me becomes new top
+    jsr str_find_pos                  // A = pos or $FF
+    sta B0
+
+    // Allocate 2-byte signed INT (so positions ≥ 128 stay positive).
+    lda #2
+    sta ALLOC_SIZE
+    lda #0
+    sta ALLOC_SIZE+1
+    jsr alloc_int
+    jsr deref_RV_to_W2
+
+    ldy #0
+    lda B0
+    sta (W2),y                        // lo byte
+    iny
+    lda B0
+    asl                                // bit 7 → carry
+    lda #0
+    bcc _bfind_store_hi
+    lda #$FF
+_bfind_store_hi:
+    sta (W2),y
+    jmp postamble
+
+// --- str.startswith(prefix) -------------------------------------------------
+//   in:  RS slot 1 = me, slot 0 = prefix
+// =============================================================================
+builtin_str_startswith:
+    preamble_args(2, 0)
+    rs_peek_at(W0, 0)                 // prefix
+    jsr deref_W0_to_W2
+    sta B0                            // B0 = prefix len
+    lda W2
+    sta W3
+    lda W2+1
+    sta W3+1                          // W3 = prefix payload
+
+    rs_peek_at(W0, 1)                 // me
+    jsr deref_W0_to_W2
+    sta B1                            // B1 = me len; W2 = me payload
+
+    // If prefix len > me len, not a prefix.
+    lda B0
+    cmp B1
+    beq _bsw_check
+    bcc _bsw_check
+    jmp _bsw_false
+_bsw_check:
+    ldy B0
+    beq _bsw_true                     // empty prefix → always matches
+_bsw_loop:
+    dey
+    lda (W2),y
+    cmp (W3),y
+    bne _bsw_false
+    cpy #0
+    bne _bsw_loop
+_bsw_true:
+    lda #<TRUE
+    sta RV
+    lda #>TRUE
+    sta RV+1
+    jmp postamble
+_bsw_false:
+    lda #<FALSE
+    sta RV
+    lda #>FALSE
+    sta RV+1
+    jmp postamble
+
+// --- str.endswith(suffix) ---------------------------------------------------
+//   in:  RS slot 1 = me, slot 0 = suffix
+// =============================================================================
+builtin_str_endswith:
+    preamble_args(2, 0)
+    rs_peek_at(W0, 0)                 // suffix
+    jsr deref_W0_to_W2
+    sta B0                            // B0 = suffix len
+    lda W2
+    sta W3
+    lda W2+1
+    sta W3+1
+
+    rs_peek_at(W0, 1)                 // me
+    jsr deref_W0_to_W2
+    sta B1                            // B1 = me len
+
+    lda B0
+    cmp B1
+    beq _bew_check
+    bcc _bew_check
+    jmp _bew_false
+_bew_check:
+    // Advance W2 by (me_len - suffix_len) so it points at the tail region.
+    sec
+    lda B1
+    sbc B0
+    clc
+    adc W2
+    sta W2
+    bcc !+
+    inc W2+1
+!:
+    ldy B0
+    beq _bew_true
+_bew_loop:
+    dey
+    lda (W2),y
+    cmp (W3),y
+    bne _bew_false
+    cpy #0
+    bne _bew_loop
+_bew_true:
+    lda #<TRUE
+    sta RV
+    lda #>TRUE
+    sta RV+1
+    jmp postamble
+_bew_false:
+    lda #<FALSE
+    sta RV
+    lda #>FALSE
+    sta RV+1
+    jmp postamble
+
 // --- list.append(item) — push item; returns NONE -----------------------------
 //   in:  RS slot 1 = me (TYPE_LIST), slot 0 = item
 // =============================================================================
@@ -787,6 +980,131 @@ builtin_list_append:
     sta RV
     lda #>NONE
     sta RV+1
+    jmp postamble
+
+// --- list.insert(idx, item) — splice in at idx; returns NONE -----------------
+//   in:  RS slot 2 = me, slot 1 = idx (INT), slot 0 = item
+// =============================================================================
+builtin_list_insert:
+    preamble_args(3, 0)
+    rs_pop(W1)                        // item
+    rs_pop(W0)                        // idx handle
+
+    // Extract idx byte from int handle → fs_push as a word.
+    ldy #H_PTR
+    lda (W0),y
+    sta W2
+    iny
+    lda (W0),y
+    sta W2+1
+    ldy #O_HEADER
+    lda (W2),y                        // A = idx byte
+    sta W3
+    lda #0
+    sta W3+1
+    fs_push(W3)
+
+    rs_push(W1)                       // RS: [me, item]
+    jsr array_insert                  // consumes 2 RS + 1 FS; mutates me
+
+    lda #<NONE
+    sta RV
+    lda #>NONE
+    sta RV+1
+    jmp postamble
+
+// --- list.pop() — remove and return last element ----------------------------
+//   in:  RS slot 0 = me. Empty list → ERR_TYPE.
+// =============================================================================
+builtin_list_pop:
+    preamble_args(1, 0)
+    rs_peek(W0)
+
+    // W2 = object base (at O_LEN), B0 = O_LEN low.
+    ldy #H_PTR
+    lda (W0),y
+    sta W2
+    iny
+    lda (W0),y
+    sta W2+1
+    ldy #O_LEN
+    lda (W2),y
+    sta B0
+    bne _bpop_have
+    lda #ERR_TYPE
+    sta ERROR_CODE
+    jmp error_handler
+_bpop_have:
+    dec B0                            // B0 = new O_LEN (= idx of element to remove)
+
+    // W3 = payload base (W2 + O_HEADER).
+    clc
+    lda W2
+    adc #O_HEADER
+    sta W3
+    lda W2+1
+    adc #0
+    sta W3+1
+
+    // RV = payload[B0].
+    lda B0
+    asl
+    tay
+    lda (W3),y
+    sta RV
+    iny
+    lda (W3),y
+    sta RV+1
+
+    // Write new O_LEN at W2.
+    ldy #O_LEN
+    lda B0
+    sta (W2),y
+    iny
+    lda #0
+    sta (W2),y
+    jmp postamble
+
+// --- dict.get(key, default) — value at key, else default --------------------
+//   in:  RS slot 2 = me (TYPE_DICT), slot 1 = key, slot 0 = default
+// =============================================================================
+builtin_dict_get:
+    preamble_args(3, 0)
+    rs_peek_at(W0, 2)
+    rs_peek_at(W1, 1)
+    jsr _dict_bin_search              // A = 1 hit / 0 miss; RV = index on hit
+    cmp #0
+    beq _bdg_miss
+
+    // Hit: dict.payload[RV] is the (key, value) entry tuple.
+    rs_peek_at(W0, 2)
+    jsr deref_W0_to_W2                // W2 = me payload
+    lda RV
+    asl
+    tay
+    lda (W2),y
+    sta W3
+    iny
+    lda (W2),y
+    sta W3+1                          // W3 = entry tuple
+
+    // Read entry.payload[1] = value (byte offset 2 past entry's O_LEN word).
+    lda W3
+    sta W0
+    lda W3+1
+    sta W0+1
+    jsr deref_W0_to_W2
+    ldy #2                            // tuple slot 1 starts at offset 2
+    lda (W2),y
+    sta RV
+    iny
+    lda (W2),y
+    sta RV+1
+    jmp postamble
+
+_bdg_miss:
+    // Default is at RS slot 0 (top).
+    rs_peek(RV)
     jmp postamble
 
 // --- dict.has(key) — TRUE if key in me; FALSE otherwise ----------------------
@@ -810,6 +1128,93 @@ _bdh_false:
     lda #>FALSE
     sta RV+1
     jmp postamble
+
+// --- dict.keys() — list of keys --------------------------------------------
+//   in:  RS slot 0 = me (TYPE_DICT)
+// =============================================================================
+builtin_dict_keys:
+    preamble_args(1, 0)
+    lda #0                            // entry-tuple byte offset for the key
+    jsr _bd_build_list
+    jmp postamble
+
+// --- dict.values() — list of values ----------------------------------------
+//   in:  RS slot 0 = me (TYPE_DICT)
+// =============================================================================
+builtin_dict_values:
+    preamble_args(1, 0)
+    lda #2                            // entry-tuple byte offset for the value
+    jsr _bd_build_list
+    jmp postamble
+
+// -----------------------------------------------------------------------------
+// _bd_build_list — common body for dict.keys / dict.values. Builds a list of
+// either the key (offset 0) or value (offset 2) field of each (key, value)
+// 2-tuple in the dict's payload.
+//
+// in:  A = byte offset within entry tuple (0 = key, 2 = value)
+//      RS slot 0 = dict handle (caller's RS root, untouched on return)
+// out: RV = new TYPE_LIST
+//
+// Leaf — uses caller's V4' frame for B/W scratch. Callers must be V4'.
+// -----------------------------------------------------------------------------
+_bd_build_list:
+    sta B7                            // B7 = entry slot byte offset
+
+    rs_peek(W0)                       // dict
+    jsr deref_W0_to_W2                // A = O_LEN, W2 = dict payload
+    sta B0                            // B0 = entry count
+
+    lda B0
+    jsr list_alloc                    // RV = new TYPE_LIST, O_LEN = B0
+    rs_push(RV)                       // root: RS [..., dict, list]
+
+    lda #0
+    sta B1                            // B1 = current entry index
+_bdb_loop:
+    lda B1
+    cmp B0
+    bcs _bdb_done
+
+    // me.payload[B1] → entry tuple handle in W3.
+    rs_peek_at(W0, 1)
+    jsr deref_W0_to_W2
+    lda B1
+    asl
+    tay
+    lda (W2),y
+    sta W3
+    iny
+    lda (W2),y
+    sta W3+1
+
+    // Deref entry; read field at offset B7 (key or value handle).
+    lda W3
+    sta W0
+    lda W3+1
+    sta W0+1
+    jsr deref_W0_to_W2
+    ldy B7
+    lda (W2),y
+    sta B2
+    iny
+    lda (W2),y
+    sta B3
+
+    // Write the field handle into list[B1].
+    rs_peek(W0)                       // list
+    lda B2
+    sta W1
+    lda B3
+    sta W1+1
+    lda B1
+    jsr array_set_leaf
+
+    inc B1
+    jmp _bdb_loop
+_bdb_done:
+    rs_pop(RV)
+    rts
 
 // =============================================================================
 // _method_lookup — find a method handle by name in a per-type table.
@@ -870,12 +1275,21 @@ _mlu_match:
 // --- Per-type method tables -------------------------------------------------
 str_methods:
     .word STR_NAME_M_UPPER, BUILTIN_STR_UPPER
+    .word STR_NAME_M_LOWER, BUILTIN_STR_LOWER
+    .word STR_NAME_M_FIND, BUILTIN_STR_FIND
+    .word STR_NAME_M_STARTSWITH, BUILTIN_STR_STARTSWITH
+    .word STR_NAME_M_ENDSWITH, BUILTIN_STR_ENDSWITH
     .word 0
 
 list_methods:
     .word STR_NAME_M_APPEND, BUILTIN_LIST_APPEND
+    .word STR_NAME_M_INSERT, BUILTIN_LIST_INSERT
+    .word STR_NAME_M_POP, BUILTIN_LIST_POP
     .word 0
 
 dict_methods:
     .word STR_NAME_M_HAS, BUILTIN_DICT_HAS
+    .word STR_NAME_M_GET, BUILTIN_DICT_GET
+    .word STR_NAME_M_KEYS, BUILTIN_DICT_KEYS
+    .word STR_NAME_M_VALUES, BUILTIN_DICT_VALUES
     .word 0

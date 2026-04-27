@@ -29,18 +29,19 @@ str_alloc:
     jmp alloc
 
 // -----------------------------------------------------------------------------
-// str_search — substring search (`needle in haystack`). Both operands must
+// str_find_pos — substring search returning a position. Both operands must
 // be TYPE_STR; the caller is expected to type-check and panic otherwise.
 //
 // in:  RS — needle (deeper), haystack (top).
-// out: A = 1 if `needle` appears as a contiguous substring of `haystack`,
-//      else 0. Args consumed.
+// out: A = position (0..254) of the first occurrence of `needle` in
+//      `haystack`, or $FF (= -1 signed) if not found. Args consumed.
 //
-// An empty needle is "found" at position 0 (matches Python `"" in "abc"`).
-// Limits: indices are 8-bit, so haystack ≤ 255 bytes.
+// An empty needle is "found" at position 0 (matches Python `"".find("")` = 0
+// and `"" in "abc"`). Limits: 8-bit positions, so haystack ≤ 254 bytes for
+// any non-empty match (255 stays representable as $FF means "not found").
 // V4'.
 // -----------------------------------------------------------------------------
-str_search:
+str_find_pos:
     preamble_args(2, 0)
 
     // Needle: B0 = len, W3 = payload base.
@@ -52,12 +53,12 @@ str_search:
     lda W2+1
     sta W3+1
 
-    // Empty needle → found.
+    // Empty needle → position 0.
     lda B0
-    bne _ssrch_have_needle
-    lda #1
+    bne _sfp_have_needle
+    lda #0
     jmp postamble
-_ssrch_have_needle:
+_sfp_have_needle:
 
     // Haystack: B1 = len, W2 = payload base.
     rs_peek_at(W0, 0)
@@ -67,11 +68,11 @@ _ssrch_have_needle:
     // Needle longer than haystack → not found.
     lda B0
     cmp B1
-    beq _ssrch_compute_max
-    bcc _ssrch_compute_max
-    lda #0
+    beq _sfp_compute_max
+    bcc _sfp_compute_max
+    lda #$FF
     jmp postamble
-_ssrch_compute_max:
+_sfp_compute_max:
     sec
     lda B1
     sbc B0
@@ -80,11 +81,11 @@ _ssrch_compute_max:
     lda #0
     sta B3                            // B3 = current outer offset
 
-_ssrch_outer:
+_sfp_outer:
     ldy #0                            // Y = inner index into needle
-_ssrch_inner:
+_sfp_inner:
     cpy B0
-    beq _ssrch_match
+    beq _sfp_match
     lda (W3),y                        // needle[Y]
     sta B4
     tya
@@ -93,23 +94,23 @@ _ssrch_inner:
     tay                               // Y = haystack offset
     lda (W2),y
     cmp B4
-    bne _ssrch_advance
+    bne _sfp_advance
     // Match — recover original Y (= Y - B3) and continue.
     tya
     sec
     sbc B3
     tay
     iny
-    bne _ssrch_inner
-_ssrch_advance:
+    bne _sfp_inner
+_sfp_advance:
     inc B3
     lda B3
     cmp B2
-    beq _ssrch_outer
-    bcc _ssrch_outer
-    lda #0
+    beq _sfp_outer
+    bcc _sfp_outer
+    lda #$FF                          // exhausted; not found
     jmp postamble
 
-_ssrch_match:
-    lda #1
+_sfp_match:
+    lda B3                            // matched position
     jmp postamble

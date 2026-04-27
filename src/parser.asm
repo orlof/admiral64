@@ -266,6 +266,99 @@ _sret_have_value:
     jmp postamble
 
 // -----------------------------------------------------------------------------
+// stmt_del — `del NAME[expr]`. Parses a subscript-only target (no `del NAME`
+// form for plain locals yet) and removes the entry. LIST: `array_del` at the
+// integer index. DICT: binary-search for the key, then `array_del` at the
+// found slot. Other types (TUPLE etc.) panic ERR_TYPE.
+// V4' wrapper. RV = NONE on success.
+// -----------------------------------------------------------------------------
+stmt_del:
+    preamble_args(0, 0)
+    jsr lexer_next                  // consume `del`
+
+    lda LEX_TOKEN_KIND
+    cmp #TK_NAME
+    beq _sd_have_name
+    lda #ERR_LEX
+    sta ERROR_CODE
+    jmp error_handler
+_sd_have_name:
+    jsr lexer_get_token_as_string   // RV = name TYPE_STR
+    rs_push(RV)                     // RS: [name]
+    jsr lexer_next                  // consume name
+    jsr scope_get                   // consumes name; RV = container
+
+    lda #TK_LBRACK
+    jsr lexer_advance               // consume `[`
+
+    rs_push(RV)                     // RS: [container]
+    lda #0
+    sta B7
+    jsr expression                  // RV = index/key
+
+    lda #TK_RBRACK
+    jsr lexer_advance               // consume `]`
+
+    // Dispatch on container type.
+    rs_peek(W0)
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_LIST
+    beq _sd_list_del
+    cmp #TYPE_DICT
+    beq _sd_dict_del
+    lda #ERR_TYPE
+    sta ERROR_CODE
+    jmp error_handler
+
+_sd_list_del:
+    // Extract index byte from int handle in RV → fs_push as a word.
+    ldy #H_PTR
+    lda (RV),y
+    sta W2
+    iny
+    lda (RV),y
+    sta W2+1
+    ldy #O_HEADER
+    lda (W2),y
+    sta W2
+    lda #0
+    sta W2+1
+    fs_push(W2)
+    jsr array_del                   // consumes container + index
+    jmp _sd_done
+
+_sd_dict_del:
+    // Find key index via binary search.
+    rs_peek(W0)                     // dict
+    lda RV
+    sta W1
+    lda RV+1
+    sta W1+1                        // W1 = key
+    jsr _dict_bin_search            // A = 1 hit / 0 miss; RV = index on hit
+    cmp #0
+    bne _sd_dict_remove
+    // Miss → KeyError.
+    lda #ERR_LEX
+    sta ERROR_CODE
+    jmp error_handler
+_sd_dict_remove:
+    lda RV
+    sta W2
+    lda #0
+    sta W2+1
+    fs_push(W2)
+    jsr array_del                   // consumes dict + index
+    // fall through
+
+_sd_done:
+    lda #<NONE
+    sta RV
+    lda #>NONE
+    sta RV+1
+    jmp postamble
+
+// -----------------------------------------------------------------------------
 // parser_suite — parse the body of a block: consume INDENT, run statements
 // until DEDENT (or EOF), consume DEDENT.
 // V4' wrapper. RV is the value of the LAST statement in the suite (mostly
@@ -1769,7 +1862,10 @@ _lin_str:
     sta ERROR_CODE
     jmp error_handler
 !ok:
-    jsr str_search                    // A = 1 / 0
+    jsr str_find_pos                  // A = position or $FF (not found)
+    cmp #$FF
+    beq _lin_false
+    lda #1
     jmp _lin_to_bool
 
 _lin_seq:
@@ -2184,15 +2280,23 @@ _llb_no_slice:
     // Check for assignment.
     lda LEX_TOKEN_KIND
     cmp #TK_ASSIGN
-    beq _llb_assign
+    bne !skip+
+    jmp _llb_assign
+!skip:
 
     rs_peek(W0)                       // W0 = container handle
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_DICT
-    beq _llb_dict
+    bne !skip+
+    jmp _llb_dict
+!skip:
+    cmp #TYPE_STR
+    bne !skip+
+    jmp _llb_str_get
+!skip:
 
-    // LIST / TUPLE / STR — extract small int from RV's payload[0].
+    // LIST / TUPLE — extract index byte from int handle in RV.
     lda RV
     sta W1
     lda RV+1
@@ -2204,7 +2308,15 @@ _llb_no_slice:
     lda (W1),y
     sta W2+1
     ldy #O_HEADER
-    lda (W2),y                        // A = first payload byte (small index)
+    lda (W2),y                        // A = raw index byte
+    // Normalize: if bit 7 set, A += container.O_LEN low byte (Python `a[-1]`).
+    bpl _llb_idx_pos
+    sta B6
+    rs_peek(W0)
+    jsr deref_W0_to_W2
+    clc
+    adc B6
+_llb_idx_pos:
     sta W3
     lda #0
     sta W3+1
@@ -2216,6 +2328,58 @@ _llb_dict:
     // Dict: push key on RS so dict_get sees [dict, key].
     rs_push(RV)
     jsr dict_get
+    jmp postamble
+
+_llb_str_get:
+    // String subscript: read 1 byte at the (possibly-negative) index, alloc
+    // a fresh 1-char TYPE_STR with that byte. Mirrors stmt_for's str path.
+    lda RV
+    sta W1
+    lda RV+1
+    sta W1+1
+    ldy #H_PTR
+    lda (W1),y
+    sta W2
+    iny
+    lda (W1),y
+    sta W2+1
+    ldy #O_HEADER
+    lda (W2),y                        // A = raw index byte
+    bpl _llb_str_idx_pos
+    sta B6
+    rs_peek(W0)
+    jsr deref_W0_to_W2
+    clc
+    adc B6
+_llb_str_idx_pos:
+    sta B5                            // B5 = effective index
+
+    // Alloc 1-byte TYPE_STR.
+    lda #1
+    sta ALLOC_SIZE
+    lda #0
+    sta ALLOC_SIZE+1
+    lda #TYPE_STR
+    sta ALLOC_TYPE
+    jsr alloc                         // RV = new 1-byte STR
+
+    // Re-deref container after alloc (GC may have moved it).
+    rs_peek(W0)
+    jsr deref_W0_to_W2                // W2 = me payload
+    ldy B5
+    lda (W2),y
+    sta B5                            // stash byte (W2 about to be overwritten)
+
+    // Write to RV.payload[0].
+    ldy #H_PTR
+    lda (RV),y
+    sta W3
+    iny
+    lda (RV),y
+    sta W3+1
+    ldy #O_HEADER
+    lda B5
+    sta (W3),y
     jmp postamble
 
 // Subscript assignment: `a[i] = value`. RS at entry: [container]; RV = index.
@@ -2232,12 +2396,23 @@ _llb_assign:
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_DICT
-    beq _llb_assign_dict
+    bne !next+
+    jmp _llb_assign_dict
+!next:
+    cmp #TYPE_LIST
+    bne !next+
+    jmp _llb_assign_list
+!next:
+    // STR / TUPLE / other → immutable; reject.
+    lda #ERR_TYPE
+    sta ERROR_CODE
+    jmp error_handler
 
-    // LIST / TUPLE: list_set wants RS [container, child], FS [index_word].
+_llb_assign_list:
+    // LIST: list_set wants RS [container, child], FS [index_word].
     rs_pop(W1)                        // W1 = value
     rs_pop(W0)                        // W0 = index handle. RS: [container]
-    // Extract small int from index handle.
+    // Extract index byte from int handle.
     ldy #H_PTR
     lda (W0),y
     sta W2
@@ -2245,7 +2420,15 @@ _llb_assign:
     lda (W0),y
     sta W2+1
     ldy #O_HEADER
-    lda (W2),y                        // A = first payload byte
+    lda (W2),y                        // A = raw index byte
+    // Normalize: if bit 7 set, A += container.O_LEN low byte.
+    bpl _llba_idx_pos
+    sta B6
+    rs_peek(W0)
+    jsr deref_W0_to_W2
+    clc
+    adc B6
+_llba_idx_pos:
     sta W2
     lda #0
     sta W2+1
@@ -2289,25 +2472,40 @@ _llb_slice:
     lda #TK_RBRACK
     jsr lexer_advance                 // consume ']'
 
-    // B4 = start
+    // Read container length first — we need it for negative-index
+    // normalization AND for stop clamping. Stash in B6 (overwritten by
+    // new_len further down).
+    rs_peek_at(W0, 2)
+    jsr deref_W0_to_W2                // A = O_LEN low byte
+    sta B6                            // B6 = container len (temporary)
+
+    // B4 = start (normalize: if raw byte is negative, add len).
     rs_peek_at(W0, 1)
     jsr deref_W0_to_W2
     ldy #0
     lda (W2),y
+    bpl _slh_start_pos
+    clc
+    adc B6
+_slh_start_pos:
     sta B4
 
-    // B5 = stop
+    // B5 = stop (normalize negative).
     rs_peek_at(W0, 0)
     jsr deref_W0_to_W2
     ldy #0
     lda (W2),y
+    bpl _slh_stop_pos
+    clc
+    adc B6
+_slh_stop_pos:
     sta B5
 
-    // Clamp stop to container O_LEN.
-    rs_peek_at(W0, 2)
-    jsr deref_W0_to_W2                // A = O_LEN low byte
-    cmp B5
-    bcs _slh_stop_ok
+    // Clamp stop to len (B6).
+    lda B5
+    cmp B6
+    bcc _slh_stop_ok
+    lda B6
     sta B5
 _slh_stop_ok:
     // Clamp start to stop.
@@ -2485,23 +2683,35 @@ _ldot_method_prefix:
     jmp error_handler
 
 _ldot_dict_method:
-    // Try the dict_methods table first (so .keys / .has / etc. work even when
-    // a user dict doesn't store a string-callable under that name). On miss,
-    // fall back to dict_get — that's the prototype/string-method pattern.
-    rs_peek(W1)                     // W1 = name (top of RS)
+    // Prototype pattern wins: try the user dict's own keys first. Only fall
+    // back to the dict_methods table on miss, so a user dict storing
+    // {"keys": ..., "get": ..., etc.} shadows the built-ins as expected.
+    rs_peek_at(W0, 1)               // dict (slot 1; name is at slot 0)
+    rs_peek(W1)                     // name
+    jsr _dict_bin_search            // A = 1 hit / 0 miss
+    cmp #0
+    bne _ldot_dict_user_hit
+
+    // Miss: try built-in dict methods. _method_lookup expects W0 = table,
+    // W1 = name (W1 is preserved by _dict_bin_search's V4' frame).
     lda #<dict_methods
     sta W0
     lda #>dict_methods
     sta W0+1
     jsr _method_lookup              // A = 1/0; RV = builtin handle on hit
     cmp #0
-    beq _ldot_dict_fallback
-    // Hit: drop name from RS (dict_get would have consumed it; we don't use it).
-    rs_drop(1)
-    jmp postamble                   // RV = method builtin handle
-_ldot_dict_fallback:
-    jsr dict_get                    // RV = function (or panic if no key)
+    beq _ldot_dict_no_method
+    rs_drop(1)                      // discard name (we don't need it)
+    jmp postamble                   // RV = builtin handle
+
+_ldot_dict_user_hit:
+    jsr dict_get                    // RV = user's value (string-callable, etc.)
     jmp postamble
+
+_ldot_dict_no_method:
+    lda #ERR_LEX
+    sta ERROR_CODE
+    jmp error_handler
 
 _ldot_str_method:
     lda #<str_methods
@@ -2847,7 +3057,9 @@ std_lo:
     .byte <(stmt_continue - 1)                      // $3C TK_CONTINUE
     .byte <(stmt_pass - 1)                          // $3D TK_PASS
     .byte <(stmt_return - 1)                        // $3E TK_RETURN
-    .fill TK_PRINT - TK_RETURN - 1, <(stmt_expression - 1)
+    .fill TK_DEL - TK_RETURN - 1, <(stmt_expression - 1)   // $3F..$42 (try/except/finally/raise)
+    .byte <(stmt_del - 1)                                  // $43 TK_DEL
+    .fill TK_PRINT - TK_DEL - 1, <(stmt_expression - 1)    // $44..$4A
     .byte <(stmt_print - 1)                         // $4B TK_PRINT
 
 std_hi:
@@ -2862,5 +3074,7 @@ std_hi:
     .byte >(stmt_continue - 1)
     .byte >(stmt_pass - 1)
     .byte >(stmt_return - 1)
-    .fill TK_PRINT - TK_RETURN - 1, >(stmt_expression - 1)
+    .fill TK_DEL - TK_RETURN - 1, >(stmt_expression - 1)
+    .byte >(stmt_del - 1)
+    .fill TK_PRINT - TK_DEL - 1, >(stmt_expression - 1)
     .byte >(stmt_print - 1)

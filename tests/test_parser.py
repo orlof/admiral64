@@ -2552,3 +2552,222 @@ def test_short_circuit_in_while_condition(h):
     )
     # 3 iterations: side() returns True, True, False → loop exits.
     assert _eval(h, src) == 3
+
+
+# --- Stage 11: extended methods + negative indices + del statement --------
+
+def test_str_lower(h):
+    assert _eval_str(h, '"HELLO".lower()') == b"hello"
+
+
+def test_str_upper_lower_roundtrip(h):
+    assert _eval_str(h, '"AbCdEf".upper().lower()') == b"abcdef"
+
+
+def test_str_find_present(h):
+    assert _eval(h, '"hello".find("l")') == 2
+
+
+def test_str_find_missing(h):
+    assert _eval(h, '"hello".find("z")') == -1
+
+
+def test_str_find_empty_returns_zero(h):
+    assert _eval(h, '"hello".find("")') == 0
+
+
+def test_str_startswith_match(h):
+    assert _eval_bool(h, '"hello".startswith("he")') is True
+
+
+def test_str_startswith_mismatch(h):
+    assert _eval_bool(h, '"hello".startswith("world")') is False
+
+
+def test_str_startswith_empty_always_true(h):
+    assert _eval_bool(h, '"abc".startswith("")') is True
+
+
+def test_str_endswith_match(h):
+    assert _eval_bool(h, '"hello".endswith("lo")') is True
+
+
+def test_str_endswith_mismatch(h):
+    assert _eval_bool(h, '"hello".endswith("world")') is False
+
+
+def test_list_insert_middle(h):
+    src = (
+        'lst = [1, 2, 3]\n'
+        'lst.insert(1, 99)\n'
+        'lst[1]'
+    )
+    assert _eval(h, src) == 99
+
+
+def test_list_insert_at_zero(h):
+    src = (
+        'lst = [10, 20]\n'
+        'lst.insert(0, 5)\n'
+        'lst[0]'
+    )
+    assert _eval(h, src) == 5
+
+
+def test_list_pop_returns_last(h):
+    assert _eval(h, "[1, 2, 3].pop()") == 3
+
+
+def test_list_pop_shrinks(h):
+    src = (
+        'lst = [1, 2, 3]\n'
+        'lst.pop()\n'
+        'len(lst)'
+    )
+    assert _eval(h, src) == 2
+
+
+def test_list_pop_until_one(h):
+    src = (
+        'lst = [10, 20, 30]\n'
+        'lst.pop()\n'
+        'lst.pop()\n'
+        'lst[0]'
+    )
+    assert _eval(h, src) == 10
+
+
+def test_dict_get_present(h):
+    assert _eval(h, '{1: 10, 2: 20}.get(2, 0)') == 20
+
+
+def test_dict_get_missing_returns_default(h):
+    assert _eval(h, '{1: 10}.get(99, 7)') == 7
+
+
+def test_dict_keys_length(h):
+    assert _eval(h, 'len({1: 10, 2: 20, 3: 30}.keys())') == 3
+
+
+def test_dict_keys_iteration_via_subscript(h):
+    src = (
+        'd = {1: 10, 2: 20, 3: 30}\n'
+        'd.keys()[1]'
+    )
+    assert _eval(h, src) == 2
+
+
+def test_dict_values_extracts_values(h):
+    src = (
+        'd = {1: 10, 2: 20, 3: 30}\n'
+        'd.values()[1]'
+    )
+    assert _eval(h, src) == 20
+
+
+def test_dict_iterate_via_values(h):
+    src = (
+        'total = 0\n'
+        'for v in {1: 10, 2: 20, 3: 30}.values():\n'
+        '    total = total + v\n'
+        'total'
+    )
+    assert _eval(h, src) == 60
+
+
+def test_user_dict_method_shadows_builtin_get(h):
+    """User's "get" key takes precedence over the built-in dict.get method."""
+    src = (
+        'obj = {"value": 99, "get": "return me.value"}\n'
+        'obj.get()'
+    )
+    assert _eval(h, src) == 99
+
+
+def test_user_dict_method_shadows_builtin_keys(h):
+    src = (
+        'obj = {"keys": "return 42"}\n'
+        'obj.keys()'
+    )
+    assert _eval(h, src) == 42
+
+
+def test_del_list_element(h):
+    src = (
+        'lst = [10, 20, 30]\n'
+        'del lst[1]\n'
+        'lst[1]'
+    )
+    assert _eval(h, src) == 30
+
+
+def test_del_list_shrinks(h):
+    src = (
+        'lst = [10, 20, 30]\n'
+        'del lst[0]\n'
+        'len(lst)'
+    )
+    assert _eval(h, src) == 2
+
+
+def test_del_dict_key(h):
+    src = (
+        'd = {1: 10, 2: 20, 3: 30}\n'
+        'del d[2]\n'
+        'len(d)'
+    )
+    assert _eval(h, src) == 2
+
+
+def test_del_dict_then_has(h):
+    src = (
+        'd = {1: 10, 2: 20}\n'
+        'del d[1]\n'
+        'd.has(1)'
+    )
+    assert _eval_bool(h, src) is False
+
+
+def test_negative_index_list_last(h):
+    assert _eval(h, "[10, 20, 30][-1]") == 30
+
+
+def test_negative_index_list_second_last(h):
+    assert _eval(h, "[10, 20, 30][-2]") == 20
+
+
+def test_negative_index_tuple(h):
+    assert _eval(h, "(10, 20, 30)[-1]") == 30
+
+
+def test_negative_index_assignment(h):
+    src = (
+        'lst = [1, 2, 3, 4]\n'
+        'lst[-1] = 99\n'
+        'lst[-1]'
+    )
+    assert _eval(h, src) == 99
+
+
+def test_string_index_basic(h):
+    assert _eval_str(h, '"abc"[0]') == b"a"
+
+
+def test_string_index_middle(h):
+    assert _eval_str(h, '"abc"[1]') == b"b"
+
+
+def test_string_index_negative(h):
+    assert _eval_str(h, '"hello"[-1]') == b"o"
+
+
+def test_string_index_negative_middle(h):
+    assert _eval_str(h, '"hello"[-3]') == b"l"
+
+
+def test_slice_with_negative_stop(h):
+    assert _eval_str(h, '"hello"[1:-1]') == b"ell"
+
+
+def test_slice_with_negative_start_and_stop(h):
+    assert _eval_list_ints(h, '[10, 20, 30, 40][-3:-1]') == [20, 30]

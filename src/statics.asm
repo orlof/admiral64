@@ -290,6 +290,46 @@ BUILTIN_STR_UPPER_OBJ:
     .word 2
     .word builtin_str_upper
 
+BUILTIN_STR_LOWER:
+    .word BUILTIN_STR_LOWER_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_STR_LOWER_OBJ:
+    .word 2
+    .word builtin_str_lower
+
+BUILTIN_STR_FIND:
+    .word BUILTIN_STR_FIND_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_STR_FIND_OBJ:
+    .word 2
+    .word builtin_str_find
+
+BUILTIN_STR_STARTSWITH:
+    .word BUILTIN_STR_STARTSWITH_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_STR_STARTSWITH_OBJ:
+    .word 2
+    .word builtin_str_startswith
+
+BUILTIN_STR_ENDSWITH:
+    .word BUILTIN_STR_ENDSWITH_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_STR_ENDSWITH_OBJ:
+    .word 2
+    .word builtin_str_endswith
+
 BUILTIN_LIST_APPEND:
     .word BUILTIN_LIST_APPEND_OBJ
     .word 4
@@ -300,6 +340,26 @@ BUILTIN_LIST_APPEND_OBJ:
     .word 2
     .word builtin_list_append
 
+BUILTIN_LIST_INSERT:
+    .word BUILTIN_LIST_INSERT_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_LIST_INSERT_OBJ:
+    .word 2
+    .word builtin_list_insert
+
+BUILTIN_LIST_POP:
+    .word BUILTIN_LIST_POP_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_LIST_POP_OBJ:
+    .word 2
+    .word builtin_list_pop
+
 BUILTIN_DICT_HAS:
     .word BUILTIN_DICT_HAS_OBJ
     .word 4
@@ -309,6 +369,36 @@ BUILTIN_DICT_HAS:
 BUILTIN_DICT_HAS_OBJ:
     .word 2
     .word builtin_dict_has
+
+BUILTIN_DICT_GET:
+    .word BUILTIN_DICT_GET_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_DICT_GET_OBJ:
+    .word 2
+    .word builtin_dict_get
+
+BUILTIN_DICT_KEYS:
+    .word BUILTIN_DICT_KEYS_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_DICT_KEYS_OBJ:
+    .word 2
+    .word builtin_dict_keys
+
+BUILTIN_DICT_VALUES:
+    .word BUILTIN_DICT_VALUES_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_DICT_VALUES_OBJ:
+    .word 2
+    .word builtin_dict_values
 
 // Name strings for binding the built-ins into the global scope at
 // parser_eval start. Bytes are raw ASCII.
@@ -424,6 +514,46 @@ STR_NAME_M_UPPER_OBJ:
     .word 5
     .byte $75, $70, $70, $65, $72  // "upper"
 
+STR_NAME_M_LOWER:
+    .word STR_NAME_M_LOWER_OBJ
+    .word 7
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_M_LOWER_OBJ:
+    .word 5
+    .byte $6C, $6F, $77, $65, $72  // "lower"
+
+STR_NAME_M_FIND:
+    .word STR_NAME_M_FIND_OBJ
+    .word 6
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_M_FIND_OBJ:
+    .word 4
+    .byte $66, $69, $6E, $64        // "find"
+
+STR_NAME_M_STARTSWITH:
+    .word STR_NAME_M_STARTSWITH_OBJ
+    .word 12
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_M_STARTSWITH_OBJ:
+    .word 10
+    .byte $73, $74, $61, $72, $74, $73, $77, $69, $74, $68 // "startswith"
+
+STR_NAME_M_ENDSWITH:
+    .word STR_NAME_M_ENDSWITH_OBJ
+    .word 10
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_M_ENDSWITH_OBJ:
+    .word 8
+    .byte $65, $6E, $64, $73, $77, $69, $74, $68  // "endswith"
+
 STR_NAME_M_APPEND:
     .word STR_NAME_M_APPEND_OBJ
     .word 8
@@ -434,6 +564,26 @@ STR_NAME_M_APPEND_OBJ:
     .word 6
     .byte $61, $70, $70, $65, $6E, $64  // "append"
 
+STR_NAME_M_INSERT:
+    .word STR_NAME_M_INSERT_OBJ
+    .word 8
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_M_INSERT_OBJ:
+    .word 6
+    .byte $69, $6E, $73, $65, $72, $74  // "insert"
+
+STR_NAME_M_POP:
+    .word STR_NAME_M_POP_OBJ
+    .word 5
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_M_POP_OBJ:
+    .word 3
+    .byte $70, $6F, $70             // "pop"
+
 STR_NAME_M_HAS:
     .word STR_NAME_M_HAS_OBJ
     .word 5
@@ -443,6 +593,36 @@ STR_NAME_M_HAS:
 STR_NAME_M_HAS_OBJ:
     .word 3
     .byte $68, $61, $73             // "has"
+
+STR_NAME_M_GET:
+    .word STR_NAME_M_GET_OBJ
+    .word 5
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_M_GET_OBJ:
+    .word 3
+    .byte $67, $65, $74             // "get"
+
+STR_NAME_M_KEYS:
+    .word STR_NAME_M_KEYS_OBJ
+    .word 6
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_M_KEYS_OBJ:
+    .word 4
+    .byte $6B, $65, $79, $73        // "keys"
+
+STR_NAME_M_VALUES:
+    .word STR_NAME_M_VALUES_OBJ
+    .word 8
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_M_VALUES_OBJ:
+    .word 6
+    .byte $76, $61, $6C, $75, $65, $73  // "values"
 
 // --- punctuation singletons used by builtin_str container rendering ---------
 STR_LBRACK:
