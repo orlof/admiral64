@@ -152,64 +152,92 @@ Bundle `admiral.prg` + sample programs onto a `.d64`. Custom IRQ for cursor blin
 
 ---
 
-## Future memory layout: bank out KERNAL + I/O
+## Future memory layout: bank out everything by default
 
 Current default `$01 = $36` keeps KERNAL ROM at `$E000-$FFFF` and I/O at
-`$D000-$DFFF` mapped at all times. That gives ~18 KB of heap (`$8800-$CFFF`).
+`$D000-$DFFF` always mapped. Heap = ~18 KB (`$8800-$CFFF`).
 
-We can reclaim 12 KB more by switching the default to `$01 = $34` — both
-ROMs and I/O banked out, full RAM at `$D000-$FFFF`. The PLA only enables I/O
-at `$D000` when at least one of LORAM (BASIC) or HIRAM (KERNAL) is on, so I/O
-goes away simultaneously with the ROMs; we can't keep one without the other
-in the always-mapped state.
+We can reclaim 12 KB more by switching the default to **`$01 = $34`** — both
+ROMs *and* I/O banked out, full RAM at `$A000-$FFFF` (minus the vector
+bytes at the top). The 6510 was designed for exactly this: `inc $01` and
+`dec $01` neither clobber A/X/Y nor add cycles to surrounding code, so
+bank-flipping is a free composable operation.
 
-New layout (all RAM, IRQ window banks I/O+KERNAL back in):
+The four states form a dependency chain (each INC adds the next layer,
+each DEC peels it back):
+
+| `$01` | Adds | `$A000-$BFFF` | `$D000-$DFFF` | `$E000-$FFFF` |
+|---|---|---|---|---|
+| `$34` | (none) | RAM | RAM | RAM |
+| `$35` | +I/O | RAM | **I/O** | RAM |
+| `$36` | +KERNAL | RAM | I/O | **KERNAL** |
+| `$37` | +BASIC | **BASIC** | I/O | KERNAL |
+
+(CHAREN — bit 2 of `$01` — is fixed at 1 in this chain. It's a separate
+selector that swaps I/O for character ROM at `$D000`; we don't use it.)
+
+### New layout
 
 | Range | What |
 |---|---|
 | `$8800` → up | heap data (unchanged) |
-| ← `$FFF7` | heap handles, just below the IRQ vectors |
-| `$FFFA-$FFFF` | NMI / RESET / IRQ vectors — must live in our RAM |
+| ← `$FFF9` | heap handles, just below NMI vector |
+| `$FFFA-$FFFF` | NMI / RESET / IRQ vectors (RAM) |
 
-Heap = `$8800-$FFF7` ≈ 30 KB.
+Heap = `$8800-$FFF9` ≈ 30 KB.
 
 ### What we'd have to write
 
-1. **IRQ handler** in our code segment (below `$8000`, never shadowed):
+1. **Vectors at boot** — write the address of `my_irq` to `$FFFE-$FFFF`
+   (and a minimal `rti` handler to `$FFFA-$FFFB` for NMI / RESTORE), then
+   `lda #$34; sta $01`. `sei` first if we don't want IRQs at all.
+
+2. **IRQ handler** (only if IRQs are kept enabled) — lives in our code
+   segment, always RAM:
    ```
    my_irq:  pha; txa; pha; tya; pha
-            lda $01; pha
-            lda #$36              ; KERNAL+I/O+no BASIC for the IRQ window
-            sta $01
-            jsr $FF9F             ; SCNKEY — KERNAL is in scope here
-            lda $DC0D             ; ack CIA1
-            pla; sta $01          ; back to $34
+            inc $01        ; $34 → $35: I/O in (state-agnostic; symmetric DEC)
+            lda $DC0D      ; ack CIA1
+            ; (optional: read keyboard matrix directly from CIA1 ports here)
+            dec $01        ; back to whatever the caller had
             pla; tay; pla; tax; pla
             rti
    ```
-2. **Vector setup at boot** — write the address of `my_irq` to `$FFFE-$FFFF`
-   (and a minimal `rti` handler to `$FFFA-$FFFB` for NMI / RESTORE), then
-   `lda #$34; sta $01`.
-3. **NMI handler** — minimal `rti` if RESTORE is ignored.
-4. **Color-RAM / VIC writes** in user code — wrap with explicit `$01` flips:
+   The `inc/dec` pair is *relative*: it adds I/O if the caller had `$34`,
+   leaves I/O on (now KERNAL+I/O via $36→$37) if the caller had `$35`, etc.
+   Symmetric whatever the caller's state, no save/restore needed.
+
+3. **I/O writes** in user code — wrap with `inc $01 / dec $01`:
    ```
-   lda $01; pha
-   lda #$36; sta $01
+   inc $01
    sta $D020              ; or whatever I/O write
-   pla; sta $01
+   dec $01
    ```
-   `screen_init` sets the theme once at boot, so this overhead doesn't apply
-   to the steady-state text path (writes to `$0400+` are normal RAM).
-5. **`GETIN` callers** — KERNAL fills the keyboard buffer at `$0277-$0280`
-   (RAM) from the IRQ handler. We can either bank KERNAL in for a JSR to
-   `$FFE4`, or just dequeue from the buffer ourselves (~10 lines).
+   `screen_init` does its color-RAM and VIC register writes once at boot.
+   Steady-state text writes hit screen RAM at `$0400+` which is always RAM,
+   no flip needed.
+
+4. **KERNAL helper calls** (e.g. `SCNKEY` at `$FF9F`):
+   ```
+   inc $01; inc $01       ; +I/O, +KERNAL
+   jsr $FF9F
+   dec $01; dec $01
+   ```
+
+5. **BASIC FP calls** (existing `basic_call` / `basic_binop` macros): same
+   pattern but three INCs / DECs. Three additional cycles per side vs.
+   today's "one INC from $36 → $37". Negligible.
+
+6. **GETIN replacement** — without KERNAL's IRQ handler running, the
+   `$0277-$0280` keyboard buffer doesn't auto-fill. Either bank KERNAL in
+   for the IRQ window (option 2 above) and call `SCNKEY`, or write a
+   ~50-byte direct-CIA keyboard poll for synchronous reads.
 
 ### What KERNAL gives us today
 
-Surveying actual usage: only `GETIN` (`$FFE4`) and the IRQ-driven keyboard
+Surveying actual usage: `GETIN` (`$FFE4`) and the IRQ-driven keyboard
 scan at `$FF48` → `$FF9F` (`SCNKEY`). Nothing else — we don't use KERNAL
-for screen output (direct VIC), disk, tape, RS-232, or screen-edit. So the
-only work to replace KERNAL is the keyboard pipeline above.
+for screen output (direct VIC), disk, tape, RS-232, or screen-edit.
 
 ### Total cost vs. gain
 
