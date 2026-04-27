@@ -2771,3 +2771,179 @@ def test_slice_with_negative_stop(h):
 
 def test_slice_with_negative_start_and_stop(h):
     assert _eval_list_ints(h, '[10, 20, 30, 40][-3:-1]') == [20, 30]
+
+
+# --- Stage 11: id / cmp / hex builtins ------------------------------------
+
+def test_id_returns_positive_int(h):
+    """id(x) returns the handle address as a non-negative INT."""
+    assert _eval(h, 'a = [1, 2, 3]\nid(a) > 0') is None or _eval(h, 'a = [1, 2, 3]\nid(a) > 0')
+
+
+def test_id_same_object_same_id(h):
+    src = (
+        'a = [1, 2, 3]\n'
+        'b = a\n'           # same handle
+        'id(a) == id(b)'
+    )
+    assert _eval_bool(h, src) is True
+
+
+def test_id_different_objects_different_ids(h):
+    src = (
+        'a = [1]\n'
+        'b = [1]\n'
+        'id(a) == id(b)'
+    )
+    assert _eval_bool(h, src) is False
+
+
+def test_cmp_less(h):
+    assert _eval(h, 'cmp(1, 2)') == -1
+
+
+def test_cmp_equal(h):
+    assert _eval(h, 'cmp(2, 2)') == 0
+
+
+def test_cmp_greater(h):
+    assert _eval(h, 'cmp(3, 2)') == 1
+
+
+def test_cmp_strings(h):
+    assert _eval(h, 'cmp("a", "b")') == -1
+
+
+def test_hex_zero(h):
+    assert _eval_str(h, "hex(0)") == b"0x00"
+
+
+def test_hex_small_positive(h):
+    assert _eval_str(h, "hex(15)") == b"0x0f"
+
+
+def test_hex_negative(h):
+    assert _eval_str(h, "hex(-1)") == b"-0x01"
+
+
+def test_hex_large(h):
+    assert _eval_str(h, "hex(256)") == b"0x0100"
+
+
+# --- Stage 11: augmented assignment ---------------------------------------
+
+def test_augass_plus(h):
+    src = (
+        'x = 5\n'
+        'x += 3\n'
+        'x'
+    )
+    assert _eval(h, src) == 8
+
+
+def test_augass_minus(h):
+    src = (
+        'x = 10\n'
+        'x -= 7\n'
+        'x'
+    )
+    assert _eval(h, src) == 3
+
+
+def test_augass_star(h):
+    src = (
+        'x = 4\n'
+        'x *= 5\n'
+        'x'
+    )
+    assert _eval(h, src) == 20
+
+
+def test_augass_floordiv(h):
+    src = (
+        'x = 20\n'
+        'x //= 7\n'
+        'x'
+    )
+    assert _eval(h, src) == 2
+
+
+def test_augass_percent(h):
+    src = (
+        'x = 17\n'
+        'x %= 5\n'
+        'x'
+    )
+    assert _eval(h, src) == 2
+
+
+def test_augass_power(h):
+    src = (
+        'x = 2\n'
+        'x **= 8\n'
+        'x'
+    )
+    assert _eval(h, src) == 256
+
+
+def test_augass_lshift(h):
+    src = (
+        'x = 5\n'
+        'x <<= 2\n'
+        'x'
+    )
+    assert _eval(h, src) == 20
+
+
+def test_augass_rshift(h):
+    src = (
+        'x = 32\n'
+        'x >>= 2\n'
+        'x'
+    )
+    assert _eval(h, src) == 8
+
+
+def test_augass_amp(h):
+    src = (
+        'x = 0xFF\n'
+        'x &= 0x0F\n'
+        'x'
+    )
+    assert _eval(h, src) == 15
+
+
+def test_augass_pipe(h):
+    src = (
+        'x = 5\n'
+        'x |= 8\n'
+        'x'
+    )
+    assert _eval(h, src) == 13
+
+
+def test_augass_caret(h):
+    src = (
+        'x = 0xFF\n'
+        'x ^= 0xAA\n'
+        'x'
+    )
+    assert _eval(h, src) == 0x55
+
+
+def test_augass_str_concat(h):
+    src = (
+        's = "a"\n'
+        's += "b"\n'
+        's'
+    )
+    assert _eval_str(h, src) == b"ab"
+
+
+def test_augass_list_extend(h):
+    src = (
+        'lst = [1]\n'
+        'lst += [2, 3]\n'
+        'lst[2]'
+    )
+    assert _eval(h, src) == 3

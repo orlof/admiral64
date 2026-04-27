@@ -279,6 +279,36 @@ BUILTIN_STR_OBJ:
     .word 2
     .word builtin_str
 
+BUILTIN_ID:
+    .word BUILTIN_ID_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_ID_OBJ:
+    .word 2
+    .word builtin_id
+
+BUILTIN_CMP:
+    .word BUILTIN_CMP_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_CMP_OBJ:
+    .word 2
+    .word builtin_cmp
+
+BUILTIN_HEX:
+    .word BUILTIN_HEX_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_HEX_OBJ:
+    .word 2
+    .word builtin_hex
+
 // --- Method builtins (resolved via per-type method tables in builtins.asm) ---
 BUILTIN_STR_UPPER:
     .word BUILTIN_STR_UPPER_OBJ
@@ -400,6 +430,8 @@ BUILTIN_DICT_VALUES_OBJ:
     .word 2
     .word builtin_dict_values
 
+
+
 // Name strings for binding the built-ins into the global scope at
 // parser_eval start. Bytes are raw ASCII.
 STR_NAME_LEN:
@@ -501,6 +533,36 @@ STR_NAME_STR:
 STR_NAME_STR_OBJ:
     .word 3
     .byte $73, $74, $72             // "str"
+
+STR_NAME_ID:
+    .word STR_NAME_ID_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_ID_OBJ:
+    .word 2
+    .byte $69, $64                   // "id"
+
+STR_NAME_CMP:
+    .word STR_NAME_CMP_OBJ
+    .word 5
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_CMP_OBJ:
+    .word 3
+    .byte $63, $6D, $70             // "cmp"
+
+STR_NAME_HEX:
+    .word STR_NAME_HEX_OBJ
+    .word 5
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_HEX_OBJ:
+    .word 3
+    .byte $68, $65, $78             // "hex"
 
 // --- Method names. Prefixed `STR_NAME_M_` so they don't collide with the ----
 // global-builtin name strings above. ----------------------------------------
@@ -623,6 +685,7 @@ STR_NAME_M_VALUES:
 STR_NAME_M_VALUES_OBJ:
     .word 6
     .byte $76, $61, $6C, $75, $65, $73  // "values"
+
 
 // --- punctuation singletons used by builtin_str container rendering ---------
 STR_LBRACK:

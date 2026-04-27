@@ -712,6 +712,181 @@ builtin_type:
     jmp postamble
 
 // =============================================================================
+// builtin_id(x) — return the handle address of x as a non-negative INT.
+// Allocated as a 3-byte int with high byte 0 so addresses with bit 15 set
+// (e.g. handles around $C000+) stay positive.
+// =============================================================================
+builtin_id:
+    preamble_args(1, 0)
+    rs_peek(W0)
+
+    lda #3
+    sta ALLOC_SIZE
+    lda #0
+    sta ALLOC_SIZE+1
+    jsr alloc_int
+    jsr deref_RV_to_W2
+    ldy #0
+    lda W0
+    sta (W2),y
+    iny
+    lda W0+1
+    sta (W2),y
+    iny
+    lda #0
+    sta (W2),y
+    jmp postamble
+
+// =============================================================================
+// builtin_cmp(a, b) — three-way compare via val_cmp.
+//   Returns INT: -1 if a < b, 0 if a == b, 1 if a > b.
+// =============================================================================
+builtin_cmp:
+    preamble_args(2, 0)
+    jsr val_cmp                        // A = $FF / $00 / $01; consumes both args
+    sta B0
+
+    lda #1
+    sta ALLOC_SIZE
+    lda #0
+    sta ALLOC_SIZE+1
+    jsr alloc_int
+    jsr deref_RV_to_W2
+    lda B0
+    ldy #0
+    sta (W2),y
+    jmp postamble
+
+// =============================================================================
+// builtin_hex(x) — render INT/BOOL as a hex string. Format: "0xDDDD…" for
+// non-negative values, "-0xDDDD…" for negatives. Two hex chars per
+// magnitude byte (no leading-zero trim).
+// =============================================================================
+builtin_hex:
+    preamble_args(1, 0)
+    rs_peek(W0)
+
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_INT
+    beq !ok+
+    cmp #TYPE_BOOL
+    beq !ok+
+    lda #ERR_TYPE
+    sta ERROR_CODE
+    jmp error_handler
+!ok:
+
+    jsr deref_W0_to_W2                 // W2 = payload, A = O_LEN
+    sta B0                              // B0 = mag len
+    jsr sign_byte_W2                    // A = $FF if negative else $00
+    sta B6                              // B6 = sign
+
+    bpl _bhex_have_mag
+
+    // Negative — negate to get magnitude, root it on RS for GC.
+    rs_peek(W0)
+    rs_push(W0)
+    jsr int_negate
+    rs_push(RV)                         // RS: [orig, magnitude]
+    rs_peek(W0)
+    jsr deref_W0_to_W2
+    sta B0                              // B0 = magnitude len (post-negate normalization)
+_bhex_have_mag:
+
+    // ALLOC_SIZE = 2 ("0x") + (1 if negative else 0) + 2 * mag_len.
+    lda B6
+    bpl !p+
+    lda #3
+    jmp !d+
+!p:
+    lda #2
+!d:
+    sta B1                              // B1 = base length (0x or -0x)
+    lda B0
+    asl                                  // 2 * mag_len
+    clc
+    adc B1
+    sta ALLOC_SIZE
+    lda #0
+    sta ALLOC_SIZE+1
+    lda #TYPE_STR
+    sta ALLOC_TYPE
+    jsr alloc                           // RV = new STR
+
+    // Re-deref magnitude after alloc (GC may have moved data).
+    rs_peek(W0)
+    jsr deref_W0_to_W2                  // W2 = magnitude payload
+
+    // dst = RV.payload base.
+    ldy #H_PTR
+    lda (RV),y
+    sta W3
+    iny
+    lda (RV),y
+    sta W3+1
+    clc
+    lda W3
+    adc #O_HEADER
+    sta W3
+    bcc !+
+    inc W3+1
+!:
+
+    ldy #0
+    lda B6
+    bpl !p+
+    lda #$2D                            // '-' (ASCII / shared with screencode)
+    sta (W3),y
+    iny
+!p:
+    lda #$30                            // '0'
+    sta (W3),y
+    iny
+    lda #$78                            // 'x' (ASCII; KickAss `'x'` literal would
+                                        // be screencode and disagree with ASCII)
+    sta (W3),y
+    iny
+
+    // Emit magnitude bytes from MSB to LSB.
+    ldx B0
+    dex
+_bhex_byte_loop:
+    bmi _bhex_done
+    sty B5                              // save output offset
+    txa
+    tay
+    lda (W2),y                          // mag[X]
+    ldy B5                              // restore output offset
+    pha                                  // save byte
+    lsr
+    lsr
+    lsr
+    lsr                                  // hi nibble
+    jsr _bhex_emit_digit
+    pla
+    and #$0F                             // lo nibble
+    jsr _bhex_emit_digit
+    dex
+    jmp _bhex_byte_loop
+_bhex_done:
+    jmp postamble
+
+// Leaf: emit hex digit (A=0..15) at (W3),Y; bump Y. Clobbers A only.
+_bhex_emit_digit:
+    cmp #10
+    bcc !num+
+    adc #($61 - 10 - 1)                  // carry was set; +($61-10-1)+1 = +($61-10) → 'a'..'f'
+    sta (W3),y
+    iny
+    rts
+!num:
+    adc #$30                             // '0'..'9' (carry was clear)
+    sta (W3),y
+    iny
+    rts
+
+// =============================================================================
 // Method-style builtins. Each impl reads the receiver from the deepest RS
 // slot — the slot below the args, populated by led_lparen pushing
 // METHOD_RECEIVER (set by led_dot). For an N-arg method, RS is

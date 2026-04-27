@@ -112,6 +112,15 @@ parser_eval:
     rs_push_const(STR_NAME_STR)
     rs_push_const(BUILTIN_STR)
     jsr scope_set
+    rs_push_const(STR_NAME_ID)
+    rs_push_const(BUILTIN_ID)
+    jsr scope_set
+    rs_push_const(STR_NAME_CMP)
+    rs_push_const(BUILTIN_CMP)
+    jsr scope_set
+    rs_push_const(STR_NAME_HEX)
+    rs_push_const(BUILTIN_HEX)
+    jsr scope_set
 
     // Default result if source is empty: NONE.
     lda #<NONE
@@ -2785,11 +2794,17 @@ nud_name:
     rs_push(RV)                     // RS: [..., name]
     jsr lexer_next                  // advance past the name
 
-    // Assignment?
+    // Assignment / augmented assignment?
     lda LEX_TOKEN_KIND
     cmp #TK_ASSIGN
     beq _nname_assign
+    cmp #TK_AUGASS_BASE
+    bcc _nname_get
+    cmp #TK_AUGASS_LAST + 1
+    bcs _nname_get
+    jmp _nname_augass
 
+_nname_get:
     // Plain reference: scope_get consumes the name from RS, returns RV.
     jsr scope_get
     jmp postamble
@@ -2804,6 +2819,37 @@ _nname_assign:
 
     // Assignment-as-expression returns NONE (matches Python's `=` which is
     // a statement, but here we're an expression so we need *some* value).
+    lda #<NONE
+    sta RV
+    lda #>NONE
+    sta RV+1
+    jmp postamble
+
+// Augmented assignment: `x op= rhs` rewrites to `x = x op rhs`. We delegate
+// to the matching `led_*` function via the augass_lo/hi tables — each
+// led_* expects RS top = LHS and the current lexer token = the operator,
+// so we leave the augass token in place, push the current value of x, and
+// SMC-jsr into the right `led_op`. After it returns RV = result, store back
+// into x via scope_set.
+_nname_augass:
+    rs_peek(W0)                     // duplicate name handle
+    rs_push(W0)
+    jsr scope_get                   // consumes the dup; RV = current x value
+
+    rs_push(RV)                     // RS: [..., name, x_val]
+
+    ldx LEX_TOKEN_KIND
+    lda augass_lo - TK_AUGASS_BASE,x
+    sta _nna_jsr+1
+    lda augass_hi - TK_AUGASS_BASE,x
+    sta _nna_jsr+2
+_nna_jsr:
+    jsr $0000                       // → led_plus / led_minus / etc.
+                                    // led_op consumes x_val + the augass token
+                                    // + the RHS span; returns RV = result.
+    rs_push(RV)                     // RS: [..., name, result]
+    jsr scope_set                   // consumes 2
+
     lda #<NONE
     sta RV
     lda #>NONE
@@ -3045,6 +3091,38 @@ lbp_table:
 // Token-id positions (for the layout below):
 //   TK_IF=$35  TK_ELIF=$36  TK_ELSE=$37  TK_WHILE=$38  TK_FOR=$39  TK_IN=$3A
 //   TK_BREAK=$3B  TK_CONTINUE=$3C  TK_PASS=$3D  ...  TK_PRINT=$4B
+
+// --- augass_lo / augass_hi --------------------------------------------------
+// Maps a TK_AUGASS_BASE..TK_AUGASS_LAST token to the matching `led_*`
+// handler. Indexed by `tk - TK_AUGASS_BASE`; nud_name uses these to dispatch
+// `x op= rhs` through the same code path as the binary `op`.
+augass_lo:
+    .byte <led_plus     // $29 TK_PLUSEQ
+    .byte <led_minus    // $2A TK_MINUSEQ
+    .byte <led_star     // $2B TK_STAREQ
+    .byte <led_slash    // $2C TK_SLASHEQ
+    .byte <led_dslash   // $2D TK_DSLASHEQ
+    .byte <led_percent  // $2E TK_PERCENTEQ
+    .byte <led_power    // $2F TK_POWEREQ
+    .byte <led_lshift   // $30 TK_LSHIFTEQ
+    .byte <led_rshift   // $31 TK_RSHIFTEQ
+    .byte <led_amp      // $32 TK_AMPEQ
+    .byte <led_pipe     // $33 TK_PIPEEQ
+    .byte <led_caret    // $34 TK_CARETEQ
+augass_hi:
+    .byte >led_plus
+    .byte >led_minus
+    .byte >led_star
+    .byte >led_slash
+    .byte >led_dslash
+    .byte >led_percent
+    .byte >led_power
+    .byte >led_lshift
+    .byte >led_rshift
+    .byte >led_amp
+    .byte >led_pipe
+    .byte >led_caret
+
 std_lo:
     .fill TK_IF, <(stmt_expression - 1)            // 0..$34
     .byte <(stmt_if - 1)                            // $35 TK_IF
