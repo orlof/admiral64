@@ -1,0 +1,246 @@
+// -----------------------------------------------------------------------------
+// Software stacks: frame stack (FS) and root stack (RS).
+//
+// Both stacks:
+//   - Grow DOWN (high → low addresses).
+//   - Pointer = top of stack (the most recently pushed word).
+//   - Empty: pointer = region-end (one past the highest usable byte).
+//   - 16-bit ZP pointer (FSP / RSP), accessed via (zp),y.
+//
+// Frame stack (FS):
+//   - Holds per-routine preamble frames (saved regs, target pointers, saved
+//     caller's FP), any caller-pushed non-handle args above those frames, and
+//     any body-level fs_push scratch below.
+//   - FSP moves on every fs_push/fs_pop.
+//   - FP is distinct from FSP — it's the STABLE base of the current routine's
+//     frame, set once by preamble and not moved during the body. Bodies access
+//     saved regs via (FP, 0..15) and non-handle args via (FP, 22..).
+//   - Not GC-visible.
+//
+// Root stack (RS): live handle pointers only — linearly scanned by GC.
+// -----------------------------------------------------------------------------
+
+#importonce
+#import "defs.asm"
+
+// --- Stack regions (fixed layout) --------------------------------------------
+// Both stacks sit at the low end of the BASIC-ROM-freed area ($8000-$BFFF).
+// Heap begins at HEAP_DATA_START = $8500 (defs.asm), directly above RS.
+// FS is 1 KB (~45 nested 22-byte frames, plus body pushes and caller args).
+.const FS_BEGIN = $8000     // frame stack low bound (inclusive)
+.const FS_END   = $8400     // frame stack high bound (exclusive; = empty FSP)
+.const RS_BEGIN = $8400     // root stack low bound
+.const RS_END   = $8500     // root stack high bound (256 slots / 128 handles)
+
+// FSP, RSP, and FP are declared in defs.asm as ZP pointers.
+
+// -----------------------------------------------------------------------------
+// fs_init — reset FSP and FP to empty (both = FS_END).
+// -----------------------------------------------------------------------------
+fs_init:
+    lda #<FS_END
+    sta FSP
+    sta FP
+    lda #>FS_END
+    sta FSP+1
+    sta FP+1
+    rts
+
+// -----------------------------------------------------------------------------
+// rs_init — reset RSP to empty (RSP = RS_END).
+// -----------------------------------------------------------------------------
+rs_init:
+    lda #<RS_END
+    sta RSP
+    lda #>RS_END
+    sta RSP+1
+    rts
+
+// -----------------------------------------------------------------------------
+// Root-stack macros — inline expansion for push/pop/peek. `src`/`dst` is a ZP
+// word address (e.g. W0, RV).
+// -----------------------------------------------------------------------------
+
+.macro rs_push(src) {
+    sec
+    lda RSP
+    sbc #2
+    sta RSP
+    bcs !+
+    dec RSP+1
+!:
+    ldy #0
+    lda src
+    sta (RSP),y
+    iny
+    lda src+1
+    sta (RSP),y
+}
+
+.macro rs_pop(dst) {
+    ldy #0
+    lda (RSP),y
+    sta dst
+    iny
+    lda (RSP),y
+    sta dst+1
+    clc
+    lda RSP
+    adc #2
+    sta RSP
+    bcc !+
+    inc RSP+1
+!:
+}
+
+// Read top (or offset-from-top) of RS into `dst` without modifying RSP.
+// offset=0 is top; offset=1 is one word below top, etc.
+.macro rs_peek(dst) {
+    ldy #0
+    lda (RSP),y
+    sta dst
+    iny
+    lda (RSP),y
+    sta dst+1
+}
+
+.macro rs_peek_at(dst, offset) {
+    ldy #offset*2
+    lda (RSP),y
+    sta dst
+    iny
+    lda (RSP),y
+    sta dst+1
+}
+
+// Drop N words from RS without reading them.
+.macro rs_drop(n) {
+    clc
+    lda RSP
+    adc #n*2
+    sta RSP
+    bcc !+
+    inc RSP+1
+!:
+}
+
+// Push a 16-bit immediate (e.g. a static-handle label) onto RS.
+// Useful for static constants like INT_10 where we don't want to burn a ZP
+// slot staging the address first.
+.macro rs_push_const(addr) {
+    sec
+    lda RSP
+    sbc #2
+    sta RSP
+    bcs !+
+    dec RSP+1
+!:
+    ldy #0
+    lda #<addr
+    sta (RSP),y
+    iny
+    lda #>addr
+    sta (RSP),y
+}
+
+// -----------------------------------------------------------------------------
+// Frame-stack macros — push/pop/peek via FSP (not FP).
+// -----------------------------------------------------------------------------
+
+.macro fs_push(src) {
+    sec
+    lda FSP
+    sbc #2
+    sta FSP
+    bcs !+
+    dec FSP+1
+!:
+    ldy #0
+    lda src
+    sta (FSP),y
+    iny
+    lda src+1
+    sta (FSP),y
+}
+
+.macro fs_pop(dst) {
+    ldy #0
+    lda (FSP),y
+    sta dst
+    iny
+    lda (FSP),y
+    sta dst+1
+    clc
+    lda FSP
+    adc #2
+    sta FSP
+    bcc !+
+    inc FSP+1
+!:
+}
+
+// Read non-handle arg from the caller's FS slot. Caller-pushed args live
+// immediately above this routine's 22-byte frame, starting at offset 22.
+// depth=0 is the topmost (most recently pushed) arg.
+.macro fs_peek_arg(dst, depth) {
+    ldy #22 + depth*2
+    lda (FP),y
+    sta dst
+    iny
+    lda (FP),y
+    sta dst+1
+}
+
+// -----------------------------------------------------------------------------
+// Byte-oriented FS operations. Unlike fs_push / fs_pop (which move words),
+// these move a single byte per call — useful when you need to buffer scratch
+// bytes (e.g. the digit reversal buffer in int_to_str).
+//
+// Interleaving a run of fs_push_byte with normal V4' sub-calls is safe:
+// sub-routines' preamble frames are carved BELOW the current FSP, and their
+// postamble restores FSP exactly. Byte data above that point is preserved.
+//
+// Contract:
+//   fs_push_byte — in A = byte; out nothing. Clobbers Y.
+//   fs_pop_byte  — in nothing; out A = popped byte. Clobbers Y.
+// -----------------------------------------------------------------------------
+
+.macro fs_push_byte() {
+    pha                      // save byte while we decrement FSP
+    lda FSP
+    bne !+
+    dec FSP+1
+!:
+    dec FSP
+    pla
+    ldy #0
+    sta (FSP),y
+}
+
+.macro fs_pop_byte() {
+    ldy #0
+    lda (FSP),y              // A = popped byte
+    inc FSP
+    bne !+
+    inc FSP+1
+!:
+}
+
+// -----------------------------------------------------------------------------
+// Callable wrappers — for the Python test harness and convenience JSRs.
+// -----------------------------------------------------------------------------
+rs_push_w0:
+    rs_push(W0)
+    rts
+
+rs_pop_w0:
+    rs_pop(W0)
+    rts
+
+rs_push_w1:
+    rs_push(W1)
+    rts
+
+rs_pop_w1:
+    rs_pop(W1)
+    rts
