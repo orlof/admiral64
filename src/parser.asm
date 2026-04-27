@@ -2334,9 +2334,10 @@ _llb_idx_pos:
     jmp postamble
 
 _llb_dict:
-    // Dict: push key on RS so dict_get sees [dict, key].
+    // Dict subscript: walk prototype chain (matches `obj.attr` semantics and
+    // Admiral's `eval_subscription_dict` → scope_get).
     rs_push(RV)
-    jsr dict_get
+    jsr dict_get_proto
     jmp postamble
 
 _llb_str_get:
@@ -2660,8 +2661,8 @@ _ldot_have_name:
     jmp _ldot_method_prefix
 !next:
 
-    // Property read.
-    jsr dict_get                    // consumes 2; RV = value
+    // Property read — walk prototype chain on miss.
+    jsr dict_get_proto              // consumes 2; RV = value or NONE
     jmp postamble
 
 _ldot_method_prefix:
@@ -2692,17 +2693,23 @@ _ldot_method_prefix:
     jmp error_handler
 
 _ldot_dict_method:
-    // Prototype pattern wins: try the user dict's own keys first. Only fall
-    // back to the dict_methods table on miss, so a user dict storing
-    // {"keys": ..., "get": ..., etc.} shadows the built-ins as expected.
-    rs_peek_at(W0, 1)               // dict (slot 1; name is at slot 0)
-    rs_peek(W1)                     // name
-    jsr _dict_bin_search            // A = 1 hit / 0 miss
-    cmp #0
+    // User-dict-with-prototype-chain wins over built-ins. Walk the "_" chain
+    // until we find the name, or fall back to dict_methods on full-chain miss.
+    // RS: [..., dict, name]. dict_get_proto consumes both; we save name in W1
+    // first so we can re-stage for _method_lookup if the chain misses.
+    rs_peek(W1)                     // W1 = name (preserved across dict_get_proto)
+    jsr dict_get_proto              // consumes 2; RV = value or NONE
+
+    lda RV+1
+    cmp #>NONE
+    bne _ldot_dict_user_hit
+    lda RV
+    cmp #<NONE
     bne _ldot_dict_user_hit
 
-    // Miss: try built-in dict methods. _method_lookup expects W0 = table,
-    // W1 = name (W1 is preserved by _dict_bin_search's V4' frame).
+    // Miss across whole chain: try built-in dict methods. _method_lookup
+    // expects W1 = name — we restored that above (dict_get_proto's frame
+    // saved/restored W1).
     lda #<dict_methods
     sta W0
     lda #>dict_methods
@@ -2710,12 +2717,10 @@ _ldot_dict_method:
     jsr _method_lookup              // A = 1/0; RV = builtin handle on hit
     cmp #0
     beq _ldot_dict_no_method
-    rs_drop(1)                      // discard name (we don't need it)
     jmp postamble                   // RV = builtin handle
 
 _ldot_dict_user_hit:
-    jsr dict_get                    // RV = user's value (string-callable, etc.)
-    jmp postamble
+    jmp postamble                   // RV already holds the user-defined value
 
 _ldot_dict_no_method:
     lda #ERR_LEX

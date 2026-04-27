@@ -430,6 +430,16 @@ BUILTIN_DICT_VALUES_OBJ:
     .word 2
     .word builtin_dict_values
 
+BUILTIN_DICT_CREATE:
+    .word BUILTIN_DICT_CREATE_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_DICT_CREATE_OBJ:
+    .word 2
+    .word builtin_dict_create
+
 
 
 // Name strings for binding the built-ins into the global scope at
@@ -685,6 +695,17 @@ STR_NAME_M_VALUES:
 STR_NAME_M_VALUES_OBJ:
     .word 6
     .byte $76, $61, $6C, $75, $65, $73  // "values"
+
+STR_NAME_M_CREATE:
+    .word STR_NAME_M_CREATE_OBJ
+    .word 8
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_M_CREATE_OBJ:
+    .word 6
+    .byte $63, $72, $65, $61, $74, $65  // "create"
+
 
 
 // --- punctuation singletons used by builtin_str container rendering ---------

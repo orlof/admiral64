@@ -221,6 +221,69 @@ _dg_match:
     jmp postamble
 
 // -----------------------------------------------------------------------------
+// dict_get_proto — like dict_get but walks the "_" prototype chain on miss.
+//
+// Used by attribute access (`obj.attr`) and method dispatch on TYPE_DICT.
+// The convention: a dict storing `_` → other_dict makes that other_dict the
+// prototype. A miss in the local dict recursively looks up in the prototype.
+// Returns NONE if the key is absent in the entire chain.
+//
+//   in:  RS bottom→top: dict, key.
+//   out: RV = value handle, or NONE on absent. Args consumed (mirrors dict_get).
+// V4'.
+// -----------------------------------------------------------------------------
+dict_get_proto:
+    preamble_args(2, 0)
+
+    rs_pop(W1)                       // W1 = key (will be re-pushed each iter)
+    rs_pop(W0)                       // W0 = current walker dict
+
+_dgp_loop:
+    rs_push(W0)
+    rs_push(W1)
+    jsr dict_get                     // consumes 2; RV = value or NONE
+
+    // Hit?
+    lda RV+1
+    cmp #>NONE
+    bne _dgp_done
+    lda RV
+    cmp #<NONE
+    bne _dgp_done
+
+    // Miss — look up "_" in the same dict.
+    rs_push(W0)
+    rs_push_const(STR_UNDERSCORE)
+    jsr dict_get                     // RV = parent dict or NONE
+
+    lda RV+1
+    cmp #>NONE
+    bne _dgp_have_parent
+    lda RV
+    cmp #<NONE
+    beq _dgp_done                    // no parent → RV is already NONE
+
+_dgp_have_parent:
+    // Parent must be TYPE_DICT to be walkable. If not, give up and return NONE.
+    lda RV
+    sta W0
+    lda RV+1
+    sta W0+1
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_DICT
+    bne !skip+
+    jmp _dgp_loop
+!skip:
+    lda #<NONE
+    sta RV
+    lda #>NONE
+    sta RV+1
+
+_dgp_done:
+    jmp postamble
+
+// -----------------------------------------------------------------------------
 // dict_set — insert or update (key → value).
 //   in:  RS bottom→top: dict, key, value.
 //   out: dict[key] = value. All three args consumed.

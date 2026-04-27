@@ -1391,6 +1391,30 @@ _bdb_done:
     rs_pop(RV)
     rts
 
+// --- dict.create() — empty dict with me as prototype -----------------------
+//   in:  RS slot 0 = me (TYPE_DICT)
+//   out: RV = new dict, with new["_"] = me
+//
+// Mirrors Admiral's `built_in__dict_create` (builtin.dasm16:64). The new dict
+// holds a single (`_`, me) entry so scope_get's prototype walk picks up the
+// chain.
+// =============================================================================
+builtin_dict_create:
+    preamble_args(1, 0)
+
+    jsr dict_alloc                    // RV = new dict
+    rs_push(RV)                       // RS: [me, new] — root new
+
+    // Stage dict_set(new, "_", me): caller pushes (dict, key, value) on top.
+    rs_push(RV)                       // RS: [me, new, new]
+    rs_push_const(STR_UNDERSCORE)     // RS: [me, new, new, "_"]
+    rs_peek_at(W0, 3)                 // me at slot 3
+    rs_push(W0)                       // RS: [me, new, new, "_", me]
+    jsr dict_set                      // consumes top 3; RS: [me, new]
+
+    rs_peek(RV)                       // RV = new (slot 0)
+    jmp postamble
+
 // =============================================================================
 // _method_lookup — find a method handle by name in a per-type table.
 //
@@ -1467,4 +1491,5 @@ dict_methods:
     .word STR_NAME_M_GET, BUILTIN_DICT_GET
     .word STR_NAME_M_KEYS, BUILTIN_DICT_KEYS
     .word STR_NAME_M_VALUES, BUILTIN_DICT_VALUES
+    .word STR_NAME_M_CREATE, BUILTIN_DICT_CREATE
     .word 0

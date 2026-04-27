@@ -16,7 +16,7 @@ from test_str import place_str
 def _eval(h, source: str) -> int:
     """Place source on heap, push handle on RS, call parser_eval, read int."""
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     return _read_int(h, h.read_word(RV))
@@ -176,7 +176,7 @@ def test_subtract_with_unary(h):
 
 def _eval_bool(h, source: str) -> bool:
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv_handle = h.read_word(RV)
@@ -218,7 +218,7 @@ def test_false_literal(h):
 
 def test_none_literal_returns_none_handle(h):
     payload = list("None".encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -231,7 +231,7 @@ def test_none_literal_returns_none_handle(h):
 
 def test_str_literal(h):
     payload = list('"hello"'.encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -333,7 +333,7 @@ def test_is_with_int_literals_returns_false_for_separate_handles(h):
 
 def _eval_list_len(h, source: str) -> int:
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -360,7 +360,7 @@ def test_list_with_trailing_comma(h):
 def test_nested_list(h):
     """`[[1, 2], [3]]` — outer length 2, both elements are lists."""
     payload = list("[[1, 2], [3]]".encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -395,7 +395,7 @@ def test_list_index_with_arithmetic_result(h):
 def _eval_container_type_and_len(h, source: str) -> tuple[int, int]:
     """Return (H_TYPE, O_LEN) of the result. Useful for tuple/list/dict shape."""
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -516,7 +516,7 @@ from conftest import msbasic_to_python
 
 def _eval_float(h, source: str) -> float:
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -559,7 +559,7 @@ def test_float_in_parens(hfp):
 def test_float_handle_is_typed(hfp):
     from conftest import TYPE_FLOAT
     payload = list("1.5".encode("ascii"))
-    handle = place_str(hfp, 0x7000, payload)
+    handle = place_str(hfp, 0x7800, payload)
     hfp.rs_push(handle)
     hfp.call("parser_eval", max_steps=2_000_000)
     rv = hfp.read_word(RV)
@@ -770,7 +770,7 @@ def test_assignment_returns_none(h):
     """`x = 5` evaluates to NONE."""
     from conftest import TYPE_NONE
     payload = list("x = 5".encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -804,7 +804,7 @@ def test_assignment_uses_rhs_with_existing_var(h):
 def test_undefined_name_panics(h):
     """Looking up a name that's not in scope panics."""
     payload = list("undefined_var".encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", expect_panic=True)
 
@@ -816,7 +816,7 @@ def test_variable_in_complex_expression(h):
 def test_variable_with_container(h):
     """Variables can hold lists/tuples/dicts."""
     payload = list("xs = [1, 2, 3]\nxs[1]".encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     assert _read_int(h, h.read_word(RV)) == 2
@@ -825,7 +825,7 @@ def test_variable_with_container(h):
 def test_variable_holds_string(h):
     """Variables can hold TYPE_STR; identity check."""
     payload = list('s = "hello"\ns'.encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -837,7 +837,7 @@ def test_empty_source_returns_none(h):
     """Empty source string produces NONE."""
     from conftest import TYPE_NONE
     payload = []
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -848,7 +848,7 @@ def test_just_newlines_returns_none(h):
     """Source with just whitespace/newlines returns NONE."""
     from conftest import TYPE_NONE
     payload = list("\n\n\n".encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -868,7 +868,7 @@ def test_variable_underscore_prefix(h):
 def test_assignment_with_float(hfp):
     """Float values store and recall."""
     payload = list("pi = 3.14\npi".encode("ascii"))
-    handle = place_str(hfp, 0x7000, payload)
+    handle = place_str(hfp, 0x7800, payload)
     hfp.rs_push(handle)
     hfp.call("parser_eval", max_steps=2_000_000)
     rv = hfp.read_word(RV)
@@ -883,7 +883,7 @@ def test_pass_alone(h):
     """`pass` is a no-op statement."""
     from conftest import TYPE_NONE
     payload = list("pass".encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -1310,7 +1310,7 @@ def _read_screen(h, count: int = 80) -> bytes:
 def _eval_with_screen(h, source: str) -> bytes:
     h.call("screen_init")
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     return _read_screen(h)
@@ -1372,7 +1372,7 @@ def test_print_in_loop(h):
     h.call("screen_init")
     src = "for x in [1, 2, 3]:\n    print x"
     payload = list(src.encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     # Row 0 col 0 = '1', row 1 col 0 = '2', row 2 col 0 = '3'.
@@ -1398,7 +1398,7 @@ def test_program_compute_and_print(h):
     )
     h.call("screen_init")
     payload = list(src.encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     # 5! = 120. Screen codes for '1','2','0' = 0x31, 0x32, 0x30.
@@ -1502,7 +1502,7 @@ def test_str_function_no_return_yields_none(h):
         'noop()'
     )
     payload = list(src.encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -1762,7 +1762,7 @@ def test_property_read_doesnt_set_me_for_later_call(h):
     # If me leaked, fn would return d. With proper clearing, me is 0.
     # Reading me as a value: scope_get("me") panics if not bound.
     payload = list(src.encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", expect_panic=True, max_steps=2_000_000)
     assert h.mpu.memory[0x27] == 0x04  # ERR_LEX (name not found)
@@ -1816,7 +1816,7 @@ def test_attribute_assignment_returns_none(h):
     """`d.x = v` evaluates to NONE (statement-as-expression convention)."""
     from conftest import TYPE_NONE
     payload = list('d = {"x": 1}\nd.x = 99'.encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -1862,7 +1862,7 @@ def test_lexical_scoping_not_dynamic(h):
         'caller()'
     )
     payload = list(src.encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", expect_panic=True, max_steps=2_000_000)
     assert h.mpu.memory[0x27] == 0x04   # ERR_LEX
@@ -1873,7 +1873,7 @@ def test_return_yields_ctrl_handle(h):
     from conftest import RV
     src = "return 42"
     payload = list(src.encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -1885,7 +1885,7 @@ def test_return_yields_ctrl_handle(h):
 
 def _eval_str(h, source: str) -> bytes:
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     from test_str import read_str
@@ -1895,7 +1895,7 @@ def _eval_str(h, source: str) -> bytes:
 def _eval_list_ints(h, source: str) -> list[int]:
     """Evaluate to a TYPE_LIST/TUPLE of ints; read element values."""
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -1938,7 +1938,7 @@ def test_list_slice_full(h):
 
 def test_list_slice_empty(h):
     payload = list("[10, 20, 30][1:1]".encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -1950,7 +1950,7 @@ def test_list_slice_returns_new_list_type(h):
     """Slicing a list yields a list, not a tuple."""
     from conftest import TYPE_LIST
     payload = list("[1, 2, 3][0:2]".encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -1961,7 +1961,7 @@ def test_tuple_slice_preserves_tuple_type(h):
     """Slicing a tuple yields a tuple."""
     from conftest import TYPE_TUPLE
     payload = list("(10, 20, 30, 40)[1:3]".encode("ascii"))
-    handle = place_str(h, 0x7000, payload)
+    handle = place_str(h, 0x7800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -2947,3 +2947,89 @@ def test_augass_list_extend(h):
         'lst[2]'
     )
     assert _eval(h, src) == 3
+
+
+# --- dict.create() / prototype inheritance ----------------------------------
+
+def test_dict_create_returns_new_dict(h):
+    """create() returns a fresh dict; modifying it doesn't touch the proto."""
+    src = (
+        'p = {"x": 1}\n'
+        'c = p.create()\n'
+        'c["x"] = 2\n'
+        'p["x"]'
+    )
+    assert _eval(h, src) == 1
+
+
+def test_dict_create_child_holds_own_writes(h):
+    src = (
+        'p = {"x": 1}\n'
+        'c = p.create()\n'
+        'c["x"] = 2\n'
+        'c["x"]'
+    )
+    assert _eval(h, src) == 2
+
+
+def test_dict_create_child_inherits_field(h):
+    """Field defined on prototype is visible on child by attribute access."""
+    src = (
+        'p = {"x": 7}\n'
+        'c = p.create()\n'
+        'c.x'
+    )
+    assert _eval(h, src) == 7
+
+
+def test_dict_create_method_inherits_from_prototype(h):
+    """Method defined on prototype runs on child via me-binding."""
+    src = (
+        'ship = {"spd": 0, "go": "me.spd = 8"}\n'
+        'shuttle = ship.create()\n'
+        'shuttle.go()\n'
+        'shuttle.spd'
+    )
+    assert _eval(h, src) == 8
+
+
+def test_dict_create_method_does_not_pollute_prototype(h):
+    src = (
+        'ship = {"spd": 0, "go": "me.spd = 8"}\n'
+        'shuttle = ship.create()\n'
+        'shuttle.go()\n'
+        'ship.spd'
+    )
+    assert _eval(h, src) == 0
+
+
+def test_dict_create_prototype_changes_propagate(h):
+    """Updating the prototype is reflected in children that don't shadow."""
+    src = (
+        'p = {"x": 1}\n'
+        'c = p.create()\n'
+        'p["x"] = 99\n'
+        'c.x'
+    )
+    assert _eval(h, src) == 99
+
+
+def test_dict_create_three_level_chain(h):
+    """create() can chain — grandchild reads through grandparent."""
+    src = (
+        'a = {"v": 5}\n'
+        'b = a.create()\n'
+        'c = b.create()\n'
+        'c.v'
+    )
+    assert _eval(h, src) == 5
+
+
+def test_dict_create_subscript_inherits(h):
+    """Subscript reads (`obj["key"]`) walk prototype too."""
+    src = (
+        'p = {"x": 11}\n'
+        'c = p.create()\n'
+        'c["x"]'
+    )
+    assert _eval(h, src) == 11
