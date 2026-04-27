@@ -161,7 +161,7 @@ We only use **register-form** routines — no memory-form variants.
 | $BF7B  | SQR     | sqrt(FAC1) (transcendentals, later)    |
 | $E26B  | SIN     | sin(FAC1)                              |
 | $E264  | COS     | cos(FAC1)                              |
-| $E097  | RND     | (when crypto/builtin needs)            |
+| $E097  | RND     | (when builtin_rnd needs)               |
 
 These are well-documented and stable across PAL/NTSC KERNAL revs.
 **Verify each address in VICE before committing the wrapper** — exact

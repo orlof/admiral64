@@ -2,7 +2,7 @@
 
 Bring every user-facing DCPU Admiral feature to the C64 port: REPL, Python-ish
 language, gap-buffer editor, disk filesystem with object-graph save/load,
-hi-res graphics, crypto/PRNG. Same semantics, different hardware substrate
+hi-res graphics. Same semantics, different hardware substrate
 (KERNAL + 1541 + VIC-II + SID instead of LEM1802 + M35FD + Generic Keyboard).
 
 > **What lives in this document.** Stage-level feature progress: what's done, what's next, and the rationale for stage ordering. Read this when you want to know *what to ship next*.
@@ -44,9 +44,10 @@ hi-res / SID. Watch code size from Stage 8 onward.
 | 12. Gap-buffer editor (`edit()`) | ⏸ pending | — | |
 | 13. Disk + object-graph serialization | ⏸ pending | — | KERNAL 1541; save/load |
 | 14. Hi-res graphics (bank 3 migration) | ⏸ pending | — | Optional; 4 KB cost |
-| 15. Crypt + PRNG (LFSR + Hummingbird-2) | ⏸ pending | — | |
-| 16. SID sound | ⏸ pending | — | Optional |
-| 17. Polish (custom IRQ, .d64 image, cold-start) | ⏸ pending | — | |
+| 15. SID sound | ⏸ pending | — | Optional |
+| 16. Polish (custom IRQ, .d64 image, cold-start) | ⏸ pending | — | |
+
+**Removed from plan**: Hummingbird-2 crypto (str.encrypt / str.decrypt). HB-2 is academically broken (Saarinen's 2011 forgery attack), the original Admiral's IV scheme is non-random (reads heap state at encrypt time), and no code in the rest of Admiral depends on it — disk save/load uses its own binary serializer. Not worth the ~200 lines of port for a known-bad cipher.
 
 **Current**: 1010/1010 tests, ~18.6 KB binary. **Full Admiral prototyping**: dicts ARE objects, methods are strings, `obj.method(args)` binds `me = obj`, `me.x = v` mutates the receiver. A bank-account object with deposit/withdraw runs end-to-end. Pending: positional args, multi-line `{...}` literals, `try`/`except`, more built-ins, REPL.
 
@@ -61,10 +62,9 @@ Stage 6 ──┘                                                               
                                                                                                              ▼
                                                                                           12 (editor) ←──────┤
                                                                                           13 (disk)   ←──────┤
-                                                                                          14 (hires)  ←──────┤
-                                                                                          15 (crypt)  ←──────┘
-                                                                                          16 (SID, optional)
-                                                                                          17 (polish)
+                                                                                          14 (hires)  ←──────┘
+                                                                                          15 (SID, optional)
+                                                                                          16 (polish)
                                                                                           5d (deferred)
 ```
 
@@ -129,15 +129,11 @@ Object-graph serialization is the heavy lift. Two-pass:
 
 Bank 3 migration: screen → `$C000`, charset copied to `$C800`, bitmap at `$E000` "under" KERNAL ROM (VIC sees RAM, CPU sees ROM). 4 KB cost. Then port `hires.dasm16`: line, rect, fill, blit, pixel get/set, mode switch. Sprite layer is C64-gain (Admiral has no DCPU equivalent).
 
-### Stage 15 — Crypt + PRNG
-
-LFSR (~30 LOC). Hummingbird-2 (~200 LOC mechanical port from `crypt.dasm16`). Matters for serialization integrity at Stage 13.
-
-### Stage 16 — SID sound *(optional)*
+### Stage 15 — SID sound *(optional)*
 
 Admiral has Speaker via generic device. C64 SID is more capable but the parity surface is "tone, frequency, duration, voice." Can ship without.
 
-### Stage 17 — Polish
+### Stage 16 — Polish
 
 Bundle `admiral.prg` + sample programs onto a `.d64`. Custom IRQ for cursor blink + jiffy. Clean cold-start path that survives `RUN` after a previous session.
 
