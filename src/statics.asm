@@ -329,6 +329,16 @@ BUILTIN_SORT_OBJ:
     .word 2
     .word builtin_sort
 
+BUILTIN_RND:
+    .word BUILTIN_RND_OBJ
+    .word 4
+    .word 0
+    .byte TYPE_BUILTIN
+    .byte 0
+BUILTIN_RND_OBJ:
+    .word 2
+    .word builtin_rnd
+
 // --- Method builtins (resolved via per-type method tables in builtins.asm) ---
 BUILTIN_STR_UPPER:
     .word BUILTIN_STR_UPPER_OBJ
@@ -653,6 +663,16 @@ STR_NAME_SORT:
 STR_NAME_SORT_OBJ:
     .word 4
     .byte $73, $6F, $72, $74       // "sort"
+
+STR_NAME_RND:
+    .word STR_NAME_RND_OBJ
+    .word 5
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_NAME_RND_OBJ:
+    .word 3
+    .byte $72, $6E, $64            // "rnd"
 
 // --- Method names. Prefixed `STR_NAME_M_` so they don't collide with the ----
 // global-builtin name strings above. ----------------------------------------

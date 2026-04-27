@@ -692,6 +692,39 @@ _brd_close:
     rts
 
 // =============================================================================
+// builtin_rnd() — return a random INT in 0..255.
+//   in:  (no args)
+//   out: RV = freshly-allocated 1-byte TYPE_INT.
+//
+// Wraps `rand8` (AX+ Tinyrand8). Original Admiral's `rnd([start[, end]])`
+// has optional bounded forms, but our parser doesn't model optional
+// positional args yet — pick narrow scope (single byte). User code can do
+// `rnd() % n` for a 0..n-1 range.
+// =============================================================================
+builtin_rnd:
+    preamble_args(0, 0)
+    jsr rand8
+    sta B0                            // stash byte across alloc
+    // 2-byte allocation: any 8-bit value with high-bit set would otherwise
+    // sign-extend to a negative INT. High byte = 0 keeps the result
+    // unsigned in 0..255.
+    lda #2
+    sta ALLOC_SIZE
+    lda #0
+    sta ALLOC_SIZE+1
+    lda #TYPE_INT
+    sta ALLOC_TYPE
+    jsr alloc
+    jsr deref_RV_to_W2
+    ldy #0
+    lda B0
+    sta (W2),y
+    iny
+    lda #0
+    sta (W2),y
+    jmp postamble
+
+// =============================================================================
 // builtin_sort(S) — return a sorted version of S.
 //   in:  RS slot 0 = me (TYPE_STR, TYPE_TUPLE, or TYPE_LIST).
 //   out: RV = sorted result. STR/TUPLE return a fresh sorted copy. LIST is

@@ -3314,3 +3314,46 @@ def test_sort_list_strings(h):
         'lst[0]'
     )
     assert _eval_str(h, src) == b"apple"
+
+
+# --- rnd -------------------------------------------------------------------
+
+def test_rnd_returns_in_byte_range(h):
+    """rnd() result is in 0..255."""
+    v = _eval(h, 'rnd()')
+    assert 0 <= v <= 255
+
+
+def test_rnd_first_value_from_seed_0(h):
+    """AX+ Tinyrand8 with set_seed(0) → 184 on first call."""
+    assert _eval(h, 'rnd()') == 184
+
+
+def test_rnd_second_value_from_seed_0(h):
+    src = (
+        'rnd()\n'
+        'rnd()'
+    )
+    assert _eval(h, src) == 163
+
+
+def test_rnd_sequence_from_seed_0(h):
+    """First 3 outputs from a fresh seed-0 PRNG."""
+    src = (
+        'a = rnd()\n'
+        'b = rnd()\n'
+        'c = rnd()\n'
+        'a + b * 1000 + c * 1000000'
+    )
+    assert _eval(h, src) == 184 + 163 * 1000 + 27 * 1000000
+
+
+def test_rnd_two_calls_differ(h):
+    """Sanity: successive calls don't return the same byte (statistically)."""
+    src = (
+        'a = rnd()\n'
+        'b = rnd()\n'
+        'a - b'
+    )
+    # First two from seed-0 are 184, 163 → diff = 21
+    assert _eval(h, src) == 21

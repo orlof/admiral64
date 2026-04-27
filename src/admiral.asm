@@ -23,6 +23,7 @@ boot:
     jsr rs_init
     jsr fs_init
     jsr alloc_init
+    jsr rnd_init
 
     // Screen must init AFTER the software stacks + heap — print_str runs as
     // a V4' routine and expects FS/RS to be live. BASIC is already banked
@@ -88,6 +89,7 @@ error_handler:
 #import "lexer.asm"
 #import "int_parse.asm"
 #import "scope.asm"
+#import "rnd.asm"
 #import "builtins.asm"
 #import "parser.asm"
 

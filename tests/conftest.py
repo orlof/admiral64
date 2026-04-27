@@ -438,6 +438,7 @@ def h(built) -> Harness:
     harness.call("rs_init")
     harness.call("fs_init")
     harness.call("alloc_init")
+    harness.call("rnd_init")
     return harness
 
 
@@ -472,6 +473,7 @@ def hfp(built) -> Harness:
     harness.call("rs_init")
     harness.call("fs_init")
     harness.call("alloc_init")
+    harness.call("rnd_init")
     # Move handle area below BASIC ROM so allocations don't trample ROM bytes
     # in the py65 image. NEXT_HANDLE = $A000 → first handle at $9FF8.
     harness.write_word(0x20, 0xA000)  # NEXT_HANDLE — must match defs.asm
