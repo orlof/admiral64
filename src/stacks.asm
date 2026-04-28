@@ -170,19 +170,24 @@ rs_init:
 // -----------------------------------------------------------------------------
 
 .macro fs_push(src) {
-    sec
-    lda FSP
-    sbc #2
-    sta FSP
-    bcs !+
-    dec FSP+1
-!:
-    ldy #0
-    lda src
-    sta (FSP),y
-    iny
-    lda src+1
-    sta (FSP),y
+    .if (src == W0)      { jsr fs_push_w0 }
+    else .if (src == W2) { jsr fs_push_w2 }
+    else .if (src == W3) { jsr fs_push_w3 }
+    else {
+        sec
+        lda FSP
+        sbc #2
+        sta FSP
+        bcs !+
+        dec FSP+1
+    !:
+        ldy #0
+        lda src
+        sta (FSP),y
+        iny
+        lda src+1
+        sta (FSP),y
+    }
 }
 
 .macro fs_pop(dst) {
@@ -332,6 +337,39 @@ rs_push_rv:
     iny
     lda RV+1
     sta (RSP),y
+    rts
+
+// -----------------------------------------------------------------------------
+// fs_push_{w0,w2,w3} — JSR-callable wrappers behind the fs_push(src) macro.
+// W0/W3 entries load A/X and tail-jump into the W2 fall-through, so all
+// three share one copy of the FSP-decrement and the (FSP)-write.
+// -----------------------------------------------------------------------------
+fs_push_w0:
+    lda W0
+    ldx W0+1
+    jmp _fs_push_ax
+fs_push_w3:
+    lda W3
+    ldx W3+1
+    jmp _fs_push_ax
+fs_push_w2:
+    lda W2
+    ldx W2+1
+_fs_push_ax:                  // in: A = lo, X = hi
+    pha
+    sec
+    lda FSP
+    sbc #2
+    sta FSP
+    bcs !+
+    dec FSP+1
+!:
+    txa
+    ldy #1
+    sta (FSP),y
+    pla
+    dey
+    sta (FSP),y
     rts
 
 rs_pop_w0:
