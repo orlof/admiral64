@@ -253,30 +253,31 @@ _pcs_panic:
 
 // -----------------------------------------------------------------------------
 // postamble_return_{true,false,none} — labeled tail entries that load the
-// matching static handle and fall through to postamble_set_rv_ax → postamble.
-// All static handles live in page $27, so a single `ldx #$27` serves all
-// three. The `.byte $2C` (BIT abs) acts as a 1-byte "skip next 2 bytes":
-// it consumes the following `lda #imm` as a harmless 16-bit address operand,
-// touching neither A nor X (only N/V/Z flags, which postamble does not read).
+// matching static handle into A/X and fall through to postamble_set_rv_ax.
+// The first two entries use `bne postamble_set_rv_ax` to skip the trailing
+// entries; the BNE is always taken because `ldx #>HANDLE` clears Z whenever
+// the handle's hi byte is non-zero (statics live well above page $00, so
+// this holds for every reachable build layout).
 //
 // A call site that returns one of these handles becomes a 3-byte
 //     jmp postamble_return_<x>
 // instead of the 7-byte
 //     lda #<H ; ldx #>H ; jmp postamble_set_rv_ax.
 //
-// postamble_set_rv_ax — generic tail helper for handles outside page $27 or
-// for any non-static return value. Caller passes A = lo, X = hi.
-// Falls through into postamble.
+// postamble_set_rv_ax — generic tail helper for any non-handle-specific
+// return. Caller passes A = lo, X = hi. Falls through into postamble.
 // -----------------------------------------------------------------------------
 postamble_return_true:
     lda #<TRUE
-    .byte $2C                // BIT abs — swallows the next 2 bytes
+    ldx #>TRUE
+    bne postamble_set_rv_ax  // always taken (hi != 0)
 postamble_return_false:
     lda #<FALSE
-    .byte $2C                // BIT abs — swallows the next 2 bytes
+    ldx #>FALSE
+    bne postamble_set_rv_ax  // always taken (hi != 0)
 postamble_return_none:
     lda #<NONE
-    ldx #$27
+    ldx #>NONE
 postamble_set_rv_ax:
     sta RV
     stx RV+1

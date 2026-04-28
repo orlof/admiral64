@@ -372,77 +372,24 @@ _fs_push_ax:                  // in: A = lo, X = hi
     sta (FSP),y
     rts
 
+// rs_pop_{w0..w3,rv} — peek into target, then bump RSP by 2 via the shared
+// _rs_inc_rsp tail. rs_peek_* preserves X, _rs_inc_rsp preserves X, so the
+// macro contract (clobbers A/Y, preserves X) is intact.
 rs_pop_w0:
-    ldy #0
-    lda (RSP),y
-    sta W0
-    iny
-    lda (RSP),y
-    sta W0+1
-    clc
-    lda RSP
-    adc #2
-    sta RSP
-    bcc !+
-    inc RSP+1
-!:
-    rts
-
+    jsr rs_peek_w0
+    jmp _rs_inc_rsp
 rs_pop_w1:
-    ldy #0
-    lda (RSP),y
-    sta W1
-    iny
-    lda (RSP),y
-    sta W1+1
-    clc
-    lda RSP
-    adc #2
-    sta RSP
-    bcc !+
-    inc RSP+1
-!:
-    rts
-
+    jsr rs_peek_w1
+    jmp _rs_inc_rsp
 rs_pop_w2:
-    ldy #0
-    lda (RSP),y
-    sta W2
-    iny
-    lda (RSP),y
-    sta W2+1
-    clc
-    lda RSP
-    adc #2
-    sta RSP
-    bcc !+
-    inc RSP+1
-!:
-    rts
-
+    jsr rs_peek_w2
+    jmp _rs_inc_rsp
 rs_pop_w3:
-    ldy #0
-    lda (RSP),y
-    sta W3
-    iny
-    lda (RSP),y
-    sta W3+1
-    clc
-    lda RSP
-    adc #2
-    sta RSP
-    bcc !+
-    inc RSP+1
-!:
-    rts
-
+    jsr rs_peek_w3
+    jmp _rs_inc_rsp
 rs_pop_rv:
-    ldy #0
-    lda (RSP),y
-    sta RV
-    iny
-    lda (RSP),y
-    sta RV+1
+    jsr rs_peek_rv
+_rs_inc_rsp:
     clc
     lda RSP
     adc #2
