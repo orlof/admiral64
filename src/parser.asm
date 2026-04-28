@@ -199,10 +199,8 @@ stmt_pass:
     preamble_args(0, 0)
     jsr lexer_next
     lda #<NONE
-    sta RV
-    lda #>NONE
-    sta RV+1
-    jmp postamble
+    ldx #>NONE
+    jmp postamble_set_rv_ax
 
 // -----------------------------------------------------------------------------
 // stmt_break — `break` keyword. Consume token; return CTRL_BREAK.
@@ -211,10 +209,8 @@ stmt_break:
     preamble_args(0, 0)
     jsr lexer_next
     lda #<CTRL_BREAK
-    sta RV
-    lda #>CTRL_BREAK
-    sta RV+1
-    jmp postamble
+    ldx #>CTRL_BREAK
+    jmp postamble_set_rv_ax
 
 // -----------------------------------------------------------------------------
 // stmt_continue — `continue` keyword. Consume token; return CTRL_CONTINUE.
@@ -223,10 +219,8 @@ stmt_continue:
     preamble_args(0, 0)
     jsr lexer_next
     lda #<CTRL_CONTINUE
-    sta RV
-    lda #>CTRL_CONTINUE
-    sta RV+1
-    jmp postamble
+    ldx #>CTRL_CONTINUE
+    jmp postamble_set_rv_ax
 
 // -----------------------------------------------------------------------------
 // stmt_return — `return [expr]`. Allocates a TYPE_CTRL handle with O_LEN=2
@@ -371,10 +365,8 @@ _sd_dict_remove:
 
 _sd_done:
     lda #<NONE
-    sta RV
-    lda #>NONE
-    sta RV+1
-    jmp postamble
+    ldx #>NONE
+    jmp postamble_set_rv_ax
 
 // -----------------------------------------------------------------------------
 // parser_suite — parse the body of a block: consume INDENT, run statements
@@ -663,10 +655,8 @@ _swh_exit:
 
 _swh_done:
     lda #<NONE
-    sta RV
-    lda #>NONE
-    sta RV+1
-    jmp postamble
+    ldx #>NONE
+    jmp postamble_set_rv_ax
 
 // -----------------------------------------------------------------------------
 // stmt_for — `for VAR in EXPR: body`. EXPR may be LIST / TUPLE / DICT.
@@ -862,10 +852,8 @@ _sfor_done:
 
 _sfor_done_post_body:
     lda #<NONE
-    sta RV
-    lda #>NONE
-    sta RV+1
-    jmp postamble
+    ldx #>NONE
+    jmp postamble_set_rv_ax
 
 // -----------------------------------------------------------------------------
 // stmt_print — `print expr`. Evaluates expr, prints via print_value, emits a
@@ -882,10 +870,8 @@ stmt_print:
     lda #$0D
     jsr screen_put_char             // newline
     lda #<NONE
-    sta RV
-    lda #>NONE
-    sta RV+1
-    jmp postamble
+    ldx #>NONE
+    jmp postamble_set_rv_ax
 
 // -----------------------------------------------------------------------------
 // expression — Pratt's expression(rbp). Dispatches NUD then loops on LED.
@@ -1726,16 +1712,12 @@ nud_not:
     bne _nn_to_false
     // operand was falsy → result True
     lda #<TRUE
-    sta RV
-    lda #>TRUE
-    sta RV+1
-    jmp postamble
+    ldx #>TRUE
+    jmp postamble_set_rv_ax
 _nn_to_false:
     lda #<FALSE
-    sta RV
-    lda #>FALSE
-    sta RV+1
-    jmp postamble
+    ldx #>FALSE
+    jmp postamble_set_rv_ax
 
 // -----------------------------------------------------------------------------
 // led_and / led_or — boolean conjunction / disjunction with Python-style
@@ -1829,16 +1811,12 @@ _lis_diff:
     beq _lis_to_false
 _lis_to_true:
     lda #<TRUE
-    sta RV
-    lda #>TRUE
-    sta RV+1
-    jmp postamble
+    ldx #>TRUE
+    jmp postamble_set_rv_ax
 _lis_to_false:
     lda #<FALSE
-    sta RV
-    lda #>FALSE
-    sta RV+1
-    jmp postamble
+    ldx #>FALSE
+    jmp postamble_set_rv_ax
 
 // -----------------------------------------------------------------------------
 // led_in — `x in container`. Membership test. Dispatches on the RHS
@@ -1903,16 +1881,12 @@ _lin_to_bool:
     cmp #0
     beq _lin_false
     lda #<TRUE
-    sta RV
-    lda #>TRUE
-    sta RV+1
-    jmp postamble
+    ldx #>TRUE
+    jmp postamble_set_rv_ax
 _lin_false:
     lda #<FALSE
-    sta RV
-    lda #>FALSE
-    sta RV+1
-    jmp postamble
+    ldx #>FALSE
+    jmp postamble_set_rv_ax
 
 // -----------------------------------------------------------------------------
 // nud_lbrack — list literal `[a, b, c]`. Handles empty `[]` too.
@@ -2550,19 +2524,15 @@ _llba_idx_pos:
     jsr list_set                      // consumes 2 RS + 1 FS
 
     lda #<NONE
-    sta RV
-    lda #>NONE
-    sta RV+1
-    jmp postamble
+    ldx #>NONE
+    jmp postamble_set_rv_ax
 
 _llb_assign_dict:
     // dict_set takes RS [dict, key, value] — exactly what we have.
     jsr dict_set
     lda #<NONE
-    sta RV
-    lda #>NONE
-    sta RV+1
-    jmp postamble
+    ldx #>NONE
+    jmp postamble_set_rv_ax
 
 // Slice form: `a[start:stop]`. Entry: RS top = container, RV = start handle,
 // `:` is the current token. Push start, parse stop, expect `]`, then fall
@@ -2867,10 +2837,8 @@ _ldot_assign:
     // Assignment-as-expression returns NONE (matches Python; matches our
     // existing nud_name assignment convention).
     lda #<NONE
-    sta RV
-    lda #>NONE
-    sta RV+1
-    jmp postamble
+    ldx #>NONE
+    jmp postamble_set_rv_ax
 
 // -----------------------------------------------------------------------------
 // nud_float — parse a TK_FLOAT_LIT span into a TYPE_FLOAT handle.
@@ -2928,10 +2896,8 @@ _nname_assign:
     // Assignment-as-expression returns NONE (matches Python's `=` which is
     // a statement, but here we're an expression so we need *some* value).
     lda #<NONE
-    sta RV
-    lda #>NONE
-    sta RV+1
-    jmp postamble
+    ldx #>NONE
+    jmp postamble_set_rv_ax
 
 // Augmented assignment: `x op= rhs` rewrites to `x = x op rhs`. We delegate
 // to the matching `led_*` function via the augass_lo/hi tables — each
@@ -2959,10 +2925,8 @@ _nna_jsr:
     jsr scope_set                   // consumes 2
 
     lda #<NONE
-    sta RV
-    lda #>NONE
-    sta RV+1
-    jmp postamble
+    ldx #>NONE
+    jmp postamble_set_rv_ax
 
 // -----------------------------------------------------------------------------
 // nud_str — parse a TK_STR span into a TYPE_STR handle via

@@ -186,10 +186,8 @@ dict_get:
 
     // Miss → return NONE.
     lda #<NONE
-    sta RV
-    lda #>NONE
-    sta RV+1
-    jmp postamble
+    ldx #>NONE
+    jmp postamble_set_rv_ax
 
 _dg_match:
     // RV holds the matched index; save before we overwrite RV with the value.

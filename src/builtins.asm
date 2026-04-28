@@ -132,16 +132,12 @@ builtin_bool:
     cmp #0
     beq _bbool_false
     lda #<TRUE
-    sta RV
-    lda #>TRUE
-    sta RV+1
-    jmp postamble
+    ldx #>TRUE
+    jmp postamble_set_rv_ax
 _bbool_false:
     lda #<FALSE
-    sta RV
-    lda #>FALSE
-    sta RV+1
-    jmp postamble
+    ldx #>FALSE
+    jmp postamble_set_rv_ax
 
 // =============================================================================
 // builtin_abs(x) — magnitude. INT/BOOL → INT (negate if negative).
@@ -489,22 +485,16 @@ _bstr_bool:
     lda (W2),y
     bne _bstr_bool_true
     lda #<STR_FALSE
-    sta RV
-    lda #>STR_FALSE
-    sta RV+1
-    jmp postamble
+    ldx #>STR_FALSE
+    jmp postamble_set_rv_ax
 _bstr_bool_true:
     lda #<STR_TRUE
-    sta RV
-    lda #>STR_TRUE
-    sta RV+1
-    jmp postamble
+    ldx #>STR_TRUE
+    jmp postamble_set_rv_ax
 _bstr_none:
     lda #<STR_NONE
-    sta RV
-    lda #>STR_NONE
-    sta RV+1
-    jmp postamble
+    ldx #>STR_NONE
+    jmp postamble_set_rv_ax
 
 // Containers: push container as a fresh root above the args tuple, then push
 // open/close, then call the renderer. Rendering helpers read container at RS
@@ -1567,16 +1557,12 @@ _bsw_loop:
     bne _bsw_loop
 _bsw_true:
     lda #<TRUE
-    sta RV
-    lda #>TRUE
-    sta RV+1
-    jmp postamble
+    ldx #>TRUE
+    jmp postamble_set_rv_ax
 _bsw_false:
     lda #<FALSE
-    sta RV
-    lda #>FALSE
-    sta RV+1
-    jmp postamble
+    ldx #>FALSE
+    jmp postamble_set_rv_ax
 
 // --- str.endswith(suffix) ---------------------------------------------------
 //   in:  args = (me, suffix)
@@ -1617,16 +1603,12 @@ _bew_loop:
     bne _bew_loop
 _bew_true:
     lda #<TRUE
-    sta RV
-    lda #>TRUE
-    sta RV+1
-    jmp postamble
+    ldx #>TRUE
+    jmp postamble_set_rv_ax
 _bew_false:
     lda #<FALSE
-    sta RV
-    lda #>FALSE
-    sta RV+1
-    jmp postamble
+    ldx #>FALSE
+    jmp postamble_set_rv_ax
 
 // --- str.split(sep) — list of substrings split on sep ----------------------
 //   in:  args = (me, sep)
@@ -2038,16 +2020,12 @@ _bia_next:
     cpy B0
     bcc _bia_loop
     lda #<TRUE
-    sta RV
-    lda #>TRUE
-    sta RV+1
-    jmp postamble
+    ldx #>TRUE
+    jmp postamble_set_rv_ax
 _bia_false:
     lda #<FALSE
-    sta RV
-    lda #>FALSE
-    sta RV+1
-    jmp postamble
+    ldx #>FALSE
+    jmp postamble_set_rv_ax
 
 // --- str.isdigit() — TRUE iff every byte is 0-9 (and len > 0) --------------
 //   in:  args = (me,)
@@ -2069,16 +2047,12 @@ _bid_loop:
     cpy B0
     bcc _bid_loop
     lda #<TRUE
-    sta RV
-    lda #>TRUE
-    sta RV+1
-    jmp postamble
+    ldx #>TRUE
+    jmp postamble_set_rv_ax
 _bid_false:
     lda #<FALSE
-    sta RV
-    lda #>FALSE
-    sta RV+1
-    jmp postamble
+    ldx #>FALSE
+    jmp postamble_set_rv_ax
 
 // --- list.append(item) — push item; returns NONE -----------------------------
 //   in:  args = (me, item)   me: TYPE_LIST
@@ -2091,10 +2065,8 @@ builtin_list_append:
     rs_push(W1)
     jsr list_append                   // consumes 2 pushed RS args
     lda #<NONE
-    sta RV
-    lda #>NONE
-    sta RV+1
-    jmp postamble
+    ldx #>NONE
+    jmp postamble_set_rv_ax
 
 // --- list.insert(idx, item) — splice in at idx; returns NONE -----------------
 //   in:  args = (me, idx, item)   me: TYPE_LIST, idx: TYPE_INT
@@ -2124,10 +2096,8 @@ builtin_list_insert:
     jsr array_insert                  // consumes 2 RS + 1 FS; mutates me
 
     lda #<NONE
-    sta RV
-    lda #>NONE
-    sta RV+1
-    jmp postamble
+    ldx #>NONE
+    jmp postamble_set_rv_ax
 
 // --- list.pop() — remove and return last element ----------------------------
 //   in:  args = (me,)   me: TYPE_LIST. Empty list → ERR_TYPE.
@@ -2235,16 +2205,12 @@ builtin_dict_has:
     cmp #0
     beq _bdh_false
     lda #<TRUE
-    sta RV
-    lda #>TRUE
-    sta RV+1
-    jmp postamble
+    ldx #>TRUE
+    jmp postamble_set_rv_ax
 _bdh_false:
     lda #<FALSE
-    sta RV
-    lda #>FALSE
-    sta RV+1
-    jmp postamble
+    ldx #>FALSE
+    jmp postamble_set_rv_ax
 
 // --- dict.keys() — list of keys --------------------------------------------
 //   in:  args = (me,)   me: TYPE_DICT

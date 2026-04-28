@@ -307,3 +307,15 @@ postamble:
 
     pla                       // restore A
     rts
+
+// -----------------------------------------------------------------------------
+// postamble_set_rv_ax — tail helper: store A/X into RV and run postamble.
+//   in:  A = RV lo, X = RV hi
+//   Saves 4 bytes per call site vs the inline
+//       lda #<H ; sta RV ; lda #>H ; sta RV+1 ; jmp postamble
+//   pattern (3-byte jmp + 2 LDs vs the 11-byte inline).
+// -----------------------------------------------------------------------------
+postamble_set_rv_ax:
+    sta RV
+    stx RV+1
+    jmp postamble

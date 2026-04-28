@@ -63,17 +63,13 @@ _ipow_have_mag:
     ora B2
     bne _ipow_init
     lda #<INT_1
-    sta RV
-    lda #>INT_1
-    sta RV+1
-    jmp postamble
+    ldx #>INT_1
+    jmp postamble_set_rv_ax
 
 _ipow_to_int0:
     lda #<INT_0
-    sta RV
-    lda #>INT_0
-    sta RV+1
-    jmp postamble
+    ldx #>INT_0
+    jmp postamble_set_rv_ax
 
 _ipow_init:
     // RS layout we maintain through the loop: [base, exp, r, p].
