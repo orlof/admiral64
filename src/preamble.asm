@@ -252,6 +252,30 @@ _pcs_panic:
     jmp error_handler
 
 // -----------------------------------------------------------------------------
+// preamble_call_1_1_w0 — common opener for 1-arg builtins:
+//     preamble_call(1, 1); arg_get(0, W0)
+// Tail-jumps into arg_get_w0 so its rts returns to the builtin's body.
+//
+// preamble_call_2_2_w0_w1 — common opener for 2-arg builtins:
+//     preamble_call(2, 2); arg_get(0, W0); arg_get(1, W1)
+// -----------------------------------------------------------------------------
+preamble_call_1_1_w0:
+    ldx #1
+    ldy #1
+    jsr _preamble_call
+    ldy #0
+    jmp arg_get_w0
+
+preamble_call_2_2_w0_w1:
+    ldx #2
+    ldy #2
+    jsr _preamble_call
+    ldy #0
+    jsr arg_get_w0
+    ldy #2
+    jmp arg_get_w1
+
+// -----------------------------------------------------------------------------
 // postamble_return_{true,false,none} — labeled tail entries that load the
 // matching static handle into A/X and fall through to postamble_set_rv_ax.
 // The first two entries use `bne postamble_set_rv_ax` to skip the trailing

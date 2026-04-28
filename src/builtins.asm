@@ -52,8 +52,7 @@
 //   out:  RV = TYPE_INT handle holding len.
 // =============================================================================
 builtin_len:
-    preamble_call(1, 1)
-    arg_get(0, W0)               // W0 = container
+    jsr preamble_call_1_1_w0
     jsr deref_W0_to_W2           // W2 = payload base, A = O_LEN low byte
     sta B0                       // length (low byte)
 
@@ -77,9 +76,7 @@ builtin_len:
 //   out:  RV = TYPE_LIST.
 // =============================================================================
 builtin_range:
-    preamble_call(1, 1)
-
-    arg_get(0, W0)
+    jsr preamble_call_1_1_w0
     jsr deref_W0_to_W2
     ldy #0
     lda (W2),y
@@ -126,8 +123,7 @@ _brange_done:
 // builtin_bool(x) — coerce any value to TRUE/FALSE via val_truthy.
 // =============================================================================
 builtin_bool:
-    preamble_call(1, 1)
-    arg_get(0, W0)
+    jsr preamble_call_1_1_w0
     jsr val_truthy               // A = 0 (falsy) or non-zero (truthy)
     cmp #0
     beq _bbool_false
@@ -140,8 +136,7 @@ _bbool_false:
 // FLOAT → FLOAT (clear sign bit). Other types panic ERR_TYPE.
 // =============================================================================
 builtin_abs:
-    preamble_call(1, 1)
-    arg_get(0, W0)
+    jsr preamble_call_1_1_w0
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_INT
@@ -186,8 +181,7 @@ _babs_float:
 // builtin_chr(n) — INT/BOOL n → 1-byte TYPE_STR with payload = n & $FF.
 // =============================================================================
 builtin_chr:
-    preamble_call(1, 1)
-    arg_get(0, W0)
+    jsr preamble_call_1_1_w0
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_INT
@@ -223,8 +217,7 @@ _bchr_ok:
 // stay non-negative.
 // =============================================================================
 builtin_ord:
-    preamble_call(1, 1)
-    arg_get(0, W0)
+    jsr preamble_call_1_1_w0
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_STR
@@ -283,8 +276,7 @@ _bord_2byte:
 // output (mirrors int_parse_dec). Negative path uses int_negate.
 // =============================================================================
 builtin_int:
-    preamble_call(1, 1)
-    arg_get(0, W0)
+    jsr preamble_call_1_1_w0
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_INT
@@ -374,8 +366,7 @@ _bint_value_error:
 //   STR → str_to_float (BASIC FIN).
 // =============================================================================
 builtin_float:
-    preamble_call(1, 1)
-    arg_get(0, W0)
+    jsr preamble_call_1_1_w0
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_FLOAT
@@ -418,8 +409,7 @@ _bflt_from_str:
 //   DICT  → "{k0: v0, ...}".
 // =============================================================================
 builtin_str:
-    preamble_call(1, 1)
-    arg_get(0, W0)
+    jsr preamble_call_1_1_w0
     ldy #H_TYPE
     lda (W0),y
 
@@ -1135,8 +1125,7 @@ _bsh_d:
 // so the container renderer below now delegates to builtin_repr too.
 // =============================================================================
 builtin_repr:
-    preamble_call(1, 1)
-    arg_get(0, W0)
+    jsr preamble_call_1_1_w0
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_STR
@@ -1161,8 +1150,7 @@ _brepr_quote:
 // builtin_type(x) — return INT holding the H_TYPE tag byte.
 // =============================================================================
 builtin_type:
-    preamble_call(1, 1)
-    arg_get(0, W0)
+    jsr preamble_call_1_1_w0
     ldy #H_TYPE
     lda (W0),y
     sta B0
@@ -1184,8 +1172,7 @@ builtin_type:
 // (e.g. handles around $C000+) stay positive.
 // =============================================================================
 builtin_id:
-    preamble_call(1, 1)
-    arg_get(0, W0)
+    jsr preamble_call_1_1_w0
 
     lda #3
     sta ALLOC_SIZE
@@ -1209,9 +1196,7 @@ builtin_id:
 //   Returns INT: -1 if a < b, 0 if a == b, 1 if a > b.
 // =============================================================================
 builtin_cmp:
-    preamble_call(2, 2)
-    arg_get(0, W0)
-    arg_get(1, W1)
+    jsr preamble_call_2_2_w0_w1
     rs_push(W0)
     rs_push(W1)
     jsr val_cmp                        // A = $FF / $00 / $01; consumes pushed args
@@ -1234,8 +1219,7 @@ builtin_cmp:
 // magnitude byte (no leading-zero trim).
 // =============================================================================
 builtin_hex:
-    preamble_call(1, 1)
-    arg_get(0, W0)
+    jsr preamble_call_1_1_w0
 
     ldy #H_TYPE
     lda (W0),y
@@ -1374,8 +1358,7 @@ _bhex_emit_digit:
 //   in:  args = (me,)   me: TYPE_STR
 // =============================================================================
 builtin_str_upper:
-    preamble_call(1, 1)
-    arg_get(0, W0)
+    jsr preamble_call_1_1_w0
     rs_push(W0)                       // root me at RS top so we can re-deref after alloc
     jsr deref_W0_to_W2                // W2 = me payload, A = O_LEN
     sta B0                            // B0 = len
@@ -1433,8 +1416,7 @@ _bsu_done:
 //   in:  args = (me,)   me: TYPE_STR
 // =============================================================================
 builtin_str_lower:
-    preamble_call(1, 1)
-    arg_get(0, W0)
+    jsr preamble_call_1_1_w0
     rs_push(W0)                       // root me at RS top
     jsr deref_W0_to_W2
     sta B0
@@ -1493,9 +1475,7 @@ _bsl_done:
 // sub then me before delegating.
 // =============================================================================
 builtin_str_find:
-    preamble_call(2, 2)
-    arg_get(0, W0)                    // me
-    arg_get(1, W1)                    // sub
+    jsr preamble_call_2_2_w0_w1
     rs_push(W1)                       // sub deeper
     rs_push(W0)                       // me top — str_find_pos wants [needle, haystack]
     jsr str_find_pos                  // A = pos or $FF
@@ -1526,9 +1506,7 @@ _bfind_store_hi:
 //   in:  args = (me, prefix)
 // =============================================================================
 builtin_str_startswith:
-    preamble_call(2, 2)
-    arg_get(0, W0)                    // me
-    arg_get(1, W1)                    // prefix
+    jsr preamble_call_2_2_w0_w1
     // Cache both args before clobbering W3 (which arg_get reads from).
     jsr deref_W1_to_W3                // W3 = prefix payload, A = prefix len
     sta B0                            // B0 = prefix len
@@ -1560,9 +1538,7 @@ _bsw_false:
 //   in:  args = (me, suffix)
 // =============================================================================
 builtin_str_endswith:
-    preamble_call(2, 2)
-    arg_get(0, W0)                    // me
-    arg_get(1, W1)                    // suffix
+    jsr preamble_call_2_2_w0_w1
     jsr deref_W1_to_W3                // W3 = suffix payload, A = suffix len
     sta B0                            // B0 = suffix len
     jsr deref_W0_to_W2                // W2 = me payload, A = me len
@@ -1987,8 +1963,7 @@ _bsr_matno:
 //   in:  args = (me,)
 // =============================================================================
 builtin_str_isalpha:
-    preamble_call(1, 1)
-    arg_get(0, W0)
+    jsr preamble_call_1_1_w0
     jsr deref_W0_to_W2                // A = O_LEN, W2 = payload
     sta B0
     beq _bia_false                    // empty → False (Python rule)
@@ -2015,8 +1990,7 @@ _bia_false:
 //   in:  args = (me,)
 // =============================================================================
 builtin_str_isdigit:
-    preamble_call(1, 1)
-    arg_get(0, W0)
+    jsr preamble_call_1_1_w0
     jsr deref_W0_to_W2
     sta B0
     beq _bid_false
@@ -2038,9 +2012,7 @@ _bid_false:
 //   in:  args = (me, item)   me: TYPE_LIST
 // =============================================================================
 builtin_list_append:
-    preamble_call(2, 2)
-    arg_get(0, W0)                    // me
-    arg_get(1, W1)                    // item
+    jsr preamble_call_2_2_w0_w1
     rs_push(W0)
     rs_push(W1)
     jsr list_append                   // consumes 2 pushed RS args
@@ -2079,8 +2051,7 @@ builtin_list_insert:
 //   in:  args = (me,)   me: TYPE_LIST. Empty list → ERR_TYPE.
 // =============================================================================
 builtin_list_pop:
-    preamble_call(1, 1)
-    arg_get(0, W0)
+    jsr preamble_call_1_1_w0
 
     // W2 = object base (at O_LEN), B0 = O_LEN low.
     ldy #H_PTR
@@ -2174,9 +2145,7 @@ _bdg_miss:
 //   in:  args = (me, key)   me: TYPE_DICT
 // =============================================================================
 builtin_dict_has:
-    preamble_call(2, 2)
-    arg_get(0, W0)                    // me
-    arg_get(1, W1)                    // key
+    jsr preamble_call_2_2_w0_w1
     jsr _dict_bin_search              // A = 1 hit / 0 miss
     cmp #0
     beq _bdh_false
@@ -2188,8 +2157,7 @@ _bdh_false:
 //   in:  args = (me,)   me: TYPE_DICT
 // =============================================================================
 builtin_dict_keys:
-    preamble_call(1, 1)
-    arg_get(0, W0)                    // dict
+    jsr preamble_call_1_1_w0
     rs_push(W0)                       // root for _bd_build_list
     lda #0                            // entry-tuple byte offset for the key
     jsr _bd_build_list
@@ -2199,8 +2167,7 @@ builtin_dict_keys:
 //   in:  args = (me,)   me: TYPE_DICT
 // =============================================================================
 builtin_dict_values:
-    preamble_call(1, 1)
-    arg_get(0, W0)                    // dict
+    jsr preamble_call_1_1_w0
     rs_push(W0)                       // root for _bd_build_list
     lda #2                            // entry-tuple byte offset for the value
     jsr _bd_build_list
@@ -2285,11 +2252,10 @@ _bdb_done:
 // chain.
 // =============================================================================
 builtin_dict_create:
-    preamble_call(1, 1)
+    jsr preamble_call_1_1_w0
 
     // Cache me before dict_alloc so we don't depend on W3 (args tuple
     // payload, invalidated by any GC inside dict_alloc).
-    arg_get(0, W0)
     rs_push(W0)                       // RS: [args_tuple, me]
 
     jsr dict_alloc                    // RV = new dict
