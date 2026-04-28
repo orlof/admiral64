@@ -34,7 +34,7 @@ def run_cmp(h, a: int, b: int) -> int:
 
 
 def test_same_handle_zero(h):
-    a = place_int(h, 0x7E00, [0x42])
+    a = place_int(h, 0x8500, [0x42])
     assert run_cmp(h, a, a) == 0
 
 
@@ -48,7 +48,7 @@ def test_int_0_static_eq(h):
 
 def test_int_lt_str(h):
     """TYPE_INT ($20) < TYPE_STR ($21) — type-tag order."""
-    i = place_int(h, 0x7E00, [0x00])
+    i = place_int(h, 0x8500, [0x00])
     s = place_str(h, 0x6100, [0x00])
     assert run_cmp(h, i, s) == -1
     assert run_cmp(h, s, i) == 1
@@ -56,7 +56,7 @@ def test_int_lt_str(h):
 
 def test_int_lt_bool(h):
     """TYPE_INT ($20) < TYPE_BOOL ($22)."""
-    i = place_int(h, 0x7E00, [0x01])
+    i = place_int(h, 0x8500, [0x01])
     true_addr = h.sym["TRUE"]
     assert run_cmp(h, i, true_addr) == -1
 
@@ -65,25 +65,25 @@ def test_int_lt_bool(h):
 
 
 def test_int_eq(h):
-    a = place_int(h, 0x7E00, [0xE8, 0x03])
+    a = place_int(h, 0x8500, [0xE8, 0x03])
     b = place_int(h, 0x6100, [0xE8, 0x03])
     assert run_cmp(h, a, b) == 0
 
 
 def test_int_lt(h):
-    a = place_int(h, 0x7E00, [0x01])
+    a = place_int(h, 0x8500, [0x01])
     b = place_int(h, 0x6100, [0x02])
     assert run_cmp(h, a, b) == -1
 
 
 def test_int_gt(h):
-    a = place_int(h, 0x7E00, [0x02])
+    a = place_int(h, 0x8500, [0x02])
     b = place_int(h, 0x6100, [0x01])
     assert run_cmp(h, a, b) == 1
 
 
 def test_neg_int_lt_pos(h):
-    a = place_int(h, 0x7E00, [0xFF])  # -1
+    a = place_int(h, 0x8500, [0xFF])  # -1
     b = place_int(h, 0x6100, [0x01])
     assert run_cmp(h, a, b) == -1
 
@@ -103,25 +103,25 @@ def test_false_lt_true(h):
 
 
 def test_str_eq(h):
-    a = place_str(h, 0x7E00, [0x48, 0x49])
+    a = place_str(h, 0x8500, [0x48, 0x49])
     b = place_str(h, 0x6100, [0x48, 0x49])
     assert run_cmp(h, a, b) == 0
 
 
 def test_str_lt_at_first_byte(h):
-    a = place_str(h, 0x7E00, [0x41, 0x42])  # "AB"
+    a = place_str(h, 0x8500, [0x41, 0x42])  # "AB"
     b = place_str(h, 0x6100, [0x42, 0x42])  # "BB"
     assert run_cmp(h, a, b) == -1
 
 
 def test_str_lt_at_last_byte(h):
-    a = place_str(h, 0x7E00, [0x41, 0x41])
+    a = place_str(h, 0x8500, [0x41, 0x41])
     b = place_str(h, 0x6100, [0x41, 0x42])
     assert run_cmp(h, a, b) == -1
 
 
 def test_str_shorter_is_less(h):
-    a = place_str(h, 0x7E00, [0x41])         # "A"
+    a = place_str(h, 0x8500, [0x41])         # "A"
     b = place_str(h, 0x6100, [0x41, 0x42])   # "AB"
     assert run_cmp(h, a, b) == -1
     assert run_cmp(h, b, a) == 1
@@ -129,13 +129,13 @@ def test_str_shorter_is_less(h):
 
 def test_str_high_byte_is_unsigned(h):
     """$FF should be greater than $7F (no signed misinterpretation)."""
-    a = place_str(h, 0x7E00, [0x7F])
+    a = place_str(h, 0x8500, [0x7F])
     b = place_str(h, 0x6100, [0xFF])
     assert run_cmp(h, a, b) == -1
 
 
 def test_empty_strings_equal(h):
-    a = place_str(h, 0x7E00, [])
+    a = place_str(h, 0x8500, [])
     b = place_str(h, 0x6100, [])
     assert run_cmp(h, a, b) == 0
 
@@ -144,7 +144,7 @@ def test_empty_strings_equal(h):
 
 
 def test_tuple_eq(h):
-    a1 = place_int(h, 0x7E00, [0x01])
+    a1 = place_int(h, 0x8500, [0x01])
     b1 = place_int(h, 0x6100, [0x02])
     t1 = place_tuple(h, 0x6200, [a1, b1])
 
@@ -156,7 +156,7 @@ def test_tuple_eq(h):
 
 
 def test_tuple_lt_at_first_element(h):
-    a1 = place_int(h, 0x7E00, [0x01])
+    a1 = place_int(h, 0x8500, [0x01])
     b1 = place_int(h, 0x6100, [0x02])
     t1 = place_tuple(h, 0x6200, [a1, b1])
 
@@ -168,7 +168,7 @@ def test_tuple_lt_at_first_element(h):
 
 
 def test_tuple_shorter_prefix_is_less(h):
-    a = place_int(h, 0x7E00, [0x01])
+    a = place_int(h, 0x8500, [0x01])
     short = place_tuple(h, 0x6100, [a])
     long_ = place_tuple(h, 0x6200, [a, a])
     assert run_cmp(h, short, long_) == -1
@@ -179,7 +179,7 @@ def test_tuple_shorter_prefix_is_less(h):
 
 
 def test_list_lt_at_last_element(h):
-    a1 = place_int(h, 0x7E00, [0x01])
+    a1 = place_int(h, 0x8500, [0x01])
     b1 = place_int(h, 0x6100, [0x02])
     L1 = place_list(h, 0x6200, [a1, b1])
 
@@ -194,7 +194,7 @@ def test_list_lt_at_last_element(h):
 
 
 def test_nested_tuple_compare(h):
-    one_a = place_int(h, 0x7E00, [0x01])
+    one_a = place_int(h, 0x8500, [0x01])
     two_a = place_int(h, 0x6100, [0x02])
     inner_a = place_tuple(h, 0x6200, [two_a])
     outer_a = place_tuple(h, 0x6300, [one_a, inner_a])
@@ -210,7 +210,7 @@ def test_nested_tuple_compare(h):
 def test_string_keys_sortable(h):
     """Strings of various lengths sort lexicographically with tie-broken by
     length (shorter first)."""
-    apple = place_str(h, 0x7E00, [ord("a"), ord("p"), ord("p"), ord("l"), ord("e")])
+    apple = place_str(h, 0x8500, [ord("a"), ord("p"), ord("p"), ord("l"), ord("e")])
     banana = place_str(h, 0x6100, [ord("b"), ord("a"), ord("n"), ord("a"), ord("n"), ord("a")])
     apple2 = place_str(h, 0x6200, [ord("a"), ord("p"), ord("p"), ord("l"), ord("e")])
     apricot = place_str(h, 0x6300, [ord("a"), ord("p"), ord("r")])

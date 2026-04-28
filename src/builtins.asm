@@ -791,29 +791,146 @@ _brd_close:
     rts
 
 // =============================================================================
-// builtin_rnd() — return a random INT in 0..255.
-//   in:  (no args)
-//   out: RV = freshly-allocated 1-byte TYPE_INT.
+// builtin_rnd([start[, end]]) — random number, mirroring Admiral semantics.
 //
-// Wraps `rand8` (AX+ Tinyrand8). Original Admiral's `rnd([start[, end]])`
-// has optional bounded forms, but our parser doesn't model optional
-// positional args yet — pick narrow scope (single byte). User code can do
-// `rnd() % n` for a 0..n-1 range.
+//   rnd()              → FLOAT in [0, 1)              (delegates to float_random)
+//   rnd(end)           → INT in [0, end)              if end is INT/BOOL
+//                      → FLOAT in [0, end)            if end is FLOAT
+//   rnd(start, end)    → INT in [start, end)          if both INT/BOOL
+//                      → FLOAT in [start, end)        if both FLOAT
+//
+// Mixed INT+FLOAT in the 2-arg form panics ERR_TYPE — the C64 port does not
+// implement Admiral's `cast_common_number_type` (caller can `int(x)` /
+// `float(x)` explicitly).
+//
+// Entropy: `rand8` provides one PRNG byte per call. INT bounded forms compute
+// `rand8 % range`, so distribution is uniform only for ranges ≤ 256; larger
+// ranges still produce values in the requested half-open interval but with
+// just 256 distinct outcomes. FLOAT forms use `float_random`'s 1/256
+// granularity. Multi-byte LFSR is future work; for game/UI use the current
+// resolution is adequate.
+//
+// W0/W1 hold the arg handles across sub-calls (V4' frames preserve W/B for
+// the body), so we don't need to re-deref the args tuple after each alloc.
 // =============================================================================
 builtin_rnd:
-    preamble_call(0, 0)
+    preamble_call(0, 2)
+    lda B7
+    bne _brnd_bounded
+
+    // 0 args: tail into float_random.
+    jsr float_random
+    jmp postamble
+
+_brnd_panic_type:
+    lda #ERR_TYPE
+    sta ERROR_CODE
+    jmp error_handler
+
+_brnd_bounded:
+    arg_get(0, W0)                    // W0 = end (1-arg) or start (2-arg)
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_FLOAT
+    bne !try_int+
+    jmp _brnd_float
+!try_int:
+    cmp #TYPE_INT
+    beq _brnd_int
+    cmp #TYPE_BOOL
+    bne _brnd_panic_type
+    // fall through into _brnd_int — BOOL is treated as INT for rnd.
+
+_brnd_int:
+    lda B7
+    cmp #2
+    beq _brnd_int_two
+
+    // rnd(end) INT path: result = rand_int % end.
+    jsr _brnd_alloc_rand_int          // RV = 2-byte rand INT (0..255 unsigned)
+    rs_push(RV)                       // RS: [args, rand]
+    rs_push(W0)                       // RS: [args, rand, end]
+    jsr int_mod                       // RV = rand % end
+    jmp postamble
+
+_brnd_int_two:
+    // rnd(start, end) INT: arg[1] must be INT (BOOL/FLOAT for end → ERR_TYPE).
+    jsr _brnd_arg1_type
+    cmp #TYPE_INT
+    bne _brnd_panic_type
+    // Order matters for int_mod: dividend deeper, divisor on top. Allocate
+    // rand first and root it so it's the deeper element when we mod by diff.
+    jsr _brnd_alloc_rand_int          // RV = rand INT
+    rs_push(RV)                       // RS: [args, rand]
+    rs_push(W1)                       // RS: [args, rand, end]
+    rs_push(W0)                       // RS: [args, rand, end, start]
+    jsr int_sub                       // RV = end - start. RS: [args, rand]
+    rs_push(RV)                       // RS: [args, rand, diff]
+    jsr int_mod                       // RV = rand % diff
+
+    rs_push(W0)                       // RS: [args, start]
+    rs_push(RV)                       // RS: [args, start, rand_mod]
+    jsr int_add                       // RV = start + rand_mod
+    jmp postamble
+
+_brnd_float:
+    lda B7
+    cmp #2
+    beq _brnd_float_two
+
+    // rnd(end) FLOAT path: result = float_random() * end.
+    jsr float_random
+    rs_push(RV)                       // RS: [args, frnd]
+    rs_push(W0)                       // RS: [args, frnd, end]
+    jsr float_mul
+    jmp postamble
+
+_brnd_float_two:
+    // rnd(start, end) FLOAT: arg[1] must also be FLOAT (no auto-cast).
+    jsr _brnd_arg1_type
+    cmp #TYPE_FLOAT
+    beq !ok+
+    jmp _brnd_panic_type
+!ok:
+
+    rs_push(W1)                       // RS: [args, end]
+    rs_push(W0)                       // RS: [args, end, start]
+    jsr float_sub                     // RV = end - start
+    rs_push(RV)                       // RS: [args, diff]
+    jsr float_random
+    rs_push(RV)                       // RS: [args, diff, frnd]
+    jsr float_mul                     // RV = diff * frnd
+    rs_push(W0)
+    rs_push(RV)                       // RS: [args, start, scaled]
+    jsr float_add                     // RV = start + diff*frnd
+    jmp postamble
+
+// Leaf helper: load arg[1] handle into W1 and return its H_TYPE byte in A.
+// Used by both 2-arg paths to share the deref + type-fetch sequence.
+//   in:  W3 = args tuple payload pointer (must be fresh — set by preamble_call,
+//        and no allocation has happened since).
+//   out: W1 = arg[1] handle. A = H_TYPE byte.
+//   clobbers: A, Y, W1.
+_brnd_arg1_type:
+    arg_get(1, W1)
+    ldy #H_TYPE
+    lda (W1),y
+    rts
+
+// Leaf helper: build a fresh 2-byte TYPE_INT holding the next `rand8` byte
+// in the low byte and 0 in the high byte. Two bytes (rather than one) keeps
+// values 128..255 from sign-extending to negative INTs — int_mod with a
+// negative dividend would push the result outside [0, end).
+//
+// Clobbers: A, X, Y, B0, W2. Preserves W0/W1/B7 (alloc_int is V4').
+_brnd_alloc_rand_int:
     jsr rand8
-    sta B0                            // stash byte across alloc
-    // 2-byte allocation: any 8-bit value with high-bit set would otherwise
-    // sign-extend to a negative INT. High byte = 0 keeps the result
-    // unsigned in 0..255.
+    sta B0
     lda #2
     sta ALLOC_SIZE
     lda #0
     sta ALLOC_SIZE+1
-    lda #TYPE_INT
-    sta ALLOC_TYPE
-    jsr alloc
+    jsr alloc_int
     jsr deref_RV_to_W2
     ldy #0
     lda B0
@@ -821,35 +938,52 @@ builtin_rnd:
     iny
     lda #0
     sta (W2),y
-    jmp postamble
+    rts
 
 // =============================================================================
-// builtin_sort(S) — return a sorted version of S.
-//   in:  args = (me,) where me is TYPE_STR, TYPE_TUPLE, or TYPE_LIST.
+// builtin_sort(S [, reverse]) — return a sorted version of S.
+//   in:  args[0] = me (TYPE_STR, TYPE_TUPLE, or TYPE_LIST).
+//        args[1] = optional truthy flag — non-falsy → descending order.
 //   out: RV = sorted result. STR/TUPLE return a fresh sorted copy. LIST is
 //        sorted in place (RV = same handle).
 //
-// Insertion sort. STR sorts bytes; TUPLE/LIST sort handles via val_cmp. The
-// `reverse` arg from original Admiral is not supported here (would require
-// optional positional args, which our parser doesn't model yet).
+// Insertion sort. STR sorts bytes; TUPLE/LIST sort handles via val_cmp.
+// `reverse` is implemented via 1-byte self-modifying code at the comparator
+// branch site — `_bsb_branch` flips between BCS ($B0, asc) and BCC ($90, desc)
+// for the byte sort; `_bsh_cmp_imm` flips the val_cmp threshold between #1
+// (asc: swap when left>right) and #$FF (desc: swap when left<right).
 // =============================================================================
 builtin_sort:
-    preamble_call(1, 1)
+    preamble_call(1, 2)
+
+    // Stage default ASC SMC opcodes in X/Y. If a 2nd arg is supplied and is
+    // truthy, swap to DESC opcodes before the single store at _bs_apply.
+    ldx #$B0                          // BCS opcode  (asc: skip swap when arr[j] >= arr[j-1])
+    ldy #1                            // cmp #1     (asc: swap when val_cmp == +1)
+    lda B7
+    cmp #2
+    bne _bs_apply
+    arg_get(1, W0)
+    jsr val_truthy                    // A = 0 (falsy) or 1 (truthy); leaf, no GC
+    beq _bs_apply
+    ldx #$90                          // BCC opcode (desc: skip swap when arr[j] < arr[j-1])
+    ldy #$FF                          // cmp #$FF   (desc: swap when val_cmp == -1)
+_bs_apply:
+    stx _bsb_branch
+    sty _bsh_cmp_imm
     arg_get(0, W0)
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_STR
-    bne !next+
-    jmp _bsort_str
-!next:
+    beq _bsort_str
     cmp #TYPE_TUPLE
-    bne !next+
+    bne !try_list+
     jmp _bsort_tuple
-!next:
+!try_list:
     cmp #TYPE_LIST
-    bne !next+
+    bne !panic+
     jmp _bsort_list
-!next:
+!panic:
     lda #ERR_TYPE
     sta ERROR_CODE
     jmp error_handler
@@ -923,7 +1057,10 @@ _bsb_in:
     iny
     lda (W3),y                        // arr[j]
     cmp B3
-    bcs _bsb_on                       // arr[j] >= arr[j-1] → no swap
+.label _bsb_branch = *
+    bcs _bsb_on                       // SMC: $B0 (BCS, asc) / $90 (BCC, desc)
+                                      // asc: skip swap when arr[j] >= arr[j-1]
+                                      // desc: skip swap when arr[j] < arr[j-1]
     sta B4                            // save arr[j]
     lda B3
     sta (W3),y                        // arr[j] = arr[j-1]
@@ -974,8 +1111,10 @@ _bsh_in:
     rs_push(W0)
     rs_push(W1)
     jsr val_cmp                        // A = -1/0/+1
-    cmp #1
-    bne _bsh_on                        // not greater → done with this j
+.label _bsh_cmp_imm = * + 1
+    cmp #1                             // SMC: #1 (asc, swap when left>right)
+                                       //      #$FF (desc, swap when left<right)
+    bne _bsh_on                        // mismatch → done with this j
 
     // Swap. W0/W1 still hold old arr[j-1] and arr[j].
     ldy B2

@@ -108,7 +108,7 @@ ERR_LEX = 0x04
 
 # --- helpers -----------------------------------------------------------------
 
-def _place_source(h, text: str, addr: int = 0x7E00) -> int:
+def _place_source(h, text: str, addr: int = 0x8500) -> int:
     """Place a string source at addr; push handle on RS; return handle addr."""
     payload = list(text.encode("ascii"))
     handle = place_str(h, addr, payload)
@@ -177,7 +177,7 @@ def test_illegal_char_panics(h):
 def test_high_bit_byte_panics(h):
     """Byte $80+ is illegal — early high-bit check triggers _lh_recover."""
     payload = [0x80]
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("lexer_init", expect_panic=True)
     assert h.mpu.memory[0x27] == ERR_LEX

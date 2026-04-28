@@ -24,6 +24,7 @@
 #import "defs.asm"
 #import "stacks.asm"
 #import "preamble.asm"
+#import "rnd.asm"
 
 // -----------------------------------------------------------------------------
 // basic_call(addr) — bank BASIC ROM in, JSR, bank back out.
@@ -421,6 +422,43 @@ float_neg:
     basic_call(BASIC_NEGOP)
 
     jsr _fp_alloc_and_pack
+    jmp postamble
+
+// -----------------------------------------------------------------------------
+// float_random — return a TYPE_FLOAT in [0, 1).
+//
+//   in:  (no args)
+//   out: RV = freshly-allocated TYPE_FLOAT, granularity 1/256.
+//
+// Samples one byte from rand8 and computes byte / 256. The "÷256" is a single
+// exponent decrement (-8 biased) since the value already lives at the right
+// scale. The 256 distinct values including 0 are enough for game / UI use; a
+// finer 24-bit-mantissa sample would cost 3× rand8 calls and a manual mantissa
+// construction.
+// -----------------------------------------------------------------------------
+float_random:
+    preamble_args(0, 0)
+
+    jsr rand8                       // A = byte 0..255
+    bne _fr_nonzero
+
+    // Zero sample → 0.0. float_alloc returns a 5-zero-byte TYPE_FLOAT.
+    jsr float_alloc
+    jmp postamble
+
+_fr_nonzero:
+    // Convert byte (1..255) to FAC1 as a positive 16-bit integer, then
+    // divide by 256 by decrementing the biased exponent by 8.
+    tay                             // Y = byte (low)
+    lda #0                          // A = high (zero-extend to 16-bit)
+    basic_call(BASIC_GIVAYF)        // FAC1 = byte
+
+    sec
+    lda FAC1
+    sbc #8
+    sta FAC1                        // exp -= 8 → value /= 256
+
+    jsr _fp_alloc_and_pack          // RV = packed TYPE_FLOAT
     jmp postamble
 
 // -----------------------------------------------------------------------------

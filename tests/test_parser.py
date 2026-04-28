@@ -16,7 +16,7 @@ from test_str import place_str
 def _eval(h, source: str) -> int:
     """Place source on heap, push handle on RS, call parser_eval, read int."""
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     return _read_int(h, h.read_word(RV))
@@ -176,7 +176,7 @@ def test_subtract_with_unary(h):
 
 def _eval_bool(h, source: str) -> bool:
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv_handle = h.read_word(RV)
@@ -218,7 +218,7 @@ def test_false_literal(h):
 
 def test_none_literal_returns_none_handle(h):
     payload = list("None".encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -231,7 +231,7 @@ def test_none_literal_returns_none_handle(h):
 
 def test_str_literal(h):
     payload = list('"hello"'.encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -333,7 +333,7 @@ def test_is_with_int_literals_returns_false_for_separate_handles(h):
 
 def _eval_list_len(h, source: str) -> int:
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -360,7 +360,7 @@ def test_list_with_trailing_comma(h):
 def test_nested_list(h):
     """`[[1, 2], [3]]` — outer length 2, both elements are lists."""
     payload = list("[[1, 2], [3]]".encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -395,7 +395,7 @@ def test_list_index_with_arithmetic_result(h):
 def _eval_container_type_and_len(h, source: str) -> tuple[int, int]:
     """Return (H_TYPE, O_LEN) of the result. Useful for tuple/list/dict shape."""
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -516,7 +516,7 @@ from conftest import msbasic_to_python
 
 def _eval_float(h, source: str) -> float:
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -559,7 +559,7 @@ def test_float_in_parens(hfp):
 def test_float_handle_is_typed(hfp):
     from conftest import TYPE_FLOAT
     payload = list("1.5".encode("ascii"))
-    handle = place_str(hfp, 0x7E00, payload)
+    handle = place_str(hfp, 0x8500, payload)
     hfp.rs_push(handle)
     hfp.call("parser_eval", max_steps=2_000_000)
     rv = hfp.read_word(RV)
@@ -770,7 +770,7 @@ def test_assignment_returns_none(h):
     """`x = 5` evaluates to NONE."""
     from conftest import TYPE_NONE
     payload = list("x = 5".encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -804,7 +804,7 @@ def test_assignment_uses_rhs_with_existing_var(h):
 def test_undefined_name_panics(h):
     """Looking up a name that's not in scope panics."""
     payload = list("undefined_var".encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", expect_panic=True)
 
@@ -816,7 +816,7 @@ def test_variable_in_complex_expression(h):
 def test_variable_with_container(h):
     """Variables can hold lists/tuples/dicts."""
     payload = list("xs = [1, 2, 3]\nxs[1]".encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     assert _read_int(h, h.read_word(RV)) == 2
@@ -825,7 +825,7 @@ def test_variable_with_container(h):
 def test_variable_holds_string(h):
     """Variables can hold TYPE_STR; identity check."""
     payload = list('s = "hello"\ns'.encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -837,7 +837,7 @@ def test_empty_source_returns_none(h):
     """Empty source string produces NONE."""
     from conftest import TYPE_NONE
     payload = []
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -848,7 +848,7 @@ def test_just_newlines_returns_none(h):
     """Source with just whitespace/newlines returns NONE."""
     from conftest import TYPE_NONE
     payload = list("\n\n\n".encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -868,7 +868,7 @@ def test_variable_underscore_prefix(h):
 def test_assignment_with_float(hfp):
     """Float values store and recall."""
     payload = list("pi = 3.14\npi".encode("ascii"))
-    handle = place_str(hfp, 0x7E00, payload)
+    handle = place_str(hfp, 0x8500, payload)
     hfp.rs_push(handle)
     hfp.call("parser_eval", max_steps=2_000_000)
     rv = hfp.read_word(RV)
@@ -883,7 +883,7 @@ def test_pass_alone(h):
     """`pass` is a no-op statement."""
     from conftest import TYPE_NONE
     payload = list("pass".encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -1310,7 +1310,7 @@ def _read_screen(h, count: int = 80) -> bytes:
 def _eval_with_screen(h, source: str) -> bytes:
     h.call("screen_init")
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     return _read_screen(h)
@@ -1372,7 +1372,7 @@ def test_print_in_loop(h):
     h.call("screen_init")
     src = "for x in [1, 2, 3]:\n    print x"
     payload = list(src.encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     # Row 0 col 0 = '1', row 1 col 0 = '2', row 2 col 0 = '3'.
@@ -1398,7 +1398,7 @@ def test_program_compute_and_print(h):
     )
     h.call("screen_init")
     payload = list(src.encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     # 5! = 120. Screen codes for '1','2','0' = 0x31, 0x32, 0x30.
@@ -1502,7 +1502,7 @@ def test_str_function_no_return_yields_none(h):
         'noop()'
     )
     payload = list(src.encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -1762,7 +1762,7 @@ def test_property_read_doesnt_set_me_for_later_call(h):
     # If me leaked, fn would return d. With proper clearing, me is 0.
     # Reading me as a value: scope_get("me") panics if not bound.
     payload = list(src.encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", expect_panic=True, max_steps=2_000_000)
     assert h.mpu.memory[0x27] == 0x04  # ERR_LEX (name not found)
@@ -1816,7 +1816,7 @@ def test_attribute_assignment_returns_none(h):
     """`d.x = v` evaluates to NONE (statement-as-expression convention)."""
     from conftest import TYPE_NONE
     payload = list('d = {"x": 1}\nd.x = 99'.encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -1862,7 +1862,7 @@ def test_lexical_scoping_not_dynamic(h):
         'caller()'
     )
     payload = list(src.encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", expect_panic=True, max_steps=2_000_000)
     assert h.mpu.memory[0x27] == 0x04   # ERR_LEX
@@ -1873,7 +1873,7 @@ def test_return_yields_ctrl_handle(h):
     from conftest import RV
     src = "return 42"
     payload = list(src.encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -1885,7 +1885,7 @@ def test_return_yields_ctrl_handle(h):
 
 def _eval_str(h, source: str) -> bytes:
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     from test_str import read_str
@@ -1895,7 +1895,7 @@ def _eval_str(h, source: str) -> bytes:
 def _eval_list_ints(h, source: str) -> list[int]:
     """Evaluate to a TYPE_LIST/TUPLE of ints; read element values."""
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -1938,7 +1938,7 @@ def test_list_slice_full(h):
 
 def test_list_slice_empty(h):
     payload = list("[10, 20, 30][1:1]".encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -1950,7 +1950,7 @@ def test_list_slice_returns_new_list_type(h):
     """Slicing a list yields a list, not a tuple."""
     from conftest import TYPE_LIST
     payload = list("[1, 2, 3][0:2]".encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -1961,7 +1961,7 @@ def test_tuple_slice_preserves_tuple_type(h):
     """Slicing a tuple yields a tuple."""
     from conftest import TYPE_TUPLE
     payload = list("(10, 20, 30, 40)[1:3]".encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)
@@ -3166,7 +3166,7 @@ def test_replace_empty_old_panics(h):
     """Empty `old` is a type error in this port."""
     src = '"abc".replace("", "X")'
     payload = list(src.encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", expect_panic=True, max_steps=2_000_000)
 
@@ -3228,7 +3228,7 @@ def test_split_empty_string_value(h):
 def test_split_empty_sep_panics(h):
     src = '"abc".split("")'
     payload = list(src.encode("ascii"))
-    handle = place_str(h, 0x7E00, payload)
+    handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", expect_panic=True, max_steps=2_000_000)
 
@@ -3317,43 +3317,89 @@ def test_sort_list_strings(h):
 
 
 # --- rnd -------------------------------------------------------------------
+# rnd() / rnd(end) / rnd(start, end) — Admiral-compatible random.
+# The 0-arg form returns a FLOAT in [0, 1) (uses BASIC ROM via float_random),
+# so all rnd tests run on the `hfp` fixture.
 
-def test_rnd_returns_in_byte_range(h):
-    """rnd() result is in 0..255."""
-    v = _eval(h, 'rnd()')
-    assert 0 <= v <= 255
-
-
-def test_rnd_first_value_from_seed_0(h):
-    """AX+ Tinyrand8 with set_seed(0) → 184 on first call."""
-    assert _eval(h, 'rnd()') == 184
+def test_rnd_no_args_returns_float_in_unit_interval(hfp):
+    """rnd() returns a FLOAT in [0, 1)."""
+    v = _eval_float(hfp, 'rnd()')
+    assert 0.0 <= v < 1.0
 
 
-def test_rnd_second_value_from_seed_0(h):
-    src = (
-        'rnd()\n'
-        'rnd()'
-    )
-    assert _eval(h, src) == 163
+def test_rnd_no_args_first_value_from_seed_0(hfp):
+    """rand8 with seed 0 → first byte is 184 → rnd() = 184/256 = 0.71875."""
+    assert _eval_float(hfp, 'rnd()') == pytest.approx(184 / 256)
 
 
-def test_rnd_sequence_from_seed_0(h):
-    """First 3 outputs from a fresh seed-0 PRNG."""
-    src = (
-        'a = rnd()\n'
-        'b = rnd()\n'
-        'c = rnd()\n'
-        'a + b * 1000 + c * 1000000'
-    )
-    assert _eval(h, src) == 184 + 163 * 1000 + 27 * 1000000
+def test_rnd_no_args_sequence_from_seed_0(hfp):
+    """Three successive rnd() calls match (184, 163, 27) / 256."""
+    payload = list("rnd() + rnd() + rnd()".encode("ascii"))
+    handle = place_str(hfp, 0x8500, payload)
+    hfp.rs_push(handle)
+    hfp.call("parser_eval", max_steps=5_000_000)
+    rv = hfp.read_word(RV)
+    obj = hfp.read_word(rv)
+    payload_bytes = hfp.read_bytes(obj + 2, 5)
+    expected = (184 + 163 + 27) / 256
+    assert msbasic_to_python(payload_bytes) == pytest.approx(expected)
 
 
-def test_rnd_two_calls_differ(h):
-    """Sanity: successive calls don't return the same byte (statistically)."""
-    src = (
-        'a = rnd()\n'
-        'b = rnd()\n'
-        'a - b'
-    )
-    # First two from seed-0 are 184, 163 → diff = 21
-    assert _eval(h, src) == 21
+def test_rnd_int_end_returns_int_in_range(hfp):
+    """rnd(end) with INT end returns an INT in [0, end)."""
+    v = _eval(hfp, 'rnd(10)')
+    assert 0 <= v < 10
+    # First rand8 byte from seed 0 is 184 → 184 % 10 = 4.
+    assert v == 4
+
+
+def test_rnd_int_end_zero_panics(hfp):
+    """rnd(0) → divide-by-zero panic from int_mod."""
+    from conftest import ERROR_CODE_ZP
+    payload = list('rnd(0)'.encode('ascii'))
+    handle = place_str(hfp, 0x8500, payload)
+    hfp.rs_push(handle)
+    hfp.call('parser_eval', expect_panic=True, max_steps=2_000_000)
+    assert hfp.mpu.memory[ERROR_CODE_ZP] == 0x02  # ERR_DIV_ZERO
+
+
+def test_rnd_int_two_args_returns_int_in_range(hfp):
+    """rnd(start, end) with both INT returns an INT in [start, end)."""
+    v = _eval(hfp, 'rnd(100, 110)')
+    assert 100 <= v < 110
+    # diff = 10; rand8 = 184; 184 % 10 = 4; 100 + 4 = 104.
+    assert v == 104
+
+
+def test_rnd_float_end_returns_float_in_range(hfp):
+    """rnd(end) with FLOAT end scales float_random by end."""
+    v = _eval_float(hfp, 'rnd(2.0)')
+    # 184/256 * 2.0 = 1.4375.
+    assert v == pytest.approx(184 / 256 * 2.0)
+
+
+def test_rnd_float_two_args_returns_float_in_range(hfp):
+    """rnd(start, end) with both FLOAT scales float_random into [start, end)."""
+    v = _eval_float(hfp, 'rnd(10.0, 12.0)')
+    # 10.0 + 184/256 * (12.0 - 10.0) = 10.0 + 1.4375 = 11.4375.
+    assert v == pytest.approx(10.0 + 184 / 256 * 2.0)
+
+
+def test_rnd_mixed_int_float_panics(hfp):
+    """rnd(INT, FLOAT) — types must match, panics ERR_TYPE."""
+    from conftest import ERROR_CODE_ZP
+    payload = list('rnd(1, 2.0)'.encode('ascii'))
+    handle = place_str(hfp, 0x8500, payload)
+    hfp.rs_push(handle)
+    hfp.call('parser_eval', expect_panic=True, max_steps=2_000_000)
+    assert hfp.mpu.memory[ERROR_CODE_ZP] == 0x05  # ERR_TYPE
+
+
+def test_rnd_too_many_args_panics(hfp):
+    """rnd(a, b, c) — arity > 2 panics ERR_ARITY."""
+    from conftest import ERROR_CODE_ZP
+    payload = list('rnd(1, 2, 3)'.encode('ascii'))
+    handle = place_str(hfp, 0x8500, payload)
+    hfp.rs_push(handle)
+    hfp.call('parser_eval', expect_panic=True, max_steps=2_000_000)
+    assert hfp.mpu.memory[ERROR_CODE_ZP] == 0x06  # ERR_ARITY
