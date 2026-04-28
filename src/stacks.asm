@@ -259,84 +259,53 @@ rs_init:
 // JSR to one of these. Each body is the inline rs_push expansion + RTS;
 // they MUST stay byte-for-byte equivalent to the macro's else-branch fallback.
 // -----------------------------------------------------------------------------
+// rs_push_{w0..w3,rv} — load src into A/X, then call the shared
+// rs_push_const_ax body. The pha/pla bracket preserves X so the macro
+// contract (clobbers A/Y, preserves X) holds for every caller.
 rs_push_w0:
-    sec
-    lda RSP
-    sbc #2
-    sta RSP
-    bcs !+
-    dec RSP+1
-!:
-    ldy #0
+    txa
+    pha
     lda W0
-    sta (RSP),y
-    iny
-    lda W0+1
-    sta (RSP),y
+    ldx W0+1
+    jsr rs_push_const_ax
+    pla
+    tax
     rts
-
 rs_push_w1:
-    sec
-    lda RSP
-    sbc #2
-    sta RSP
-    bcs !+
-    dec RSP+1
-!:
-    ldy #0
+    txa
+    pha
     lda W1
-    sta (RSP),y
-    iny
-    lda W1+1
-    sta (RSP),y
+    ldx W1+1
+    jsr rs_push_const_ax
+    pla
+    tax
     rts
-
 rs_push_w2:
-    sec
-    lda RSP
-    sbc #2
-    sta RSP
-    bcs !+
-    dec RSP+1
-!:
-    ldy #0
+    txa
+    pha
     lda W2
-    sta (RSP),y
-    iny
-    lda W2+1
-    sta (RSP),y
+    ldx W2+1
+    jsr rs_push_const_ax
+    pla
+    tax
     rts
-
 rs_push_w3:
-    sec
-    lda RSP
-    sbc #2
-    sta RSP
-    bcs !+
-    dec RSP+1
-!:
-    ldy #0
+    txa
+    pha
     lda W3
-    sta (RSP),y
-    iny
-    lda W3+1
-    sta (RSP),y
+    ldx W3+1
+    jsr rs_push_const_ax
+    pla
+    tax
     rts
-
 rs_push_rv:
-    sec
-    lda RSP
-    sbc #2
-    sta RSP
-    bcs !+
-    dec RSP+1
-!:
-    ldy #0
+    txa
+    pha
     lda RV
-    sta (RSP),y
-    iny
-    lda RV+1
-    sta (RSP),y
+    ldx RV+1
+    jsr rs_push_const_ax
+    pla
+    tax
     rts
 
 // -----------------------------------------------------------------------------
