@@ -2005,7 +2005,9 @@ led_lparen:
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_STR
-    beq _llp_str_call
+    bne !try_builtin+
+    jmp _llp_str_call
+!try_builtin:
     cmp #TYPE_BUILTIN
     beq _llp_builtin_call
     lda #ERR_LEX
@@ -2013,6 +2015,16 @@ led_lparen:
     jmp error_handler
 
 // --- Built-in: positional args, dispatch via SMC JSR to impl ----------------
+//
+// Calling convention v2 (args tuple): we parse args onto RS as before, then
+// pack them into a TYPE_TUPLE and replace the loose args with the tuple as
+// the impl's sole RS arg. Method calls prepend `me` (from the me_or_0 slot
+// pushed by led_lparen) at tuple slot 0.
+//
+// RS evolution:
+//   entry           [..., LHS, me_or_0]                       (B0=0)
+//   after arg loop  [..., LHS, me_or_0, arg1..argN]           (B0=N)
+//   after pack      [..., LHS, args_tuple]                    (impl reads top)
 _llp_builtin_call:
     lda #0
     sta B0                          // B0 = arg count
@@ -2038,18 +2050,100 @@ _llp_b_args_done:
     lda #TK_RPAREN
     jsr lexer_advance
 
-    // Locate LHS at RS depth = arg_count + 1 (LHS is below the args AND
-    // the me-root we pushed at function entry). Byte offset = 2*(B0+1).
+    // --- Pack args into a TYPE_TUPLE -----------------------------------------
+    //
+    // RS now: [..., LHS, me_or_0, arg1..argN]
+    // me_or_0 lives at byte offset 2*B0 from RSP top.
+
+    // Read me_or_0 into B2:B3 (body-saved scratch).
+    lda B0
+    asl
+    tay
+    lda (RSP),y
+    sta B2
+    iny
+    lda (RSP),y
+    sta B3
+
+    // B1 = tuple size: B0 + 1 if method, else B0.
+    lda B2
+    ora B3
+    beq _llp_b_no_me
+    lda B0
+    clc
+    adc #1
+    sta B1
+    jmp _llp_b_have_size
+_llp_b_no_me:
+    lda B0
+    sta B1
+
+_llp_b_have_size:
+    // Allocate tuple. tuple_alloc is V4' so caller B-regs survive. May GC,
+    // but RS holds all live arg roots so they're safe.
+    lda B1
+    jsr tuple_alloc                 // RV = tuple, payload zeroed
+    rs_push(RV)                     // root. RS: [..., LHS, me, args, tuple]
+
+    // W0 = tuple handle for tuple_set_leaf.
+    lda RV
+    sta W0
+    lda RV+1
+    sta W0+1
+
+    // If method call, copy me into slot 0.
+    lda B2
+    ora B3
+    beq _llp_b_no_me_copy
+    lda B2
+    sta W1
+    lda B3
+    sta W1+1
+    lda #0
+    jsr tuple_set_leaf
+_llp_b_no_me_copy:
+
+    // Copy args into tuple. Loop var B5 counts down from B0 to 1.
+    // Source: arg at RS byte offset 2*B5 (above tuple). Dest slot: B1 - B5.
+    lda B0
+    sta B5
+    beq _llp_b_args_copied
+_llp_b_arg_copy_loop:
+    lda B5
+    asl
+    tay
+    lda (RSP),y
+    sta W1
+    iny
+    lda (RSP),y
+    sta W1+1
+
+    sec
+    lda B1
+    sbc B5                          // A = dest slot
+    jsr tuple_set_leaf              // tuple_set_leaf preserves W0 / W1
+
+    dec B5
+    bne _llp_b_arg_copy_loop
+_llp_b_args_copied:
+
+    // Collapse RS: pop tuple, drop (B0+1) words (args + me_placeholder), push tuple.
+    rs_pop(W1)                      // W1 = tuple handle
+
     lda B0
     clc
     adc #1
     asl
-    tay
-    lda (RSP),y
-    sta W0
-    iny
-    lda (RSP),y
-    sta W0+1
+    clc
+    adc RSP
+    sta RSP
+    bcc !skip+
+    inc RSP+1
+!skip:
+    rs_push(W1)                     // RS: [..., LHS, tuple]
+
+    // --- Dispatch (LHS now at RS depth 1) ------------------------------------
+    rs_peek_at(W0, 1)
 
     // Read impl address from the builtin's 2-byte payload.
     ldy #H_PTR
@@ -2072,7 +2166,7 @@ _llp_b_args_done:
     lda (W2),y
     sta _llp_jsr+2
 _llp_jsr:
-    jsr $0000                       // → builtin impl
+    jsr $0000                       // → builtin impl (consumes tuple)
     jmp postamble                   // postamble cleans LHS off RS
 
 // --- TYPE_STR: kwargs, body re-lex in fresh scope ---------------------------

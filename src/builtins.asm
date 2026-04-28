@@ -1,8 +1,20 @@
 // -----------------------------------------------------------------------------
-// Built-in functions, Stage 10 starter.
+// Built-in functions.
+//
+// Calling convention (v2 — args tuple):
+//   - Each builtin receives one RS arg = a TYPE_TUPLE of positional args.
+//     Function call f(a, b)   → tuple = (a, b)
+//     Method call obj.m(a, b) → tuple = (obj, a, b)   (receiver is slot 0)
+//   - Each builtin uses `preamble_call(MIN, MAX)` from preamble.asm:
+//       in:  RS top = args tuple
+//       out: W3 = tuple payload pointer (callee-saved by the V4' frame),
+//            B7 = arg count.
+//       Panics ERR_ARITY if count not in [MIN, MAX].
+//   - Args are read via `arg_get(i, dst)` (mandatory) or
+//     `arg_get_or(i, fallback_const, dst)` (optional with default).
 //
 // Each built-in is:
-//   1. A V4'-wrapped implementation routine (e.g., `builtin_len`).
+//   1. A V4'-wrapped implementation (e.g., `builtin_len`).
 //   2. A static TYPE_BUILTIN handle whose 2-byte payload IS the impl
 //      address (read by `led_lparen` and JSR'd via SMC).
 //   3. A static TYPE_STR holding the name; `parser_eval` binds the
@@ -10,9 +22,18 @@
 //      via normal scope lookup.
 //
 // To add a new built-in:
-//   a) Write the impl: V4', preamble_args(N, 0), body, postamble.
+//   a) Write the impl: V4', `preamble_call(MIN, MAX)`, body, `postamble`.
 //   b) Add `BUILTIN_<NAME>:` static + `STR_NAME_<NAME>:` static.
 //   c) Add a binding line in parser_eval's init.
+//
+// GC re-deref rule: any sub-call that may allocate (alloc, alloc_int, jsr to
+// another builtin, etc.) can move tuple payload via gc_compact. After such a
+// call, W3 is stale. To re-read further args, either: (a) cache the arg
+// handles into ZP regs at the start (W0..W3 are saved/restored by all V4'
+// sub-calls), or (b) re-deref the args tuple via the RS root and refresh W3.
+// Many migrated builtins simply push needed arg handles onto RS as separate
+// roots at entry, mirroring the old "args on RS" layout for the rest of the
+// body.
 //
 // Note on `range`: returns a Python-2-style list, not an iterator. Works
 // directly with our existing for-loop indexed iteration. Caps at N=255 for
@@ -27,14 +48,13 @@
 
 // =============================================================================
 // builtin_len(x) — element count for STR / LIST / TUPLE / DICT.
-//   in:   1 RS arg = container.
+//   in:   args tuple = (x,)
 //   out:  RV = TYPE_INT handle holding len.
 // =============================================================================
 builtin_len:
-    preamble_args(1, 0)
-
-    rs_peek(W0)
-    jsr deref_W0_to_W2          // W2 = payload base, A = O_LEN low byte
+    preamble_call(1, 1)
+    arg_get(0, W0)               // W0 = container
+    jsr deref_W0_to_W2           // W2 = payload base, A = O_LEN low byte
     sta B0                       // length (low byte)
 
     // Allocate a 1-byte int for the length.
@@ -57,9 +77,9 @@ builtin_len:
 //   out:  RV = TYPE_LIST.
 // =============================================================================
 builtin_range:
-    preamble_args(1, 0)
+    preamble_call(1, 1)
 
-    rs_peek(W0)
+    arg_get(0, W0)
     jsr deref_W0_to_W2
     ldy #0
     lda (W2),y
@@ -106,8 +126,8 @@ _brange_done:
 // builtin_bool(x) — coerce any value to TRUE/FALSE via val_truthy.
 // =============================================================================
 builtin_bool:
-    preamble_args(1, 0)
-    rs_peek(W0)
+    preamble_call(1, 1)
+    arg_get(0, W0)
     jsr val_truthy               // A = 0 (falsy) or non-zero (truthy)
     cmp #0
     beq _bbool_false
@@ -128,8 +148,8 @@ _bbool_false:
 // FLOAT → FLOAT (clear sign bit). Other types panic ERR_TYPE.
 // =============================================================================
 builtin_abs:
-    preamble_args(1, 0)
-    rs_peek(W0)
+    preamble_call(1, 1)
+    arg_get(0, W0)
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_INT
@@ -143,26 +163,30 @@ builtin_abs:
     jmp error_handler
 
 _babs_int:
-    rs_peek(W0)
+    arg_get(0, W0)
     jsr deref_W0_to_W2
     jsr sign_byte_W2             // A = $00 if non-neg, $FF if neg
     cmp #$00
     beq _babs_passthrough
-    jsr int_negate               // consumes RS top, RV = magnitude
+    arg_get(0, W0)
+    rs_push(W0)
+    jsr int_negate               // consumes pushed arg, RV = magnitude
     jmp postamble
 
 _babs_passthrough:
-    rs_peek(RV)
+    arg_get(0, RV)
     jmp postamble
 
 _babs_float:
     // Packed MS-Basic float: byte 1 of payload holds (sign|mantissa-msb).
     // Bit 7 = sign. If clear, already non-negative.
-    rs_peek(W0)
+    arg_get(0, W0)
     jsr deref_W0_to_W2
     ldy #1
     lda (W2),y
     bpl _babs_passthrough
+    arg_get(0, W0)
+    rs_push(W0)
     jsr float_neg                // RV = -x (positive)
     jmp postamble
 
@@ -170,8 +194,8 @@ _babs_float:
 // builtin_chr(n) — INT/BOOL n → 1-byte TYPE_STR with payload = n & $FF.
 // =============================================================================
 builtin_chr:
-    preamble_args(1, 0)
-    rs_peek(W0)
+    preamble_call(1, 1)
+    arg_get(0, W0)
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_INT
@@ -207,8 +231,8 @@ _bchr_ok:
 // stay non-negative.
 // =============================================================================
 builtin_ord:
-    preamble_args(1, 0)
-    rs_peek(W0)
+    preamble_call(1, 1)
+    arg_get(0, W0)
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_STR
@@ -267,8 +291,8 @@ _bord_2byte:
 // output (mirrors int_parse_dec). Negative path uses int_negate.
 // =============================================================================
 builtin_int:
-    preamble_args(1, 0)
-    rs_peek(W0)
+    preamble_call(1, 1)
+    arg_get(0, W0)
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_INT
@@ -284,11 +308,11 @@ builtin_int:
     jmp error_handler
 
 _bint_passthrough:
-    rs_peek(RV)
+    arg_get(0, RV)
     jmp postamble
 
 _bint_from_bool:
-    rs_peek(W0)
+    arg_get(0, W0)
     jsr deref_W0_to_W2
     ldy #0
     lda (W2),y
@@ -306,11 +330,13 @@ _bint_from_bool:
     jmp postamble
 
 _bint_from_float:
-    jsr float_to_int                 // consumes RS top, RV = INT
+    arg_get(0, W0)
+    rs_push(W0)
+    jsr float_to_int                 // consumes pushed arg, RV = INT
     jmp postamble
 
 _bint_from_str:
-    rs_peek(W0)
+    arg_get(0, W0)
     jsr deref_W0_to_W2               // W2 = payload, A = len
     sta B1                           // B1 = len
     beq _bint_value_error            // empty string
@@ -356,8 +382,8 @@ _bint_value_error:
 //   STR → str_to_float (BASIC FIN).
 // =============================================================================
 builtin_float:
-    preamble_args(1, 0)
-    rs_peek(W0)
+    preamble_call(1, 1)
+    arg_get(0, W0)
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_FLOAT
@@ -373,14 +399,18 @@ builtin_float:
     jmp error_handler
 
 _bflt_passthrough:
-    rs_peek(RV)
+    arg_get(0, RV)
     jmp postamble
 
 _bflt_from_int:
+    arg_get(0, W0)
+    rs_push(W0)
     jsr int_to_float
     jmp postamble
 
 _bflt_from_str:
+    arg_get(0, W0)
+    rs_push(W0)
     jsr str_to_float
     jmp postamble
 
@@ -396,29 +426,31 @@ _bflt_from_str:
 //   DICT  → "{k0: v0, ...}".
 // =============================================================================
 builtin_str:
-    preamble_args(1, 0)
-    rs_peek(W0)
+    preamble_call(1, 1)
+    arg_get(0, W0)
     ldy #H_TYPE
     lda (W0),y
 
     cmp #TYPE_STR
-    beq _bstr_passthrough
+    bne !next+
+    jmp _bstr_passthrough
+!next:
     cmp #TYPE_INT
-    beq _bstr_int
+    bne !next+
+    jmp _bstr_int
+!next:
     cmp #TYPE_BOOL
-    beq _bstr_bool
+    bne !next+
+    jmp _bstr_bool
+!next:
     cmp #TYPE_NONE
-    beq _bstr_none
+    bne !next+
+    jmp _bstr_none
+!next:
     cmp #TYPE_FLOAT
-    beq _bstr_float
-    cmp #TYPE_LIST
-    beq !cont+
-    cmp #TYPE_TUPLE
-    beq !cont+
-    cmp #TYPE_DICT
-    beq !cont+
-    jmp _bstr_type_err
-!cont:
+    bne !next+
+    jmp _bstr_float
+!next:
     cmp #TYPE_LIST
     bne !next+
     jmp _bstr_list
@@ -427,23 +459,31 @@ builtin_str:
     bne !next+
     jmp _bstr_tuple
 !next:
+    cmp #TYPE_DICT
+    bne !next+
     jmp _bstr_dict
+!next:
+    jmp _bstr_type_err
 _bstr_type_err:
     lda #ERR_TYPE
     sta ERROR_CODE
     jmp error_handler
 
 _bstr_passthrough:
-    rs_peek(RV)
+    arg_get(0, RV)
     jmp postamble
 _bstr_int:
-    jsr int_to_str                   // consumes RS top, RV = STR
+    arg_get(0, W0)
+    rs_push(W0)
+    jsr int_to_str                   // consumes pushed arg, RV = STR
     jmp postamble
 _bstr_float:
+    arg_get(0, W0)
+    rs_push(W0)
     jsr float_to_str
     jmp postamble
 _bstr_bool:
-    rs_peek(W0)
+    arg_get(0, W0)
     jsr deref_W0_to_W2
     ldy #0
     lda (W2),y
@@ -466,21 +506,79 @@ _bstr_none:
     sta RV+1
     jmp postamble
 
+// Containers: push container as a fresh root above the args tuple, then push
+// open/close, then call the renderer. Rendering helpers read container at RS
+// depth 1 (after their own internal pushes), as before.
 _bstr_list:
+    arg_get(0, W0)
+    rs_push(W0)
     rs_push_const(STR_LBRACK)
     rs_push_const(STR_RBRACK)
     jsr _bstr_render_seq
     jmp postamble
 
 _bstr_tuple:
+    arg_get(0, W0)
+    rs_push(W0)
     rs_push_const(STR_LPAREN)
     rs_push_const(STR_RPAREN)
     jsr _bstr_render_seq
     jmp postamble
 
 _bstr_dict:
+    arg_get(0, W0)
+    rs_push(W0)
     jsr _bstr_render_dict
     jmp postamble
+
+// -----------------------------------------------------------------------------
+// _repr_w0 / _str_w0 — internal "call repr/str on a single handle" helpers.
+//
+// Under the v2 args-tuple convention every builtin receives one RS arg = a
+// TYPE_TUPLE. When builtin code wants to recursively invoke builtin_repr or
+// builtin_str on a child value (e.g., the rendering helpers below, or
+// builtin_repr's non-string passthrough), it can't just `rs_push(value); jsr
+// builtin_repr` — it must wrap the value in a 1-tuple first.
+//
+// These helpers do exactly that: they take the value handle in W0, allocate a
+// 1-tuple, store the value in slot 0, push the tuple on RS, and jsr the
+// target builtin. RV holds the result on return; RS is restored to its
+// pre-call state (the tuple is consumed by the target builtin's postamble).
+//
+//   in:  W0 = value handle
+//   out: RV = result string. RS unchanged net.
+//   clobbers: A, X, Y, W0..W2. B0..B7 preserved (nested calls are V4').
+//   GC-safe: the input is rooted on RS across tuple_alloc.
+// -----------------------------------------------------------------------------
+_repr_w0:
+    rs_push(W0)
+    lda #1
+    jsr tuple_alloc                    // RV = empty 1-tuple. Preserves W/B.
+    rs_pop(W1)                          // W1 = original value (was W0)
+    lda RV
+    sta W0
+    lda RV+1
+    sta W0+1
+    lda #0
+    jsr tuple_set_leaf                  // tuple[0] = W1
+    rs_push(RV)                         // root tuple as the args arg
+    jsr builtin_repr                    // consumes tuple, RV = repr
+    rts
+
+_str_w0:
+    rs_push(W0)
+    lda #1
+    jsr tuple_alloc
+    rs_pop(W1)
+    lda RV
+    sta W0
+    lda RV+1
+    sta W0+1
+    lda #0
+    jsr tuple_set_leaf
+    rs_push(RV)
+    jsr builtin_str
+    rts
 
 // -----------------------------------------------------------------------------
 // _bstr_render_seq — render a LIST or TUPLE as "OPEN e0, e1, ... CLOSE".
@@ -529,8 +627,11 @@ _brs_loop:
 
     // Recursive: builtin_repr(element) — matches Python: containers always
     // render their elements via repr, so strings come out quoted.
-    rs_push(W3)
-    jsr builtin_repr
+    lda W3
+    sta W0
+    lda W3+1
+    sta W0+1
+    jsr _repr_w0
 
     // accum ++= element_str. RS is [container, accum] (builtin_repr consumed
     // its arg). We need [a, b] for array_merge: dup accum, push element_str.
@@ -576,8 +677,8 @@ _brs_close:
 // "key_str: value_str" per entry, separated by ", " — same outer pattern as
 // _bstr_render_seq.
 //
-// Caller: builtin_str's body. RS slot 0 = dict (the V4' arg). On return RV
-// = rendered string. RS is inconsistent; postamble cleans up.
+// Caller: builtin_str's body, with dict pushed as RS top. On return RV =
+// rendered string. RS is inconsistent; postamble cleans up.
 // -----------------------------------------------------------------------------
 _bstr_render_dict:
     rs_push_const(STR_LCURLY)         // RS: [dict, accum=`{`]
@@ -634,11 +735,10 @@ _brd_loop:
 
     // accum ++= repr(key). builtin_repr(key):
     lda B0
-    sta W3
+    sta W0
     lda B1
-    sta W3+1
-    rs_push(W3)
-    jsr builtin_repr                   // RV = key_str (quoted if str)
+    sta W0+1
+    jsr _repr_w0                       // RV = key_str (quoted if str)
     rs_peek(W3)
     rs_push(W3)
     rs_push(RV)
@@ -656,11 +756,10 @@ _brd_loop:
 
     // accum ++= repr(value).
     lda B2
-    sta W3
+    sta W0
     lda B3
-    sta W3+1
-    rs_push(W3)
-    jsr builtin_repr                   // RV = value_str (quoted if str)
+    sta W0+1
+    jsr _repr_w0                       // RV = value_str (quoted if str)
     rs_peek(W3)
     rs_push(W3)
     rs_push(RV)
@@ -702,7 +801,7 @@ _brd_close:
 // `rnd() % n` for a 0..n-1 range.
 // =============================================================================
 builtin_rnd:
-    preamble_args(0, 0)
+    preamble_call(0, 0)
     jsr rand8
     sta B0                            // stash byte across alloc
     // 2-byte allocation: any 8-bit value with high-bit set would otherwise
@@ -726,7 +825,7 @@ builtin_rnd:
 
 // =============================================================================
 // builtin_sort(S) — return a sorted version of S.
-//   in:  RS slot 0 = me (TYPE_STR, TYPE_TUPLE, or TYPE_LIST).
+//   in:  args = (me,) where me is TYPE_STR, TYPE_TUPLE, or TYPE_LIST.
 //   out: RV = sorted result. STR/TUPLE return a fresh sorted copy. LIST is
 //        sorted in place (RV = same handle).
 //
@@ -735,8 +834,8 @@ builtin_rnd:
 // optional positional args, which our parser doesn't model yet).
 // =============================================================================
 builtin_sort:
-    preamble_args(1, 0)
-    rs_peek(W0)
+    preamble_call(1, 1)
+    arg_get(0, W0)
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_STR
@@ -757,11 +856,11 @@ builtin_sort:
 
 _bsort_str:
     // Clone via `array_repeat` with n=1.
-    rs_peek(W0)
+    arg_get(0, W0)
     rs_push(W0)
     rs_push_const(INT_1)
     jsr array_repeat                  // RV = clone (TYPE_STR)
-    rs_push(RV)                       // RS: [me, clone]
+    rs_push(RV)                       // RS: [args_tuple, clone]
 
     rs_peek(W0)
     jsr deref_W0_to_W2                // W2 = clone payload, A = len
@@ -775,7 +874,7 @@ _bsort_str:
     jmp postamble
 
 _bsort_tuple:
-    rs_peek(W0)
+    arg_get(0, W0)
     rs_push(W0)
     rs_push_const(INT_1)
     jsr array_repeat                  // RV = clone (TYPE_TUPLE preserved)
@@ -793,7 +892,7 @@ _bsort_tuple:
 
 _bsort_list:
     // In-place. Set up W3 = payload, B0 = count, then sort.
-    rs_peek(W0)
+    arg_get(0, W0)
     jsr deref_W0_to_W2
     sta B0
     lda W2
@@ -801,7 +900,7 @@ _bsort_list:
     lda W2+1
     sta W3+1
     jsr _bsort_handles
-    rs_peek(RV)                       // return same list handle
+    arg_get(0, RV)                    // return same list handle
     jmp postamble
 
 // Insertion sort over bytes at (W3),y for y in 0..B0-1.
@@ -911,36 +1010,34 @@ _bsh_d:
 // so the container renderer below now delegates to builtin_repr too.
 // =============================================================================
 builtin_repr:
-    preamble_args(1, 0)
-    rs_peek(W0)
+    preamble_call(1, 1)
+    arg_get(0, W0)
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_STR
     beq _brepr_quote
 
-    // Non-string: same rendering as str(). Re-push the arg so builtin_str
-    // sees its own copy to consume.
-    rs_push(W0)
-    jsr builtin_str
+    // Non-string: delegate to builtin_str via _str_w0 (wraps W0 in a new
+    // 1-tuple under v2 calling convention).
+    jsr _str_w0
     jmp postamble
 
 _brepr_quote:
-    // Build "'" ++ me ++ "'" via two array_merge calls.
-    rs_push_const(STR_QUOTE)         // RS: [me, "'"]
-    rs_peek_at(W0, 1)
-    rs_push(W0)                      // RS: [me, "'", me]
-    jsr array_merge                  // RV = "'me"; consumes top 2; RS: [me]
-    rs_push(RV)                      // RS: [me, "'me"]
-    rs_push_const(STR_QUOTE)         // RS: [me, "'me", "'"]
-    jsr array_merge                  // RV = "'me'"; consumes top 2; RS: [me]
+    // Build "'" ++ me ++ "'" via two array_merge calls. W0 already holds me.
+    rs_push_const(STR_QUOTE)         // RS: [args_tuple, "'"]
+    rs_push(W0)                      // RS: [args_tuple, "'", me]
+    jsr array_merge                  // RV = "'me"; RS: [args_tuple]
+    rs_push(RV)                      // RS: [args_tuple, "'me"]
+    rs_push_const(STR_QUOTE)         // RS: [args_tuple, "'me", "'"]
+    jsr array_merge                  // RV = "'me'"; RS: [args_tuple]
     jmp postamble
 
 // =============================================================================
 // builtin_type(x) — return INT holding the H_TYPE tag byte.
 // =============================================================================
 builtin_type:
-    preamble_args(1, 0)
-    rs_peek(W0)
+    preamble_call(1, 1)
+    arg_get(0, W0)
     ldy #H_TYPE
     lda (W0),y
     sta B0
@@ -962,8 +1059,8 @@ builtin_type:
 // (e.g. handles around $C000+) stay positive.
 // =============================================================================
 builtin_id:
-    preamble_args(1, 0)
-    rs_peek(W0)
+    preamble_call(1, 1)
+    arg_get(0, W0)
 
     lda #3
     sta ALLOC_SIZE
@@ -987,8 +1084,12 @@ builtin_id:
 //   Returns INT: -1 if a < b, 0 if a == b, 1 if a > b.
 // =============================================================================
 builtin_cmp:
-    preamble_args(2, 0)
-    jsr val_cmp                        // A = $FF / $00 / $01; consumes both args
+    preamble_call(2, 2)
+    arg_get(0, W0)
+    arg_get(1, W1)
+    rs_push(W0)
+    rs_push(W1)
+    jsr val_cmp                        // A = $FF / $00 / $01; consumes pushed args
     sta B0
 
     lda #1
@@ -1008,8 +1109,8 @@ builtin_cmp:
 // magnitude byte (no leading-zero trim).
 // =============================================================================
 builtin_hex:
-    preamble_args(1, 0)
-    rs_peek(W0)
+    preamble_call(1, 1)
+    arg_get(0, W0)
 
     ldy #H_TYPE
     lda (W0),y
@@ -1027,13 +1128,19 @@ builtin_hex:
     jsr sign_byte_W2                    // A = $FF if negative else $00
     sta B6                              // B6 = sign
 
-    bpl _bhex_have_mag
+    bmi _bhex_negative
 
-    // Negative — negate to get magnitude, root it on RS for GC.
-    rs_peek(W0)
+    // Positive — magnitude IS the original. Push it for uniform re-deref below.
+    arg_get(0, W0)
+    rs_push(W0)                         // RS: [args_tuple, magnitude=orig]
+    jmp _bhex_have_mag
+
+_bhex_negative:
+    // Negate to get magnitude, root it on RS for GC.
+    arg_get(0, W0)
     rs_push(W0)
     jsr int_negate
-    rs_push(RV)                         // RS: [orig, magnitude]
+    rs_push(RV)                         // RS: [args_tuple, magnitude]
     rs_peek(W0)
     jsr deref_W0_to_W2
     sta B0                              // B0 = magnitude len (post-negate normalization)
@@ -1132,19 +1239,19 @@ _bhex_emit_digit:
     rts
 
 // =============================================================================
-// Method-style builtins. Each impl reads the receiver from the deepest RS
-// slot — the slot below the args, populated by led_lparen pushing
-// METHOD_RECEIVER (set by led_dot). For an N-arg method, RS is
-// [..., me, arg1, ..., argN] and the impl uses preamble_args(N+1, 0) to
-// consume both `me` and the args.
+// Method-style builtins. Receiver is tuple slot 0 — `led_dot` stages
+// METHOD_RECEIVER which `led_lparen` prepends to the args tuple as element 0
+// before calling. For an N-arg method like obj.m(a, b), the args tuple is
+// (obj, a, b) and the impl reads obj via `arg_get(0, ...)`.
 // =============================================================================
 
 // --- str.upper() — return a new TYPE_STR with ASCII letters folded UP -------
-//   in:  RS slot 0 = me (TYPE_STR)
+//   in:  args = (me,)   me: TYPE_STR
 // =============================================================================
 builtin_str_upper:
-    preamble_args(1, 0)
-    rs_peek(W0)
+    preamble_call(1, 1)
+    arg_get(0, W0)
+    rs_push(W0)                       // root me at RS top so we can re-deref after alloc
     jsr deref_W0_to_W2                // W2 = me payload, A = O_LEN
     sta B0                            // B0 = len
 
@@ -1156,7 +1263,7 @@ builtin_str_upper:
     sta ALLOC_TYPE
     jsr alloc                         // RV = new STR
 
-    // src = me.payload (re-deref post-GC).
+    // src = me.payload (re-deref post-GC; me is on RS top).
     rs_peek(W0)
     jsr deref_W0_to_W2
     lda W2
@@ -1198,11 +1305,12 @@ _bsu_done:
     jmp postamble
 
 // --- str.lower() — fold ASCII letters DOWN ----------------------------------
-//   in:  RS slot 0 = me (TYPE_STR)
+//   in:  args = (me,)   me: TYPE_STR
 // =============================================================================
 builtin_str_lower:
-    preamble_args(1, 0)
-    rs_peek(W0)
+    preamble_call(1, 1)
+    arg_get(0, W0)
+    rs_push(W0)                       // root me at RS top
     jsr deref_W0_to_W2
     sta B0
 
@@ -1254,17 +1362,17 @@ _bsl_done:
     jmp postamble
 
 // --- str.find(sub) — return first position or -1 ----------------------------
-//   in:  RS slot 1 = me (TYPE_STR), slot 0 = sub (TYPE_STR)
+//   in:  args = (me, sub)   both TYPE_STR
 //
-// str_find_pos expects RS = [needle (deeper), haystack (top)]; method-call
-// layout gives [me, sub] so we swap before delegating.
+// str_find_pos expects RS = [needle (deeper), haystack (top)], so we push
+// sub then me before delegating.
 // =============================================================================
 builtin_str_find:
-    preamble_args(2, 0)
-    rs_pop(W1)                        // sub (top)
-    rs_pop(W0)                        // me (was deeper)
-    rs_push(W1)                       // sub becomes new deeper
-    rs_push(W0)                       // me becomes new top
+    preamble_call(2, 2)
+    arg_get(0, W0)                    // me
+    arg_get(1, W1)                    // sub
+    rs_push(W1)                       // sub deeper
+    rs_push(W0)                       // me top — str_find_pos wants [needle, haystack]
     jsr str_find_pos                  // A = pos or $FF
     sta B0
 
@@ -1290,21 +1398,17 @@ _bfind_store_hi:
     jmp postamble
 
 // --- str.startswith(prefix) -------------------------------------------------
-//   in:  RS slot 1 = me, slot 0 = prefix
+//   in:  args = (me, prefix)
 // =============================================================================
 builtin_str_startswith:
-    preamble_args(2, 0)
-    rs_peek_at(W0, 0)                 // prefix
-    jsr deref_W0_to_W2
+    preamble_call(2, 2)
+    arg_get(0, W0)                    // me
+    arg_get(1, W1)                    // prefix
+    // Cache both args before clobbering W3 (which arg_get reads from).
+    jsr deref_W1_to_W3                // W3 = prefix payload, A = prefix len
     sta B0                            // B0 = prefix len
-    lda W2
-    sta W3
-    lda W2+1
-    sta W3+1                          // W3 = prefix payload
-
-    rs_peek_at(W0, 1)                 // me
-    jsr deref_W0_to_W2
-    sta B1                            // B1 = me len; W2 = me payload
+    jsr deref_W0_to_W2                // W2 = me payload, A = me len
+    sta B1                            // B1 = me len
 
     // If prefix len > me len, not a prefix.
     lda B0
@@ -1336,20 +1440,15 @@ _bsw_false:
     jmp postamble
 
 // --- str.endswith(suffix) ---------------------------------------------------
-//   in:  RS slot 1 = me, slot 0 = suffix
+//   in:  args = (me, suffix)
 // =============================================================================
 builtin_str_endswith:
-    preamble_args(2, 0)
-    rs_peek_at(W0, 0)                 // suffix
-    jsr deref_W0_to_W2
+    preamble_call(2, 2)
+    arg_get(0, W0)                    // me
+    arg_get(1, W1)                    // suffix
+    jsr deref_W1_to_W3                // W3 = suffix payload, A = suffix len
     sta B0                            // B0 = suffix len
-    lda W2
-    sta W3
-    lda W2+1
-    sta W3+1
-
-    rs_peek_at(W0, 1)                 // me
-    jsr deref_W0_to_W2
+    jsr deref_W0_to_W2                // W2 = me payload, A = me len
     sta B1                            // B1 = me len
 
     lda B0
@@ -1391,7 +1490,7 @@ _bew_false:
     jmp postamble
 
 // --- str.split(sep) — list of substrings split on sep ----------------------
-//   in:  RS slot 1 = me, slot 0 = sep
+//   in:  args = (me, sep)
 //   out: RV = TYPE_LIST of TYPE_STR. Args consumed.
 //
 // Sep-required form (no whitespace mode for now). Empty sep → ERR_TYPE.
@@ -1399,7 +1498,14 @@ _bew_false:
 // produce empty strings (Python `"a,,b".split(",")` → ["a","","b"]).
 // =============================================================================
 builtin_str_split:
-    preamble_args(2, 0)
+    preamble_call(2, 2)
+
+    // Push me, sep as RS roots so the rest of the body can read them via
+    // constant depth offsets (depth 2 = me, depth 1 = sep) — same scheme as v1.
+    arg_get(0, W0)
+    rs_push(W0)
+    arg_get(1, W0)
+    rs_push(W0)
 
     rs_peek_at(W0, 1)
     rs_peek_at(W1, 0)
@@ -1420,7 +1526,7 @@ builtin_str_split:
     lda #0
     ldx #TYPE_LIST
     jsr _array_alloc_init             // RV = list
-    rs_push(RV)                       // RS: [me, sep, list]
+    rs_push(RV)                       // RS: [args_tuple, me, sep, list]
 
     rs_peek_at(W0, 2)
     rs_peek_at(W1, 1)
@@ -1485,12 +1591,10 @@ _bsp_done:
     jmp postamble
 
 // Helper: alloc TYPE_STR of B3-B4 bytes, copy me[B4..B3] into it, append to
-// list. Caller's RS at entry: [me, sep, list]. Helper must NOT change that.
+// list. Caller's RS at entry: [args_tuple, me, sep, list]. Helper must NOT
+// change that on return.
 //
 // Preserves: B0, B1, B2, B4. Clobbers: A, X, Y, B5..B7, W0..W3, RV.
-// Re-derefs me/sep for the caller via the helper's tail (same as caller's
-// re-deref pattern), so the helper's caller doesn't need to re-deref before
-// emitting; but it DOES need to re-deref for the next loop iteration.
 _bsp_emit_segment:
     sec
     lda B3
@@ -1502,7 +1606,7 @@ _bsp_emit_segment:
     lda #TYPE_STR
     sta ALLOC_TYPE
     jsr alloc                         // RV = new str
-    rs_push(RV)                       // RS: [me, sep, list, seg]
+    rs_push(RV)                       // RS: [args_tuple, me, sep, list, seg]
 
     // Copy me[B4..B4+B5] into seg. seg payload first (W3), me payload after (W2).
     rs_peek(W0)                       // seg (slot 0)
@@ -1512,7 +1616,7 @@ _bsp_emit_segment:
     lda W2+1
     sta W3+1                          // W3 = seg payload (saved)
 
-    rs_peek_at(W0, 3)                 // me
+    rs_peek_at(W0, 3)                 // me (slot 3)
     jsr deref_W0_to_W2                // W2 = me payload
     lda W2
     clc
@@ -1538,11 +1642,11 @@ _bsp_cpd:
     rs_push(W0)
     jsr list_append                   // consumes top 2; list grew
 
-    rs_pop(W0)                        // drop the seg root; RS: [me, sep, list]
+    rs_pop(W0)                        // drop the seg root; RS: [args_tuple, me, sep, list]
     rts
 
 // --- str.replace(old, new) — replace all occurrences. ----------------------
-//   in:  RS slot 2 = me, slot 1 = old, slot 0 = new (all TYPE_STR)
+//   in:  args = (me, old, new)   all TYPE_STR
 //   out: RV = new TYPE_STR with substitutions applied. Args consumed.
 //
 // Two-pass algorithm: pass 1 counts matches, pass 2 copies. Empty `old`
@@ -1550,7 +1654,18 @@ _bsp_cpd:
 // not worth the complexity). Total result must fit in 255 bytes else ERR_OOM.
 // =============================================================================
 builtin_str_replace:
-    preamble_args(3, 0)
+    preamble_call(3, 3)
+
+    // Mirror the v1 RS layout by re-rooting each arg as its own RS slot.
+    // After this, RS: [args_tuple, me, old, new] — same depth scheme as v1's
+    // [me, old, new], so the rest of the body reads each slot via familiar
+    // peek_at offsets without any args-tuple awareness.
+    arg_get(0, W0)
+    rs_push(W0)
+    arg_get(1, W0)
+    rs_push(W0)
+    arg_get(2, W0)
+    rs_push(W0)
 
     // Lengths into B0..B2.
     rs_peek_at(W0, 2)
@@ -1760,11 +1875,11 @@ _bsr_matno:
     rts
 
 // --- str.isalpha() — TRUE iff every byte is A-Z or a-z (and len > 0) -------
-//   in:  RS slot 0 = me
+//   in:  args = (me,)
 // =============================================================================
 builtin_str_isalpha:
-    preamble_args(1, 0)
-    rs_peek(W0)
+    preamble_call(1, 1)
+    arg_get(0, W0)
     jsr deref_W0_to_W2                // A = O_LEN, W2 = payload
     sta B0
     beq _bia_false                    // empty → False (Python rule)
@@ -1796,11 +1911,11 @@ _bia_false:
     jmp postamble
 
 // --- str.isdigit() — TRUE iff every byte is 0-9 (and len > 0) --------------
-//   in:  RS slot 0 = me
+//   in:  args = (me,)
 // =============================================================================
 builtin_str_isdigit:
-    preamble_args(1, 0)
-    rs_peek(W0)
+    preamble_call(1, 1)
+    arg_get(0, W0)
     jsr deref_W0_to_W2
     sta B0
     beq _bid_false
@@ -1827,11 +1942,15 @@ _bid_false:
     jmp postamble
 
 // --- list.append(item) — push item; returns NONE -----------------------------
-//   in:  RS slot 1 = me (TYPE_LIST), slot 0 = item
+//   in:  args = (me, item)   me: TYPE_LIST
 // =============================================================================
 builtin_list_append:
-    preamble_args(2, 0)
-    jsr list_append                   // mutates me in place; consumes 2 RS args
+    preamble_call(2, 2)
+    arg_get(0, W0)                    // me
+    arg_get(1, W1)                    // item
+    rs_push(W0)
+    rs_push(W1)
+    jsr list_append                   // consumes 2 pushed RS args
     lda #<NONE
     sta RV
     lda #>NONE
@@ -1839,28 +1958,30 @@ builtin_list_append:
     jmp postamble
 
 // --- list.insert(idx, item) — splice in at idx; returns NONE -----------------
-//   in:  RS slot 2 = me, slot 1 = idx (INT), slot 0 = item
+//   in:  args = (me, idx, item)   me: TYPE_LIST, idx: TYPE_INT
 // =============================================================================
 builtin_list_insert:
-    preamble_args(3, 0)
-    rs_pop(W1)                        // item
-    rs_pop(W0)                        // idx handle
+    preamble_call(3, 3)
+    arg_get(0, W0)                    // me
+    arg_get(1, W2)                    // idx handle (use W2 to avoid clobbering W3 yet)
+    arg_get(2, W1)                    // item
 
     // Extract idx byte from int handle → fs_push as a word.
     ldy #H_PTR
-    lda (W0),y
-    sta W2
-    iny
-    lda (W0),y
-    sta W2+1
-    ldy #O_HEADER
-    lda (W2),y                        // A = idx byte
+    lda (W2),y
     sta W3
-    lda #0
+    iny
+    lda (W2),y
     sta W3+1
-    fs_push(W3)
+    ldy #O_HEADER
+    lda (W3),y                        // A = idx byte
+    sta W2
+    lda #0
+    sta W2+1
+    fs_push(W2)
 
-    rs_push(W1)                       // RS: [me, item]
+    rs_push(W0)                       // RS: [args_tuple, me]
+    rs_push(W1)                       // RS: [args_tuple, me, item]
     jsr array_insert                  // consumes 2 RS + 1 FS; mutates me
 
     lda #<NONE
@@ -1870,11 +1991,11 @@ builtin_list_insert:
     jmp postamble
 
 // --- list.pop() — remove and return last element ----------------------------
-//   in:  RS slot 0 = me. Empty list → ERR_TYPE.
+//   in:  args = (me,)   me: TYPE_LIST. Empty list → ERR_TYPE.
 // =============================================================================
 builtin_list_pop:
-    preamble_args(1, 0)
-    rs_peek(W0)
+    preamble_call(1, 1)
+    arg_get(0, W0)
 
     // W2 = object base (at O_LEN), B0 = O_LEN low.
     ldy #H_PTR
@@ -1921,19 +2042,19 @@ _bpop_have:
     sta (W2),y
     jmp postamble
 
-// --- dict.get(key, default) — value at key, else default --------------------
-//   in:  RS slot 2 = me (TYPE_DICT), slot 1 = key, slot 0 = default
+// --- dict.get(key, default=NONE) — value at key, else default ---------------
+//   in:  args tuple = (me, key) or (me, key, default)
 // =============================================================================
 builtin_dict_get:
-    preamble_args(3, 0)
-    rs_peek_at(W0, 2)
-    rs_peek_at(W1, 1)
+    preamble_call(2, 3)
+    arg_get(0, W0)                    // me
+    arg_get(1, W1)                    // key
     jsr _dict_bin_search              // A = 1 hit / 0 miss; RV = index on hit
     cmp #0
     beq _bdg_miss
 
     // Hit: dict.payload[RV] is the (key, value) entry tuple.
-    rs_peek_at(W0, 2)
+    arg_get(0, W0)
     jsr deref_W0_to_W2                // W2 = me payload
     lda RV
     asl
@@ -1959,17 +2080,18 @@ builtin_dict_get:
     jmp postamble
 
 _bdg_miss:
-    // Default is at RS slot 0 (top).
-    rs_peek(RV)
+    // Default if provided, else NONE. _dict_bin_search is V4' so W3 (args
+    // tuple payload pointer cached by preamble_call) is preserved.
+    arg_get_or(2, NONE, RV)
     jmp postamble
 
 // --- dict.has(key) — TRUE if key in me; FALSE otherwise ----------------------
-//   in:  RS slot 1 = me (TYPE_DICT), slot 0 = key
+//   in:  args = (me, key)   me: TYPE_DICT
 // =============================================================================
 builtin_dict_has:
-    preamble_args(2, 0)
-    rs_peek_at(W0, 1)                 // me
-    rs_peek_at(W1, 0)                 // key
+    preamble_call(2, 2)
+    arg_get(0, W0)                    // me
+    arg_get(1, W1)                    // key
     jsr _dict_bin_search              // A = 1 hit / 0 miss
     cmp #0
     beq _bdh_false
@@ -1986,19 +2108,23 @@ _bdh_false:
     jmp postamble
 
 // --- dict.keys() — list of keys --------------------------------------------
-//   in:  RS slot 0 = me (TYPE_DICT)
+//   in:  args = (me,)   me: TYPE_DICT
 // =============================================================================
 builtin_dict_keys:
-    preamble_args(1, 0)
+    preamble_call(1, 1)
+    arg_get(0, W0)                    // dict
+    rs_push(W0)                       // root for _bd_build_list
     lda #0                            // entry-tuple byte offset for the key
     jsr _bd_build_list
     jmp postamble
 
 // --- dict.values() — list of values ----------------------------------------
-//   in:  RS slot 0 = me (TYPE_DICT)
+//   in:  args = (me,)   me: TYPE_DICT
 // =============================================================================
 builtin_dict_values:
-    preamble_args(1, 0)
+    preamble_call(1, 1)
+    arg_get(0, W0)                    // dict
+    rs_push(W0)                       // root for _bd_build_list
     lda #2                            // entry-tuple byte offset for the value
     jsr _bd_build_list
     jmp postamble
@@ -2009,7 +2135,8 @@ builtin_dict_values:
 // 2-tuple in the dict's payload.
 //
 // in:  A = byte offset within entry tuple (0 = key, 2 = value)
-//      RS slot 0 = dict handle (caller's RS root, untouched on return)
+//      RS top = dict handle (caller pushed it as a fresh root before calling;
+//      untouched on return).
 // out: RV = new TYPE_LIST
 //
 // Leaf — uses caller's V4' frame for B/W scratch. Callers must be V4'.
@@ -2073,7 +2200,7 @@ _bdb_done:
     rts
 
 // --- dict.create() — empty dict with me as prototype -----------------------
-//   in:  RS slot 0 = me (TYPE_DICT)
+//   in:  args = (me,)   me: TYPE_DICT
 //   out: RV = new dict, with new["_"] = me
 //
 // Mirrors Admiral's `built_in__dict_create` (builtin.dasm16:64). The new dict
@@ -2081,17 +2208,22 @@ _bdb_done:
 // chain.
 // =============================================================================
 builtin_dict_create:
-    preamble_args(1, 0)
+    preamble_call(1, 1)
+
+    // Cache me before dict_alloc so we don't depend on W3 (args tuple
+    // payload, invalidated by any GC inside dict_alloc).
+    arg_get(0, W0)
+    rs_push(W0)                       // RS: [args_tuple, me]
 
     jsr dict_alloc                    // RV = new dict
-    rs_push(RV)                       // RS: [me, new] — root new
+    rs_push(RV)                       // RS: [args_tuple, me, new]
 
     // Stage dict_set(new, "_", me): caller pushes (dict, key, value) on top.
-    rs_push(RV)                       // RS: [me, new, new]
-    rs_push_const(STR_UNDERSCORE)     // RS: [me, new, new, "_"]
-    rs_peek_at(W0, 3)                 // me at slot 3
-    rs_push(W0)                       // RS: [me, new, new, "_", me]
-    jsr dict_set                      // consumes top 3; RS: [me, new]
+    rs_push(RV)                       // RS: [..., me, new, new]
+    rs_push_const(STR_UNDERSCORE)     // RS: [..., me, new, new, "_"]
+    rs_peek_at(W0, 3)                 // me at depth 3
+    rs_push(W0)                       // RS: [..., me, new, new, "_", me]
+    jsr dict_set                      // consumes top 3; RS: [args_tuple, me, new]
 
     rs_peek(RV)                       // RV = new (slot 0)
     jmp postamble

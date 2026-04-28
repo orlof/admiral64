@@ -114,6 +114,7 @@
 .const ERR_OVERFLOW = $03  // Numeric overflow (e.g., float→int out of int32 range)
 .const ERR_LEX      = $04  // Lexer panic — illegal char, unterminated string, malformed number
 .const ERR_TYPE     = $05  // Type mismatch — operator/builtin received an unsupported operand type
+.const ERR_ARITY    = $06  // Wrong number of arguments to a builtin or user function
 
 // --- Handle struct -----------------------------------------------------------
 .const H_PTR         = 0   // 2 bytes — pointer to heap object (header + payload)
