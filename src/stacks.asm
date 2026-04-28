@@ -62,20 +62,31 @@ rs_init:
 // word address (e.g. W0, RV).
 // -----------------------------------------------------------------------------
 
+// rs_push: dispatch to a shared subroutine for the common ZP-word sources
+// (W0, W1, W2, W3, RV). Each call site shrinks from ~17 bytes inline to 3
+// bytes (`jsr rs_push_xxx`). Unusual sources (absolute addresses like
+// GLOBAL_SCOPE) fall through to inline expansion.
 .macro rs_push(src) {
-    sec
-    lda RSP
-    sbc #2
-    sta RSP
-    bcs !+
-    dec RSP+1
-!:
-    ldy #0
-    lda src
-    sta (RSP),y
-    iny
-    lda src+1
-    sta (RSP),y
+    .if (src == W0)      { jsr rs_push_w0 }
+    else .if (src == W1) { jsr rs_push_w1 }
+    else .if (src == W2) { jsr rs_push_w2 }
+    else .if (src == W3) { jsr rs_push_w3 }
+    else .if (src == RV) { jsr rs_push_rv }
+    else {
+        sec
+        lda RSP
+        sbc #2
+        sta RSP
+        bcs !+
+        dec RSP+1
+    !:
+        ldy #0
+        lda src
+        sta (RSP),y
+        iny
+        lda src+1
+        sta (RSP),y
+    }
 }
 
 .macro rs_pop(dst) {
@@ -228,18 +239,93 @@ rs_init:
 }
 
 // -----------------------------------------------------------------------------
-// Callable wrappers — for the Python test harness and convenience JSRs.
+// Callable wrappers — used both by the Python test harness and by the
+// `rs_push` macro itself, which compiles `rs_push(W0)` etc. into a 3-byte
+// JSR to one of these. Each body is the inline rs_push expansion + RTS;
+// they MUST stay byte-for-byte equivalent to the macro's else-branch fallback.
 // -----------------------------------------------------------------------------
 rs_push_w0:
-    rs_push(W0)
+    sec
+    lda RSP
+    sbc #2
+    sta RSP
+    bcs !+
+    dec RSP+1
+!:
+    ldy #0
+    lda W0
+    sta (RSP),y
+    iny
+    lda W0+1
+    sta (RSP),y
+    rts
+
+rs_push_w1:
+    sec
+    lda RSP
+    sbc #2
+    sta RSP
+    bcs !+
+    dec RSP+1
+!:
+    ldy #0
+    lda W1
+    sta (RSP),y
+    iny
+    lda W1+1
+    sta (RSP),y
+    rts
+
+rs_push_w2:
+    sec
+    lda RSP
+    sbc #2
+    sta RSP
+    bcs !+
+    dec RSP+1
+!:
+    ldy #0
+    lda W2
+    sta (RSP),y
+    iny
+    lda W2+1
+    sta (RSP),y
+    rts
+
+rs_push_w3:
+    sec
+    lda RSP
+    sbc #2
+    sta RSP
+    bcs !+
+    dec RSP+1
+!:
+    ldy #0
+    lda W3
+    sta (RSP),y
+    iny
+    lda W3+1
+    sta (RSP),y
+    rts
+
+rs_push_rv:
+    sec
+    lda RSP
+    sbc #2
+    sta RSP
+    bcs !+
+    dec RSP+1
+!:
+    ldy #0
+    lda RV
+    sta (RSP),y
+    iny
+    lda RV+1
+    sta (RSP),y
     rts
 
 rs_pop_w0:
     rs_pop(W0)
-    rts
-
-rs_push_w1:
-    rs_push(W1)
     rts
 
 rs_pop_w1:
