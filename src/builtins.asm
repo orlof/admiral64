@@ -131,13 +131,9 @@ builtin_bool:
     jsr val_truthy               // A = 0 (falsy) or non-zero (truthy)
     cmp #0
     beq _bbool_false
-    lda #<TRUE
-    ldx #>TRUE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_true
 _bbool_false:
-    lda #<FALSE
-    ldx #>FALSE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_false
 
 // =============================================================================
 // builtin_abs(x) — magnitude. INT/BOOL → INT (negate if negative).
@@ -1556,13 +1552,9 @@ _bsw_loop:
     cpy #0
     bne _bsw_loop
 _bsw_true:
-    lda #<TRUE
-    ldx #>TRUE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_true
 _bsw_false:
-    lda #<FALSE
-    ldx #>FALSE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_false
 
 // --- str.endswith(suffix) ---------------------------------------------------
 //   in:  args = (me, suffix)
@@ -1602,13 +1594,9 @@ _bew_loop:
     cpy #0
     bne _bew_loop
 _bew_true:
-    lda #<TRUE
-    ldx #>TRUE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_true
 _bew_false:
-    lda #<FALSE
-    ldx #>FALSE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_false
 
 // --- str.split(sep) — list of substrings split on sep ----------------------
 //   in:  args = (me, sep)
@@ -2019,13 +2007,9 @@ _bia_next:
     iny
     cpy B0
     bcc _bia_loop
-    lda #<TRUE
-    ldx #>TRUE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_true
 _bia_false:
-    lda #<FALSE
-    ldx #>FALSE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_false
 
 // --- str.isdigit() — TRUE iff every byte is 0-9 (and len > 0) --------------
 //   in:  args = (me,)
@@ -2046,13 +2030,9 @@ _bid_loop:
     iny
     cpy B0
     bcc _bid_loop
-    lda #<TRUE
-    ldx #>TRUE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_true
 _bid_false:
-    lda #<FALSE
-    ldx #>FALSE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_false
 
 // --- list.append(item) — push item; returns NONE -----------------------------
 //   in:  args = (me, item)   me: TYPE_LIST
@@ -2064,9 +2044,7 @@ builtin_list_append:
     rs_push(W0)
     rs_push(W1)
     jsr list_append                   // consumes 2 pushed RS args
-    lda #<NONE
-    ldx #>NONE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_none
 
 // --- list.insert(idx, item) — splice in at idx; returns NONE -----------------
 //   in:  args = (me, idx, item)   me: TYPE_LIST, idx: TYPE_INT
@@ -2095,9 +2073,7 @@ builtin_list_insert:
     rs_push(W1)                       // RS: [args_tuple, me, item]
     jsr array_insert                  // consumes 2 RS + 1 FS; mutates me
 
-    lda #<NONE
-    ldx #>NONE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_none
 
 // --- list.pop() — remove and return last element ----------------------------
 //   in:  args = (me,)   me: TYPE_LIST. Empty list → ERR_TYPE.
@@ -2204,13 +2180,9 @@ builtin_dict_has:
     jsr _dict_bin_search              // A = 1 hit / 0 miss
     cmp #0
     beq _bdh_false
-    lda #<TRUE
-    ldx #>TRUE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_true
 _bdh_false:
-    lda #<FALSE
-    ldx #>FALSE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_false
 
 // --- dict.keys() — list of keys --------------------------------------------
 //   in:  args = (me,)   me: TYPE_DICT

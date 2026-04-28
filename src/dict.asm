@@ -185,9 +185,7 @@ dict_get:
     bne _dg_match
 
     // Miss → return NONE.
-    lda #<NONE
-    ldx #>NONE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_none
 
 _dg_match:
     // RV holds the matched index; save before we overwrite RV with the value.

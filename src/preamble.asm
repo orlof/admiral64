@@ -252,6 +252,36 @@ _pcs_panic:
     jmp error_handler
 
 // -----------------------------------------------------------------------------
+// postamble_return_{true,false,none} — labeled tail entries that load the
+// matching static handle and fall through to postamble_set_rv_ax → postamble.
+// All static handles live in page $27, so a single `ldx #$27` serves all
+// three. The `.byte $2C` (BIT abs) acts as a 1-byte "skip next 2 bytes":
+// it consumes the following `lda #imm` as a harmless 16-bit address operand,
+// touching neither A nor X (only N/V/Z flags, which postamble does not read).
+//
+// A call site that returns one of these handles becomes a 3-byte
+//     jmp postamble_return_<x>
+// instead of the 7-byte
+//     lda #<H ; ldx #>H ; jmp postamble_set_rv_ax.
+//
+// postamble_set_rv_ax — generic tail helper for handles outside page $27 or
+// for any non-static return value. Caller passes A = lo, X = hi.
+// Falls through into postamble.
+// -----------------------------------------------------------------------------
+postamble_return_true:
+    lda #<TRUE
+    .byte $2C                // BIT abs — swallows the next 2 bytes
+postamble_return_false:
+    lda #<FALSE
+    .byte $2C                // BIT abs — swallows the next 2 bytes
+postamble_return_none:
+    lda #<NONE
+    ldx #$27
+postamble_set_rv_ax:
+    sta RV
+    stx RV+1
+
+// -----------------------------------------------------------------------------
 // postamble — restore caller state and return.
 //   in:  FP -> current frame (as set by preamble); RV / A hold return values.
 //   out: W0..W3, B0..B7 restored; RSP, FSP, FP restored to pre-args-push
@@ -307,15 +337,3 @@ postamble:
 
     pla                       // restore A
     rts
-
-// -----------------------------------------------------------------------------
-// postamble_set_rv_ax — tail helper: store A/X into RV and run postamble.
-//   in:  A = RV lo, X = RV hi
-//   Saves 4 bytes per call site vs the inline
-//       lda #<H ; sta RV ; lda #>H ; sta RV+1 ; jmp postamble
-//   pattern (3-byte jmp + 2 LDs vs the 11-byte inline).
-// -----------------------------------------------------------------------------
-postamble_set_rv_ax:
-    sta RV
-    stx RV+1
-    jmp postamble

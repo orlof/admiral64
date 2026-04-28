@@ -198,9 +198,7 @@ stmt_expression:
 stmt_pass:
     preamble_args(0, 0)
     jsr lexer_next
-    lda #<NONE
-    ldx #>NONE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_none
 
 // -----------------------------------------------------------------------------
 // stmt_break — `break` keyword. Consume token; return CTRL_BREAK.
@@ -364,9 +362,7 @@ _sd_dict_remove:
     // fall through
 
 _sd_done:
-    lda #<NONE
-    ldx #>NONE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_none
 
 // -----------------------------------------------------------------------------
 // parser_suite — parse the body of a block: consume INDENT, run statements
@@ -654,9 +650,7 @@ _swh_exit:
     jsr skip_suite
 
 _swh_done:
-    lda #<NONE
-    ldx #>NONE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_none
 
 // -----------------------------------------------------------------------------
 // stmt_for — `for VAR in EXPR: body`. EXPR may be LIST / TUPLE / DICT.
@@ -851,9 +845,7 @@ _sfor_done:
     jsr skip_suite                  // never entered → still at body start
 
 _sfor_done_post_body:
-    lda #<NONE
-    ldx #>NONE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_none
 
 // -----------------------------------------------------------------------------
 // stmt_print — `print expr`. Evaluates expr, prints via print_value, emits a
@@ -869,9 +861,7 @@ stmt_print:
     jsr print_value                 // consumes 1 arg
     lda #$0D
     jsr screen_put_char             // newline
-    lda #<NONE
-    ldx #>NONE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_none
 
 // -----------------------------------------------------------------------------
 // expression — Pratt's expression(rbp). Dispatches NUD then loops on LED.
@@ -1711,13 +1701,9 @@ nud_not:
     jsr val_truthy                // A = 1 / 0
     bne _nn_to_false
     // operand was falsy → result True
-    lda #<TRUE
-    ldx #>TRUE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_true
 _nn_to_false:
-    lda #<FALSE
-    ldx #>FALSE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_false
 
 // -----------------------------------------------------------------------------
 // led_and / led_or — boolean conjunction / disjunction with Python-style
@@ -1810,13 +1796,9 @@ _lis_diff:
     lda B0
     beq _lis_to_false
 _lis_to_true:
-    lda #<TRUE
-    ldx #>TRUE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_true
 _lis_to_false:
-    lda #<FALSE
-    ldx #>FALSE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_false
 
 // -----------------------------------------------------------------------------
 // led_in — `x in container`. Membership test. Dispatches on the RHS
@@ -1880,13 +1862,9 @@ _lin_dict:
 _lin_to_bool:
     cmp #0
     beq _lin_false
-    lda #<TRUE
-    ldx #>TRUE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_true
 _lin_false:
-    lda #<FALSE
-    ldx #>FALSE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_false
 
 // -----------------------------------------------------------------------------
 // nud_lbrack — list literal `[a, b, c]`. Handles empty `[]` too.
@@ -2523,16 +2501,12 @@ _llba_idx_pos:
     rs_push(W1)                       // RS: [container, value]
     jsr list_set                      // consumes 2 RS + 1 FS
 
-    lda #<NONE
-    ldx #>NONE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_none
 
 _llb_assign_dict:
     // dict_set takes RS [dict, key, value] — exactly what we have.
     jsr dict_set
-    lda #<NONE
-    ldx #>NONE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_none
 
 // Slice form: `a[start:stop]`. Entry: RS top = container, RV = start handle,
 // `:` is the current token. Push start, parse stop, expect `]`, then fall
@@ -2836,9 +2810,7 @@ _ldot_assign:
 
     // Assignment-as-expression returns NONE (matches Python; matches our
     // existing nud_name assignment convention).
-    lda #<NONE
-    ldx #>NONE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_none
 
 // -----------------------------------------------------------------------------
 // nud_float — parse a TK_FLOAT_LIT span into a TYPE_FLOAT handle.
@@ -2895,9 +2867,7 @@ _nname_assign:
 
     // Assignment-as-expression returns NONE (matches Python's `=` which is
     // a statement, but here we're an expression so we need *some* value).
-    lda #<NONE
-    ldx #>NONE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_none
 
 // Augmented assignment: `x op= rhs` rewrites to `x = x op rhs`. We delegate
 // to the matching `led_*` function via the augass_lo/hi tables — each
@@ -2924,9 +2894,7 @@ _nna_jsr:
     rs_push(RV)                     // RS: [..., name, result]
     jsr scope_set                   // consumes 2
 
-    lda #<NONE
-    ldx #>NONE
-    jmp postamble_set_rv_ax
+    jmp postamble_return_none
 
 // -----------------------------------------------------------------------------
 // nud_str — parse a TK_STR span into a TYPE_STR handle via
