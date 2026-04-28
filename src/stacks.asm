@@ -89,31 +89,46 @@ rs_init:
     }
 }
 
+// rs_pop: dispatch to a per-target subroutine; same pattern as rs_push.
 .macro rs_pop(dst) {
-    ldy #0
-    lda (RSP),y
-    sta dst
-    iny
-    lda (RSP),y
-    sta dst+1
-    clc
-    lda RSP
-    adc #2
-    sta RSP
-    bcc !+
-    inc RSP+1
-!:
+    .if (dst == W0)      { jsr rs_pop_w0 }
+    else .if (dst == W1) { jsr rs_pop_w1 }
+    else .if (dst == W2) { jsr rs_pop_w2 }
+    else .if (dst == W3) { jsr rs_pop_w3 }
+    else .if (dst == RV) { jsr rs_pop_rv }
+    else {
+        ldy #0
+        lda (RSP),y
+        sta dst
+        iny
+        lda (RSP),y
+        sta dst+1
+        clc
+        lda RSP
+        adc #2
+        sta RSP
+        bcc !+
+        inc RSP+1
+    !:
+    }
 }
 
 // Read top (or offset-from-top) of RS into `dst` without modifying RSP.
 // offset=0 is top; offset=1 is one word below top, etc.
 .macro rs_peek(dst) {
-    ldy #0
-    lda (RSP),y
-    sta dst
-    iny
-    lda (RSP),y
-    sta dst+1
+    .if (dst == W0)      { jsr rs_peek_w0 }
+    else .if (dst == W1) { jsr rs_peek_w1 }
+    else .if (dst == W2) { jsr rs_peek_w2 }
+    else .if (dst == W3) { jsr rs_peek_w3 }
+    else .if (dst == RV) { jsr rs_peek_rv }
+    else {
+        ldy #0
+        lda (RSP),y
+        sta dst
+        iny
+        lda (RSP),y
+        sta dst+1
+    }
 }
 
 .macro rs_peek_at(dst, offset) {
@@ -325,9 +340,126 @@ rs_push_rv:
     rts
 
 rs_pop_w0:
-    rs_pop(W0)
+    ldy #0
+    lda (RSP),y
+    sta W0
+    iny
+    lda (RSP),y
+    sta W0+1
+    clc
+    lda RSP
+    adc #2
+    sta RSP
+    bcc !+
+    inc RSP+1
+!:
     rts
 
 rs_pop_w1:
-    rs_pop(W1)
+    ldy #0
+    lda (RSP),y
+    sta W1
+    iny
+    lda (RSP),y
+    sta W1+1
+    clc
+    lda RSP
+    adc #2
+    sta RSP
+    bcc !+
+    inc RSP+1
+!:
+    rts
+
+rs_pop_w2:
+    ldy #0
+    lda (RSP),y
+    sta W2
+    iny
+    lda (RSP),y
+    sta W2+1
+    clc
+    lda RSP
+    adc #2
+    sta RSP
+    bcc !+
+    inc RSP+1
+!:
+    rts
+
+rs_pop_w3:
+    ldy #0
+    lda (RSP),y
+    sta W3
+    iny
+    lda (RSP),y
+    sta W3+1
+    clc
+    lda RSP
+    adc #2
+    sta RSP
+    bcc !+
+    inc RSP+1
+!:
+    rts
+
+rs_pop_rv:
+    ldy #0
+    lda (RSP),y
+    sta RV
+    iny
+    lda (RSP),y
+    sta RV+1
+    clc
+    lda RSP
+    adc #2
+    sta RSP
+    bcc !+
+    inc RSP+1
+!:
+    rts
+
+rs_peek_w0:
+    ldy #0
+    lda (RSP),y
+    sta W0
+    iny
+    lda (RSP),y
+    sta W0+1
+    rts
+
+rs_peek_w1:
+    ldy #0
+    lda (RSP),y
+    sta W1
+    iny
+    lda (RSP),y
+    sta W1+1
+    rts
+
+rs_peek_w2:
+    ldy #0
+    lda (RSP),y
+    sta W2
+    iny
+    lda (RSP),y
+    sta W2+1
+    rts
+
+rs_peek_w3:
+    ldy #0
+    lda (RSP),y
+    sta W3
+    iny
+    lda (RSP),y
+    sta W3+1
+    rts
+
+rs_peek_rv:
+    ldy #0
+    lda (RSP),y
+    sta RV
+    iny
+    lda (RSP),y
+    sta RV+1
     rts
