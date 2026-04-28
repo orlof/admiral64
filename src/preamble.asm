@@ -73,13 +73,23 @@
 
 // Read tuple[i] (a 2-byte handle) into `dest`. No bounds check — caller must
 // have arity-checked at preamble_call. `i` is a literal slot index 0..N-1.
+//
+// Compiles to a 5-byte sequence (LDY #imm + JSR helper) for the common ZP
+// destinations, falling back to inline for unusual targets. The shared
+// helpers live in stacks.asm so they're available wherever arg_get is used.
 .macro arg_get(i, dest) {
     ldy #(i*2)
-    lda (W3),y
-    sta dest
-    iny
-    lda (W3),y
-    sta dest+1
+    .if (dest == W0)      { jsr arg_get_w0 }
+    else .if (dest == W1) { jsr arg_get_w1 }
+    else .if (dest == W2) { jsr arg_get_w2 }
+    else .if (dest == RV) { jsr arg_get_rv }
+    else {
+        lda (W3),y
+        sta dest
+        iny
+        lda (W3),y
+        sta dest+1
+    }
 }
 
 // Read tuple[i] if i < arg_count, else load constant `fallback` (a static

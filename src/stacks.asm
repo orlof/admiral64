@@ -133,11 +133,15 @@ rs_init:
 
 .macro rs_peek_at(dst, offset) {
     ldy #offset*2
-    lda (RSP),y
-    sta dst
-    iny
-    lda (RSP),y
-    sta dst+1
+    .if (dst == W0)      { jsr rs_peek_at_w0 }
+    else .if (dst == W1) { jsr rs_peek_at_w1 }
+    else {
+        lda (RSP),y
+        sta dst
+        iny
+        lda (RSP),y
+        sta dst+1
+    }
 }
 
 // Drop N words from RS without reading them.
@@ -151,23 +155,14 @@ rs_init:
 !:
 }
 
-// Push a 16-bit immediate (e.g. a static-handle label) onto RS.
-// Useful for static constants like INT_10 where we don't want to burn a ZP
-// slot staging the address first.
+// Push a 16-bit immediate (e.g. a static-handle label) onto RS. Compiles to
+// LDA #<addr / LDX #>addr / JSR rs_push_const_ax — 7 bytes per site, vs the
+// 22-byte inline version. Useful for static constants like INT_10 where we
+// don't want to burn a ZP slot staging the address first.
 .macro rs_push_const(addr) {
-    sec
-    lda RSP
-    sbc #2
-    sta RSP
-    bcs !+
-    dec RSP+1
-!:
-    ldy #0
     lda #<addr
-    sta (RSP),y
-    iny
-    lda #>addr
-    sta (RSP),y
+    ldx #>addr
+    jsr rs_push_const_ax
 }
 
 // -----------------------------------------------------------------------------
@@ -462,4 +457,73 @@ rs_peek_rv:
     iny
     lda (RSP),y
     sta RV+1
+    rts
+
+// rs_peek_at_xx — caller has loaded Y = offset*2 (typically the macro
+// stages it). Reads the word at (RSP + Y) into the named ZP target.
+rs_peek_at_w0:
+    lda (RSP),y
+    sta W0
+    iny
+    lda (RSP),y
+    sta W0+1
+    rts
+
+rs_peek_at_w1:
+    lda (RSP),y
+    sta W1
+    iny
+    lda (RSP),y
+    sta W1+1
+    rts
+
+// arg_get_xx — caller has staged Y = i*2; reads (W3,Y) into target ZP word.
+arg_get_w0:
+    lda (W3),y
+    sta W0
+    iny
+    lda (W3),y
+    sta W0+1
+    rts
+
+arg_get_w1:
+    lda (W3),y
+    sta W1
+    iny
+    lda (W3),y
+    sta W1+1
+    rts
+
+arg_get_w2:
+    lda (W3),y
+    sta W2
+    iny
+    lda (W3),y
+    sta W2+1
+    rts
+
+arg_get_rv:
+    lda (W3),y
+    sta RV
+    iny
+    lda (W3),y
+    sta RV+1
+    rts
+
+// rs_push_const_ax — caller passes the constant in A=lo, X=hi.
+rs_push_const_ax:
+    pha
+    sec
+    lda RSP
+    sbc #2
+    sta RSP
+    bcs !+
+    dec RSP+1
+!:
+    ldy #0
+    pla
+    sta (RSP),y
+    iny
+    txa
+    sta (RSP),y
     rts
