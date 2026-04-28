@@ -81,55 +81,9 @@ parser_eval:
     sta METHOD_RECEIVER
     sta METHOD_RECEIVER+1
 
-    // Bind built-ins. Each is `name → builtin_handle` in the global dict.
-    rs_push_const(STR_NAME_LEN)
-    rs_push_const(BUILTIN_LEN)
-    jsr scope_set
-    rs_push_const(STR_NAME_RANGE)
-    rs_push_const(BUILTIN_RANGE)
-    jsr scope_set
-    rs_push_const(STR_NAME_BOOL)
-    rs_push_const(BUILTIN_BOOL)
-    jsr scope_set
-    rs_push_const(STR_NAME_ABS)
-    rs_push_const(BUILTIN_ABS)
-    jsr scope_set
-    rs_push_const(STR_NAME_CHR)
-    rs_push_const(BUILTIN_CHR)
-    jsr scope_set
-    rs_push_const(STR_NAME_ORD)
-    rs_push_const(BUILTIN_ORD)
-    jsr scope_set
-    rs_push_const(STR_NAME_TYPE)
-    rs_push_const(BUILTIN_TYPE)
-    jsr scope_set
-    rs_push_const(STR_NAME_INT)
-    rs_push_const(BUILTIN_INT)
-    jsr scope_set
-    rs_push_const(STR_NAME_FLOAT)
-    rs_push_const(BUILTIN_FLOAT)
-    jsr scope_set
-    rs_push_const(STR_NAME_STR)
-    rs_push_const(BUILTIN_STR)
-    jsr scope_set
-    rs_push_const(STR_NAME_ID)
-    rs_push_const(BUILTIN_ID)
-    jsr scope_set
-    rs_push_const(STR_NAME_CMP)
-    rs_push_const(BUILTIN_CMP)
-    jsr scope_set
-    rs_push_const(STR_NAME_HEX)
-    rs_push_const(BUILTIN_HEX)
-    jsr scope_set
-    rs_push_const(STR_NAME_REPR)
-    rs_push_const(BUILTIN_REPR)
-    jsr scope_set
-    rs_push_const(STR_NAME_SORT)
-    rs_push_const(BUILTIN_SORT)
-    jsr scope_set
-    rs_push_const(STR_NAME_RND)
-    rs_push_const(BUILTIN_RND)
-    jsr scope_set
+    // Free-function builtins are resolved through `try_builtin_lookup`'s
+    // hard-coded name table (Admiral-style). No global-scope registration
+    // needed.
 
     // Default result if source is empty: NONE.
     lda #<NONE
@@ -1978,6 +1932,18 @@ led_lparen:
 //   after arg loop  [..., LHS, me_or_0, arg1..argN]           (B0=N)
 //   after pack      [..., LHS, args_tuple]                    (impl reads top)
 _llp_builtin_call:
+    // Stash impl address on FS now, BEFORE parsing args. Free-function calls
+    // share BUILTIN_DISPATCH so a nested arg expression (`len(range(n))`)
+    // would otherwise overwrite our impl address while we recurse. fs_push
+    // bytes survive nested V4' frames intact.
+    ldy #H_PTR
+    lda (W0),y                      // W0 still = LHS handle from rs_peek_at above
+    sta W3
+    iny
+    lda (W0),y
+    sta W3+1
+    fs_push(W3)
+
     lda #0
     sta B0                          // B0 = arg count
 
@@ -2094,28 +2060,12 @@ _llp_b_args_copied:
 !skip:
     rs_push(W1)                     // RS: [..., LHS, tuple]
 
-    // --- Dispatch (LHS now at RS depth 1) ------------------------------------
-    rs_peek_at(W0, 1)
-
-    // Read impl address from the builtin's 2-byte payload.
-    ldy #H_PTR
-    lda (W0),y
-    sta W2
-    iny
-    lda (W0),y
-    sta W2+1
-    clc
-    lda W2
-    adc #O_HEADER
-    sta W2
-    bcc !skip+
-    inc W2+1
-!skip:
-    ldy #0
-    lda (W2),y
+    // --- Dispatch -----------------------------------------------------------
+    // Pop the impl address we stashed on FS at routine entry.
+    fs_pop(W3)
+    lda W3
     sta _llp_jsr+1
-    iny
-    lda (W2),y
+    lda W3+1
     sta _llp_jsr+2
 _llp_jsr:
     jsr $0000                       // → builtin impl (consumes tuple)
@@ -2853,8 +2803,12 @@ nud_name:
     jmp _nname_augass
 
 _nname_get:
-    // Plain reference: scope_get consumes the name from RS, returns RV.
+    // Plain reference: try the builtin name table first; on hit it pops the
+    // name from RS and sets RV. On miss, scope_get does the same.
+    jsr try_builtin_lookup
+    bne _nname_get_done
     jsr scope_get
+_nname_get_done:
     jmp postamble
 
 _nname_assign:

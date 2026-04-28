@@ -2272,6 +2272,135 @@ builtin_dict_create:
     jmp postamble
 
 // =============================================================================
+// try_builtin_lookup — Admiral-style hard-coded name → impl-address mapping
+// for free-function builtins. Replaces the per-builtin static handles +
+// global-scope registration that earlier versions used.
+//
+// Table format (no padding; one byte at the end terminates):
+//
+//   builtin_names:
+//       .byte len, name_bytes..., impl_lo, impl_hi
+//       ...
+//       .byte 0       ; terminator
+//
+//   in:  RS top = name handle (TYPE_STR). NOT consumed unless we hit.
+//   out: A = 1 on hit  → name popped from RS, BUILTIN_DISPATCH.H_PTR
+//                        SMC'd to impl_addr, RV = BUILTIN_DISPATCH.
+//        A = 0 on miss → RS unchanged, RV unspecified.
+//   clobbers: A, X, Y, W0..W3, B0.
+//
+// Leaf routine (no preamble): caller's frame is fine — we only touch ZP
+// scratch, all of which is callee-saved by the caller's frame.
+// =============================================================================
+try_builtin_lookup:
+    rs_peek(W0)                  // W0 = name handle
+    jsr deref_W0_to_W2           // W2 = name payload, A = name length
+    sta B0                       // B0 = name length
+
+    lda #<builtin_names
+    sta W1
+    lda #>builtin_names
+    sta W1+1
+
+_tbl_loop:
+    ldy #0
+    lda (W1),y                   // entry length byte
+    beq _tbl_no_match            // 0 = terminator
+    cmp B0
+    beq _tbl_check_match
+_tbl_advance:                    // A = entry_len; skip entry (1 + len + 2)
+    clc
+    adc #3
+    clc
+    adc W1
+    sta W1
+    bcc !skip+
+    inc W1+1
+!skip:
+    jmp _tbl_loop
+
+_tbl_check_match:                // length agrees; compare bytes
+    // W3 = W1 + 1 (entry name start)
+    clc
+    lda W1
+    adc #1
+    sta W3
+    lda W1+1
+    adc #0
+    sta W3+1
+    ldy #0
+_tbl_cmp_loop:
+    lda (W3),y
+    cmp (W2),y
+    bne _tbl_mismatch
+    iny
+    cpy B0
+    bne _tbl_cmp_loop
+
+    // Match. Read impl_addr at W3[B0..B0+1] and SMC into BUILTIN_DISPATCH.
+    lda (W3),y                   // Y == B0 here, A = impl_lo
+    sta BUILTIN_DISPATCH + H_PTR
+    iny
+    lda (W3),y
+    sta BUILTIN_DISPATCH + H_PTR + 1
+
+    // Pop the name handle (caller's contract on hit).
+    rs_pop(W0)
+
+    // RV = BUILTIN_DISPATCH
+    lda #<BUILTIN_DISPATCH
+    sta RV
+    lda #>BUILTIN_DISPATCH
+    sta RV+1
+
+    lda #1
+    rts
+
+_tbl_mismatch:
+    lda B0                       // entry_len == B0 here
+    jmp _tbl_advance
+
+_tbl_no_match:
+    lda #0
+    rts
+
+// --- builtin_names: packed table (length, name bytes, impl-addr lo/hi) -------
+builtin_names:
+    .byte 3, $6C, $65, $6E                                  // "len"
+    .word builtin_len
+    .byte 5, $72, $61, $6E, $67, $65                        // "range"
+    .word builtin_range
+    .byte 4, $62, $6F, $6F, $6C                             // "bool"
+    .word builtin_bool
+    .byte 3, $61, $62, $73                                  // "abs"
+    .word builtin_abs
+    .byte 3, $63, $68, $72                                  // "chr"
+    .word builtin_chr
+    .byte 3, $6F, $72, $64                                  // "ord"
+    .word builtin_ord
+    .byte 4, $74, $79, $70, $65                             // "type"
+    .word builtin_type
+    .byte 3, $69, $6E, $74                                  // "int"
+    .word builtin_int
+    .byte 5, $66, $6C, $6F, $61, $74                        // "float"
+    .word builtin_float
+    .byte 3, $73, $74, $72                                  // "str"
+    .word builtin_str
+    .byte 2, $69, $64                                       // "id"
+    .word builtin_id
+    .byte 3, $63, $6D, $70                                  // "cmp"
+    .word builtin_cmp
+    .byte 3, $68, $65, $78                                  // "hex"
+    .word builtin_hex
+    .byte 4, $72, $65, $70, $72                             // "repr"
+    .word builtin_repr
+    .byte 4, $73, $6F, $72, $74                             // "sort"
+    .word builtin_sort
+    .byte 3, $72, $6E, $64                                  // "rnd"
+    .word builtin_rnd
+    .byte 0                                                  // terminator
+
+// =============================================================================
 // _method_lookup — find a method handle by name in a per-type table.
 //
 // Tables are 0-terminated arrays of (name_handle, builtin_handle) pairs:

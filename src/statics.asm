@@ -176,504 +176,147 @@ STR_NONE_OBJ:
     .word 4
     .byte $4E, $6F, $6E, $65  // "None"
 
-// Built-in function singletons (Stage 10 starter). Each is a TYPE_BUILTIN
-// handle whose 2-byte payload IS the impl address — `led_lparen` reads it
-// directly and JSRs via self-modifying code.
-BUILTIN_LEN:
-    .word BUILTIN_LEN_OBJ
-    .word 4                  // O_HEADER + 2
-    .word 0
+// -----------------------------------------------------------------------------
+// BUILTIN_DISPATCH — single shared TYPE_BUILTIN handle reused for every
+// free-function call. nud_name SMC's the impl address into H_PTR before
+// returning this handle, then led_lparen reads H_PTR as the impl address.
+// Safe under nesting (e.g. `len(range(5))`) because each nud_name overwrites
+// H_PTR right before its own led_lparen reads it.
+// -----------------------------------------------------------------------------
+BUILTIN_DISPATCH:
+    .word 0                  // H_PTR — SMC'd to impl address per call
+    .word 0                  // H_SIZE — unused
+    .word 0                  // H_NEXT — unused
     .byte TYPE_BUILTIN
     .byte 0
-BUILTIN_LEN_OBJ:
-    .word 2
-    .word builtin_len        // payload = impl address (2 bytes, lo/hi)
 
-BUILTIN_RANGE:
-    .word BUILTIN_RANGE_OBJ
-    .word 4
-    .word 0
-    .byte TYPE_BUILTIN
-    .byte 0
-BUILTIN_RANGE_OBJ:
-    .word 2
-    .word builtin_range
-
-BUILTIN_BOOL:
-    .word BUILTIN_BOOL_OBJ
-    .word 4
-    .word 0
-    .byte TYPE_BUILTIN
-    .byte 0
-BUILTIN_BOOL_OBJ:
-    .word 2
-    .word builtin_bool
-
-BUILTIN_ABS:
-    .word BUILTIN_ABS_OBJ
-    .word 4
-    .word 0
-    .byte TYPE_BUILTIN
-    .byte 0
-BUILTIN_ABS_OBJ:
-    .word 2
-    .word builtin_abs
-
-BUILTIN_CHR:
-    .word BUILTIN_CHR_OBJ
-    .word 4
-    .word 0
-    .byte TYPE_BUILTIN
-    .byte 0
-BUILTIN_CHR_OBJ:
-    .word 2
-    .word builtin_chr
-
-BUILTIN_ORD:
-    .word BUILTIN_ORD_OBJ
-    .word 4
-    .word 0
-    .byte TYPE_BUILTIN
-    .byte 0
-BUILTIN_ORD_OBJ:
-    .word 2
-    .word builtin_ord
-
-BUILTIN_TYPE:
-    .word BUILTIN_TYPE_OBJ
-    .word 4
-    .word 0
-    .byte TYPE_BUILTIN
-    .byte 0
-BUILTIN_TYPE_OBJ:
-    .word 2
-    .word builtin_type
-
-BUILTIN_INT:
-    .word BUILTIN_INT_OBJ
-    .word 4
-    .word 0
-    .byte TYPE_BUILTIN
-    .byte 0
-BUILTIN_INT_OBJ:
-    .word 2
-    .word builtin_int
-
-BUILTIN_FLOAT:
-    .word BUILTIN_FLOAT_OBJ
-    .word 4
-    .word 0
-    .byte TYPE_BUILTIN
-    .byte 0
-BUILTIN_FLOAT_OBJ:
-    .word 2
-    .word builtin_float
-
-BUILTIN_STR:
-    .word BUILTIN_STR_OBJ
-    .word 4
-    .word 0
-    .byte TYPE_BUILTIN
-    .byte 0
-BUILTIN_STR_OBJ:
-    .word 2
-    .word builtin_str
-
-BUILTIN_ID:
-    .word BUILTIN_ID_OBJ
-    .word 4
-    .word 0
-    .byte TYPE_BUILTIN
-    .byte 0
-BUILTIN_ID_OBJ:
-    .word 2
-    .word builtin_id
-
-BUILTIN_CMP:
-    .word BUILTIN_CMP_OBJ
-    .word 4
-    .word 0
-    .byte TYPE_BUILTIN
-    .byte 0
-BUILTIN_CMP_OBJ:
-    .word 2
-    .word builtin_cmp
-
-BUILTIN_HEX:
-    .word BUILTIN_HEX_OBJ
-    .word 4
-    .word 0
-    .byte TYPE_BUILTIN
-    .byte 0
-BUILTIN_HEX_OBJ:
-    .word 2
-    .word builtin_hex
-
-BUILTIN_REPR:
-    .word BUILTIN_REPR_OBJ
-    .word 4
-    .word 0
-    .byte TYPE_BUILTIN
-    .byte 0
-BUILTIN_REPR_OBJ:
-    .word 2
-    .word builtin_repr
-
-BUILTIN_SORT:
-    .word BUILTIN_SORT_OBJ
-    .word 4
-    .word 0
-    .byte TYPE_BUILTIN
-    .byte 0
-BUILTIN_SORT_OBJ:
-    .word 2
-    .word builtin_sort
-
-BUILTIN_RND:
-    .word BUILTIN_RND_OBJ
-    .word 4
-    .word 0
-    .byte TYPE_BUILTIN
-    .byte 0
-BUILTIN_RND_OBJ:
-    .word 2
-    .word builtin_rnd
-
+// Method builtins still use one static handle per method — the per-type
+// method tables in builtins.asm point at these. Each H_PTR is the impl
+// address directly (no OBJ wrapper).
 // --- Method builtins (resolved via per-type method tables in builtins.asm) ---
 BUILTIN_STR_UPPER:
-    .word BUILTIN_STR_UPPER_OBJ
-    .word 4
-    .word 0
+    .word builtin_str_upper             // H_PTR = impl address (no OBJ)
+    .word 0                  // H_SIZE — unused
+    .word 0                  // H_NEXT — unused
     .byte TYPE_BUILTIN
     .byte 0
-BUILTIN_STR_UPPER_OBJ:
-    .word 2
-    .word builtin_str_upper
 
 BUILTIN_STR_LOWER:
-    .word BUILTIN_STR_LOWER_OBJ
-    .word 4
-    .word 0
+    .word builtin_str_lower             // H_PTR = impl address (no OBJ)
+    .word 0                  // H_SIZE — unused
+    .word 0                  // H_NEXT — unused
     .byte TYPE_BUILTIN
     .byte 0
-BUILTIN_STR_LOWER_OBJ:
-    .word 2
-    .word builtin_str_lower
 
 BUILTIN_STR_FIND:
-    .word BUILTIN_STR_FIND_OBJ
-    .word 4
-    .word 0
+    .word builtin_str_find             // H_PTR = impl address (no OBJ)
+    .word 0                  // H_SIZE — unused
+    .word 0                  // H_NEXT — unused
     .byte TYPE_BUILTIN
     .byte 0
-BUILTIN_STR_FIND_OBJ:
-    .word 2
-    .word builtin_str_find
 
 BUILTIN_STR_STARTSWITH:
-    .word BUILTIN_STR_STARTSWITH_OBJ
-    .word 4
-    .word 0
+    .word builtin_str_startswith             // H_PTR = impl address (no OBJ)
+    .word 0                  // H_SIZE — unused
+    .word 0                  // H_NEXT — unused
     .byte TYPE_BUILTIN
     .byte 0
-BUILTIN_STR_STARTSWITH_OBJ:
-    .word 2
-    .word builtin_str_startswith
 
 BUILTIN_STR_ENDSWITH:
-    .word BUILTIN_STR_ENDSWITH_OBJ
-    .word 4
-    .word 0
+    .word builtin_str_endswith             // H_PTR = impl address (no OBJ)
+    .word 0                  // H_SIZE — unused
+    .word 0                  // H_NEXT — unused
     .byte TYPE_BUILTIN
     .byte 0
-BUILTIN_STR_ENDSWITH_OBJ:
-    .word 2
-    .word builtin_str_endswith
 
 BUILTIN_STR_ISALPHA:
-    .word BUILTIN_STR_ISALPHA_OBJ
-    .word 4
-    .word 0
+    .word builtin_str_isalpha             // H_PTR = impl address (no OBJ)
+    .word 0                  // H_SIZE — unused
+    .word 0                  // H_NEXT — unused
     .byte TYPE_BUILTIN
     .byte 0
-BUILTIN_STR_ISALPHA_OBJ:
-    .word 2
-    .word builtin_str_isalpha
 
 BUILTIN_STR_ISDIGIT:
-    .word BUILTIN_STR_ISDIGIT_OBJ
-    .word 4
-    .word 0
+    .word builtin_str_isdigit             // H_PTR = impl address (no OBJ)
+    .word 0                  // H_SIZE — unused
+    .word 0                  // H_NEXT — unused
     .byte TYPE_BUILTIN
     .byte 0
-BUILTIN_STR_ISDIGIT_OBJ:
-    .word 2
-    .word builtin_str_isdigit
 
 BUILTIN_STR_REPLACE:
-    .word BUILTIN_STR_REPLACE_OBJ
-    .word 4
-    .word 0
+    .word builtin_str_replace             // H_PTR = impl address (no OBJ)
+    .word 0                  // H_SIZE — unused
+    .word 0                  // H_NEXT — unused
     .byte TYPE_BUILTIN
     .byte 0
-BUILTIN_STR_REPLACE_OBJ:
-    .word 2
-    .word builtin_str_replace
 
 BUILTIN_STR_SPLIT:
-    .word BUILTIN_STR_SPLIT_OBJ
-    .word 4
-    .word 0
+    .word builtin_str_split             // H_PTR = impl address (no OBJ)
+    .word 0                  // H_SIZE — unused
+    .word 0                  // H_NEXT — unused
     .byte TYPE_BUILTIN
     .byte 0
-BUILTIN_STR_SPLIT_OBJ:
-    .word 2
-    .word builtin_str_split
 
 BUILTIN_LIST_APPEND:
-    .word BUILTIN_LIST_APPEND_OBJ
-    .word 4
-    .word 0
+    .word builtin_list_append             // H_PTR = impl address (no OBJ)
+    .word 0                  // H_SIZE — unused
+    .word 0                  // H_NEXT — unused
     .byte TYPE_BUILTIN
     .byte 0
-BUILTIN_LIST_APPEND_OBJ:
-    .word 2
-    .word builtin_list_append
 
 BUILTIN_LIST_INSERT:
-    .word BUILTIN_LIST_INSERT_OBJ
-    .word 4
-    .word 0
+    .word builtin_list_insert             // H_PTR = impl address (no OBJ)
+    .word 0                  // H_SIZE — unused
+    .word 0                  // H_NEXT — unused
     .byte TYPE_BUILTIN
     .byte 0
-BUILTIN_LIST_INSERT_OBJ:
-    .word 2
-    .word builtin_list_insert
 
 BUILTIN_LIST_POP:
-    .word BUILTIN_LIST_POP_OBJ
-    .word 4
-    .word 0
+    .word builtin_list_pop             // H_PTR = impl address (no OBJ)
+    .word 0                  // H_SIZE — unused
+    .word 0                  // H_NEXT — unused
     .byte TYPE_BUILTIN
     .byte 0
-BUILTIN_LIST_POP_OBJ:
-    .word 2
-    .word builtin_list_pop
 
 BUILTIN_DICT_HAS:
-    .word BUILTIN_DICT_HAS_OBJ
-    .word 4
-    .word 0
+    .word builtin_dict_has             // H_PTR = impl address (no OBJ)
+    .word 0                  // H_SIZE — unused
+    .word 0                  // H_NEXT — unused
     .byte TYPE_BUILTIN
     .byte 0
-BUILTIN_DICT_HAS_OBJ:
-    .word 2
-    .word builtin_dict_has
 
 BUILTIN_DICT_GET:
-    .word BUILTIN_DICT_GET_OBJ
-    .word 4
-    .word 0
+    .word builtin_dict_get             // H_PTR = impl address (no OBJ)
+    .word 0                  // H_SIZE — unused
+    .word 0                  // H_NEXT — unused
     .byte TYPE_BUILTIN
     .byte 0
-BUILTIN_DICT_GET_OBJ:
-    .word 2
-    .word builtin_dict_get
 
 BUILTIN_DICT_KEYS:
-    .word BUILTIN_DICT_KEYS_OBJ
-    .word 4
-    .word 0
+    .word builtin_dict_keys             // H_PTR = impl address (no OBJ)
+    .word 0                  // H_SIZE — unused
+    .word 0                  // H_NEXT — unused
     .byte TYPE_BUILTIN
     .byte 0
-BUILTIN_DICT_KEYS_OBJ:
-    .word 2
-    .word builtin_dict_keys
 
 BUILTIN_DICT_VALUES:
-    .word BUILTIN_DICT_VALUES_OBJ
-    .word 4
-    .word 0
+    .word builtin_dict_values             // H_PTR = impl address (no OBJ)
+    .word 0                  // H_SIZE — unused
+    .word 0                  // H_NEXT — unused
     .byte TYPE_BUILTIN
     .byte 0
-BUILTIN_DICT_VALUES_OBJ:
-    .word 2
-    .word builtin_dict_values
 
 BUILTIN_DICT_CREATE:
-    .word BUILTIN_DICT_CREATE_OBJ
-    .word 4
-    .word 0
+    .word builtin_dict_create             // H_PTR = impl address (no OBJ)
+    .word 0                  // H_SIZE — unused
+    .word 0                  // H_NEXT — unused
     .byte TYPE_BUILTIN
     .byte 0
-BUILTIN_DICT_CREATE_OBJ:
-    .word 2
-    .word builtin_dict_create
 
 
 
 // Name strings for binding the built-ins into the global scope at
 // parser_eval start. Bytes are raw ASCII.
-STR_NAME_LEN:
-    .word STR_NAME_LEN_OBJ
-    .word 5
-    .word 0
-    .byte TYPE_STR
-    .byte 0
-STR_NAME_LEN_OBJ:
-    .word 3
-    .byte $6C, $65, $6E       // "len"
-
-STR_NAME_RANGE:
-    .word STR_NAME_RANGE_OBJ
-    .word 7
-    .word 0
-    .byte TYPE_STR
-    .byte 0
-STR_NAME_RANGE_OBJ:
-    .word 5
-    .byte $72, $61, $6E, $67, $65  // "range"
-
-STR_NAME_BOOL:
-    .word STR_NAME_BOOL_OBJ
-    .word 6                          // O_HEADER + 4
-    .word 0
-    .byte TYPE_STR
-    .byte 0
-STR_NAME_BOOL_OBJ:
-    .word 4
-    .byte $62, $6F, $6F, $6C        // "bool"
-
-STR_NAME_ABS:
-    .word STR_NAME_ABS_OBJ
-    .word 5
-    .word 0
-    .byte TYPE_STR
-    .byte 0
-STR_NAME_ABS_OBJ:
-    .word 3
-    .byte $61, $62, $73             // "abs"
-
-STR_NAME_CHR:
-    .word STR_NAME_CHR_OBJ
-    .word 5
-    .word 0
-    .byte TYPE_STR
-    .byte 0
-STR_NAME_CHR_OBJ:
-    .word 3
-    .byte $63, $68, $72             // "chr"
-
-STR_NAME_ORD:
-    .word STR_NAME_ORD_OBJ
-    .word 5
-    .word 0
-    .byte TYPE_STR
-    .byte 0
-STR_NAME_ORD_OBJ:
-    .word 3
-    .byte $6F, $72, $64             // "ord"
-
-STR_NAME_TYPE:
-    .word STR_NAME_TYPE_OBJ
-    .word 6
-    .word 0
-    .byte TYPE_STR
-    .byte 0
-STR_NAME_TYPE_OBJ:
-    .word 4
-    .byte $74, $79, $70, $65        // "type"
-
-STR_NAME_INT:
-    .word STR_NAME_INT_OBJ
-    .word 5
-    .word 0
-    .byte TYPE_STR
-    .byte 0
-STR_NAME_INT_OBJ:
-    .word 3
-    .byte $69, $6E, $74             // "int"
-
-STR_NAME_FLOAT:
-    .word STR_NAME_FLOAT_OBJ
-    .word 7
-    .word 0
-    .byte TYPE_STR
-    .byte 0
-STR_NAME_FLOAT_OBJ:
-    .word 5
-    .byte $66, $6C, $6F, $61, $74   // "float"
-
-STR_NAME_STR:
-    .word STR_NAME_STR_OBJ
-    .word 5
-    .word 0
-    .byte TYPE_STR
-    .byte 0
-STR_NAME_STR_OBJ:
-    .word 3
-    .byte $73, $74, $72             // "str"
-
-STR_NAME_ID:
-    .word STR_NAME_ID_OBJ
-    .word 4
-    .word 0
-    .byte TYPE_STR
-    .byte 0
-STR_NAME_ID_OBJ:
-    .word 2
-    .byte $69, $64                   // "id"
-
-STR_NAME_CMP:
-    .word STR_NAME_CMP_OBJ
-    .word 5
-    .word 0
-    .byte TYPE_STR
-    .byte 0
-STR_NAME_CMP_OBJ:
-    .word 3
-    .byte $63, $6D, $70             // "cmp"
-
-STR_NAME_HEX:
-    .word STR_NAME_HEX_OBJ
-    .word 5
-    .word 0
-    .byte TYPE_STR
-    .byte 0
-STR_NAME_HEX_OBJ:
-    .word 3
-    .byte $68, $65, $78             // "hex"
-
-STR_NAME_REPR:
-    .word STR_NAME_REPR_OBJ
-    .word 6
-    .word 0
-    .byte TYPE_STR
-    .byte 0
-STR_NAME_REPR_OBJ:
-    .word 4
-    .byte $72, $65, $70, $72       // "repr"
-
-STR_NAME_SORT:
-    .word STR_NAME_SORT_OBJ
-    .word 6
-    .word 0
-    .byte TYPE_STR
-    .byte 0
-STR_NAME_SORT_OBJ:
-    .word 4
-    .byte $73, $6F, $72, $74       // "sort"
-
-STR_NAME_RND:
-    .word STR_NAME_RND_OBJ
-    .word 5
-    .word 0
-    .byte TYPE_STR
-    .byte 0
-STR_NAME_RND_OBJ:
-    .word 3
-    .byte $72, $6E, $64            // "rnd"
-
 // --- Method names. Prefixed `STR_NAME_M_` so they don't collide with the ----
 // global-builtin name strings above. ----------------------------------------
 STR_NAME_M_UPPER:
