@@ -809,6 +809,31 @@ def test_undefined_name_panics(h):
     h.call("parser_eval", expect_panic=True)
 
 
+# --- builtin-name TST boundaries --------------------------------------------
+# The TST walker reads the input string right-to-left to detect end-of-input
+# via `dey; bmi`. These tests exercise miss paths the walker must reject:
+#   - prefix of a builtin: walker descends until the diverging char on the *eq*
+#     spine, then hits a 0 child slot.
+#   - suffix of a builtin: walker matches the rightmost chars (which are the
+#     leftmost in the reversed insertion key), then diverges via lt/gt.
+#   - first compared char differs: walker rejects at the root.
+#   - single-char unknown: walker matches at most root, falls into terminal
+#     handling at a node with payload=0.
+
+@pytest.mark.parametrize("name", [
+    "ran",   # prefix of "range" (reversed walk diverges on eq-spine)
+    "nge",   # suffix of "range"
+    "lo",    # prefix of "len" with shared first char in walk order ('n' vs ?)
+    "zen",   # same length as "len", differs only in last input char (=root cmp)
+    "q",     # single-char unknown — exercises shortest walker path
+])
+def test_tst_unregistered_name_panics(h, name):
+    payload = list(name.encode("ascii"))
+    handle = place_str(h, 0x8500, payload)
+    h.rs_push(handle)
+    h.call("parser_eval", expect_panic=True, max_steps=2_000_000)
+
+
 def test_variable_in_complex_expression(h):
     assert _eval(h, "a = 2\nb = 3\na ** b + a * b") == 14   # 8 + 6
 
@@ -2637,12 +2662,13 @@ def test_list_pop_until_one(h):
     assert _eval(h, src) == 10
 
 
-def test_dict_get_present(h):
-    assert _eval(h, '{1: 10, 2: 20}.get(2, 0)') == 20
+def test_dict_subscript_present(h):
+    assert _eval(h, '{1: 10, 2: 20}[2]') == 20
 
 
-def test_dict_get_missing_returns_default(h):
-    assert _eval(h, '{1: 10}.get(99, 7)') == 7
+def test_dict_in_membership(h):
+    assert _eval_bool(h, '99 in {1: 10}') is False
+    assert _eval_bool(h, '1 in {1: 10}') is True
 
 
 def test_dict_keys_length(h):
@@ -2673,15 +2699,6 @@ def test_dict_iterate_via_values(h):
         'total'
     )
     assert _eval(h, src) == 60
-
-
-def test_user_dict_method_shadows_builtin_get(h):
-    """User's "get" key takes precedence over the built-in dict.get method."""
-    src = (
-        'obj = {"value": 99, "get": "return me.value"}\n'
-        'obj.get()'
-    )
-    assert _eval(h, src) == 99
 
 
 def test_user_dict_method_shadows_builtin_keys(h):
@@ -2719,11 +2736,11 @@ def test_del_dict_key(h):
     assert _eval(h, src) == 2
 
 
-def test_del_dict_then_has(h):
+def test_del_dict_then_in(h):
     src = (
         'd = {1: 10, 2: 20}\n'
         'del d[1]\n'
-        'd.has(1)'
+        '1 in d'
     )
     assert _eval_bool(h, src) is False
 

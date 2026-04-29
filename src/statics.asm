@@ -176,144 +176,11 @@ STR_NONE_OBJ:
     .word 4
     .byte $4E, $6F, $6E, $65  // "None"
 
-// -----------------------------------------------------------------------------
-// BUILTIN_DISPATCH — single shared TYPE_BUILTIN handle reused for every
-// free-function call. nud_name SMC's the impl address into H_PTR before
-// returning this handle, then led_lparen reads H_PTR as the impl address.
-// Safe under nesting (e.g. `len(range(5))`) because each nud_name overwrites
-// H_PTR right before its own led_lparen reads it.
-// -----------------------------------------------------------------------------
-BUILTIN_DISPATCH:
-    .word 0                  // H_PTR — SMC'd to impl address per call
-    .word 0                  // H_SIZE — unused
-    .word 0                  // H_NEXT — unused
-    .byte TYPE_BUILTIN
-    .byte 0
-
-// Method builtins still use one static handle per method — the per-type
-// method tables in builtins.asm point at these. Each H_PTR is the impl
-// address directly (no OBJ wrapper).
-// --- Method builtins (resolved via per-type method tables in builtins.asm) ---
-BUILTIN_STR_UPPER:
-    .word builtin_str_upper             // H_PTR = impl address (no OBJ)
-    .word 0                  // H_SIZE — unused
-    .word 0                  // H_NEXT — unused
-    .byte TYPE_BUILTIN
-    .byte 0
-
-BUILTIN_STR_LOWER:
-    .word builtin_str_lower             // H_PTR = impl address (no OBJ)
-    .word 0                  // H_SIZE — unused
-    .word 0                  // H_NEXT — unused
-    .byte TYPE_BUILTIN
-    .byte 0
-
-BUILTIN_STR_FIND:
-    .word builtin_str_find             // H_PTR = impl address (no OBJ)
-    .word 0                  // H_SIZE — unused
-    .word 0                  // H_NEXT — unused
-    .byte TYPE_BUILTIN
-    .byte 0
-
-BUILTIN_STR_STARTSWITH:
-    .word builtin_str_startswith             // H_PTR = impl address (no OBJ)
-    .word 0                  // H_SIZE — unused
-    .word 0                  // H_NEXT — unused
-    .byte TYPE_BUILTIN
-    .byte 0
-
-BUILTIN_STR_ENDSWITH:
-    .word builtin_str_endswith             // H_PTR = impl address (no OBJ)
-    .word 0                  // H_SIZE — unused
-    .word 0                  // H_NEXT — unused
-    .byte TYPE_BUILTIN
-    .byte 0
-
-BUILTIN_STR_ISALPHA:
-    .word builtin_str_isalpha             // H_PTR = impl address (no OBJ)
-    .word 0                  // H_SIZE — unused
-    .word 0                  // H_NEXT — unused
-    .byte TYPE_BUILTIN
-    .byte 0
-
-BUILTIN_STR_ISDIGIT:
-    .word builtin_str_isdigit             // H_PTR = impl address (no OBJ)
-    .word 0                  // H_SIZE — unused
-    .word 0                  // H_NEXT — unused
-    .byte TYPE_BUILTIN
-    .byte 0
-
-BUILTIN_STR_REPLACE:
-    .word builtin_str_replace             // H_PTR = impl address (no OBJ)
-    .word 0                  // H_SIZE — unused
-    .word 0                  // H_NEXT — unused
-    .byte TYPE_BUILTIN
-    .byte 0
-
-BUILTIN_STR_SPLIT:
-    .word builtin_str_split             // H_PTR = impl address (no OBJ)
-    .word 0                  // H_SIZE — unused
-    .word 0                  // H_NEXT — unused
-    .byte TYPE_BUILTIN
-    .byte 0
-
-BUILTIN_LIST_APPEND:
-    .word builtin_list_append             // H_PTR = impl address (no OBJ)
-    .word 0                  // H_SIZE — unused
-    .word 0                  // H_NEXT — unused
-    .byte TYPE_BUILTIN
-    .byte 0
-
-BUILTIN_LIST_INSERT:
-    .word builtin_list_insert             // H_PTR = impl address (no OBJ)
-    .word 0                  // H_SIZE — unused
-    .word 0                  // H_NEXT — unused
-    .byte TYPE_BUILTIN
-    .byte 0
-
-BUILTIN_LIST_POP:
-    .word builtin_list_pop             // H_PTR = impl address (no OBJ)
-    .word 0                  // H_SIZE — unused
-    .word 0                  // H_NEXT — unused
-    .byte TYPE_BUILTIN
-    .byte 0
-
-BUILTIN_DICT_HAS:
-    .word builtin_dict_has             // H_PTR = impl address (no OBJ)
-    .word 0                  // H_SIZE — unused
-    .word 0                  // H_NEXT — unused
-    .byte TYPE_BUILTIN
-    .byte 0
-
-BUILTIN_DICT_GET:
-    .word builtin_dict_get             // H_PTR = impl address (no OBJ)
-    .word 0                  // H_SIZE — unused
-    .word 0                  // H_NEXT — unused
-    .byte TYPE_BUILTIN
-    .byte 0
-
-BUILTIN_DICT_KEYS:
-    .word builtin_dict_keys             // H_PTR = impl address (no OBJ)
-    .word 0                  // H_SIZE — unused
-    .word 0                  // H_NEXT — unused
-    .byte TYPE_BUILTIN
-    .byte 0
-
-BUILTIN_DICT_VALUES:
-    .word builtin_dict_values             // H_PTR = impl address (no OBJ)
-    .word 0                  // H_SIZE — unused
-    .word 0                  // H_NEXT — unused
-    .byte TYPE_BUILTIN
-    .byte 0
-
-BUILTIN_DICT_CREATE:
-    .word builtin_dict_create             // H_PTR = impl address (no OBJ)
-    .word 0                  // H_SIZE — unused
-    .word 0                  // H_NEXT — unused
-    .byte TYPE_BUILTIN
-    .byte 0
-
-
+// Built-in functions and methods are not first-class values in admiral —
+// they're never stored, passed as arguments, or returned from expressions.
+// Resolution is purely a parse-time operation: `nud_name` and `led_dot`
+// peek for `(` after the name and dispatch directly through `_call_dispatch`
+// (parser.asm). No TYPE_BUILTIN handle ever exists at runtime.
 
 // Name strings for binding the built-ins into the global scope at
 // parser_eval start. Bytes are raw ASCII.
@@ -438,26 +305,6 @@ STR_NAME_M_POP:
 STR_NAME_M_POP_OBJ:
     .word 3
     .byte $70, $6F, $70             // "pop"
-
-STR_NAME_M_HAS:
-    .word STR_NAME_M_HAS_OBJ
-    .word 5
-    .word 0
-    .byte TYPE_STR
-    .byte 0
-STR_NAME_M_HAS_OBJ:
-    .word 3
-    .byte $68, $61, $73             // "has"
-
-STR_NAME_M_GET:
-    .word STR_NAME_M_GET_OBJ
-    .word 5
-    .word 0
-    .byte TYPE_STR
-    .byte 0
-STR_NAME_M_GET_OBJ:
-    .word 3
-    .byte $67, $65, $74             // "get"
 
 STR_NAME_M_KEYS:
     .word STR_NAME_M_KEYS_OBJ

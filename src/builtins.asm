@@ -2098,61 +2098,6 @@ _bpop_have:
     sta (W2),y
     jmp postamble
 
-// --- dict.get(key, default=NONE) — value at key, else default ---------------
-//   in:  args tuple = (me, key) or (me, key, default)
-// =============================================================================
-builtin_dict_get:
-    preamble_call(2, 3)
-    arg_get(0, W0)                    // me
-    arg_get(1, W1)                    // key
-    jsr _dict_bin_search              // A = 1 hit / 0 miss; RV = index on hit
-    cmp #0
-    beq _bdg_miss
-
-    // Hit: dict.payload[RV] is the (key, value) entry tuple.
-    arg_get(0, W0)
-    jsr deref_W0_to_W2                // W2 = me payload
-    lda RV
-    asl
-    tay
-    lda (W2),y
-    sta W3
-    iny
-    lda (W2),y
-    sta W3+1                          // W3 = entry tuple
-
-    // Read entry.payload[1] = value (byte offset 2 past entry's O_LEN word).
-    lda W3
-    sta W0
-    lda W3+1
-    sta W0+1
-    jsr deref_W0_to_W2
-    ldy #2                            // tuple slot 1 starts at offset 2
-    lda (W2),y
-    sta RV
-    iny
-    lda (W2),y
-    sta RV+1
-    jmp postamble
-
-_bdg_miss:
-    // Default if provided, else NONE. _dict_bin_search is V4' so W3 (args
-    // tuple payload pointer cached by preamble_call) is preserved.
-    arg_get_or(2, NONE, RV)
-    jmp postamble
-
-// --- dict.has(key) — TRUE if key in me; FALSE otherwise ----------------------
-//   in:  args = (me, key)   me: TYPE_DICT
-// =============================================================================
-builtin_dict_has:
-    jsr preamble_call_2_2_w0_w1
-    jsr _dict_bin_search              // A = 1 hit / 0 miss
-    cmp #0
-    beq _bdh_false
-    jmp postamble_return_true
-_bdh_false:
-    jmp postamble_return_false
-
 // --- dict.keys() — list of keys --------------------------------------------
 //   in:  args = (me,)   me: TYPE_DICT
 // =============================================================================
@@ -2272,144 +2217,101 @@ builtin_dict_create:
     jmp postamble
 
 // =============================================================================
-// try_builtin_lookup — Admiral-style hard-coded name → impl-address mapping
-// for free-function builtins. Replaces the per-builtin static handles +
-// global-scope registration that earlier versions used.
+// try_builtin_lookup — TST-driven name → impl-address lookup for free-function
+// builtins.
 //
-// Table format (no padding; one byte at the end terminates):
+// Walks the input string RIGHT-TO-LEFT (Y descends from len-1 toward 0; the
+// `dey; bmi` flag-fall handles end-of-input without an extra compare).
+// `tools/build_tst.py` builds the parallel SoA tables (tst_char/lt/eq/gt/
+// payload, tst_impl_lo/hi) with names inserted in reversed character order to
+// match this walk direction.
 //
-//   builtin_names:
-//       .byte len, name_bytes..., impl_lo, impl_hi
-//       ...
-//       .byte 0       ; terminator
+// Functions are not first-class values in admiral, so we don't materialize a
+// handle on hit — the impl address is delivered straight to the caller in W3
+// for direct dispatch through `_call_dispatch`.
 //
 //   in:  RS top = name handle (TYPE_STR). NOT consumed unless we hit.
-//   out: A = 1 on hit  → name popped from RS, BUILTIN_DISPATCH.H_PTR
-//                        SMC'd to impl_addr, RV = BUILTIN_DISPATCH.
-//        A = 0 on miss → RS unchanged, RV unspecified.
-//   clobbers: A, X, Y, W0..W3, B0.
+//   out: A = 1 on hit  → name popped from RS, W3 = impl_addr.
+//        A = 0 on miss → RS unchanged, W3 unspecified.
+//   clobbers: A, X, Y, W0, W2.
 //
-// Leaf routine (no preamble): caller's frame is fine — we only touch ZP
-// scratch, all of which is callee-saved by the caller's frame.
+// Leaf routine (no preamble): only ZP scratch is touched.
+//
+// Walker invariants:
+//   X = current TST node id (0..N-1). Sentinel 0 doubles as "no child"; the
+//       root is at index 0 but is never anyone's child, so the dual use is
+//       unambiguous.
+//   Y = current input position. dey wraps 0 → $FF to signal end-of-input.
 // =============================================================================
 try_builtin_lookup:
     rs_peek(W0)                  // W0 = name handle
     jsr deref_W0_to_W2           // W2 = name payload, A = name length
-    sta B0                       // B0 = name length
+    tay
+    dey                          // Y = last index (or $FF for empty name)
+    bmi _tbl_miss
+    ldx #0                       // start at root
+_tbl_walk:
+    lda (W2),y
+    cmp tst_char,x
+    beq _tbl_eq
+    bcs _tbl_gt
+    // input < discriminator → descend lt. C=0 from the cmp survives the
+    // lda (LDA doesn't touch C), so the bcc is always-taken.
+    lda tst_lt,x
+    bcc _tbl_check
+_tbl_gt:
+    lda tst_gt,x
+_tbl_check:
+    tax
+    bne _tbl_walk                // non-zero child id: keep walking
+    // Fall through: child id 0 = no child = miss. A is already 0 here
+    // because the lda that fed `tax` just read a 0 byte. The empty-name
+    // BMI at entry also lands here with A=0 (length).
+_tbl_miss:
+    rts
 
-    lda #<builtin_names
-    sta W1
-    lda #>builtin_names
-    sta W1+1
+_tbl_eq:
+    dey
+    bmi _tbl_terminal
+    // Arrived via beq (C=1, Z=1). dey/bmi/lda all preserve C, so the bcs
+    // is always-taken — joins the lt/gt tail at _tbl_check.
+    lda tst_eq,x
+    bcs _tbl_check
 
-_tbl_loop:
-    ldy #0
-    lda (W1),y                   // entry length byte
-    beq _tbl_no_match            // 0 = terminator
-    cmp B0
-    beq _tbl_check_match
-_tbl_advance:                    // A = entry_len; skip entry (1 + len + 2)
-    clc
-    adc #3
-    clc
-    adc W1
-    sta W1
-    bcc !skip+
-    inc W1+1
-!skip:
-    jmp _tbl_loop
-
-_tbl_check_match:                // length agrees; compare bytes
-    // W3 = W1 + 1 (entry name start)
-    clc
-    lda W1
-    adc #1
+_tbl_terminal:
+    // X = node where the last input char matched. tst_payload[X] is 0 if
+    // this node is non-terminal (the input was a strict prefix of some
+    // registered name → miss), else a 1-based payload index. Load via A
+    // so a zero hits _tbl_miss with A=0 already in place for the rts.
+    lda tst_payload,x
+    beq _tbl_miss
+    tay
+    dey                          // 1-based → 0-based impl-table index
+    lda tst_impl_lo,y
     sta W3
-    lda W1+1
-    adc #0
+    lda tst_impl_hi,y
     sta W3+1
-    ldy #0
-_tbl_cmp_loop:
-    lda (W3),y
-    cmp (W2),y
-    bne _tbl_mismatch
-    iny
-    cpy B0
-    bne _tbl_cmp_loop
 
-    // Match. Read impl_addr at W3[B0..B0+1] and SMC into BUILTIN_DISPATCH.
-    lda (W3),y                   // Y == B0 here, A = impl_lo
-    sta BUILTIN_DISPATCH + H_PTR
-    iny
-    lda (W3),y
-    sta BUILTIN_DISPATCH + H_PTR + 1
-
-    // Pop the name handle (caller's contract on hit).
-    rs_pop(W0)
-
-    // RV = BUILTIN_DISPATCH
-    lda #<BUILTIN_DISPATCH
-    sta RV
-    lda #>BUILTIN_DISPATCH
-    sta RV+1
+    rs_pop(W0)                   // caller's contract: pop name on hit
 
     lda #1
     rts
 
-_tbl_mismatch:
-    lda B0                       // entry_len == B0 here
-    jmp _tbl_advance
-
-_tbl_no_match:
-    lda #0
-    rts
-
-// --- builtin_names: packed table (length, name bytes, impl-addr lo/hi) -------
-builtin_names:
-    .byte 3, $6C, $65, $6E                                  // "len"
-    .word builtin_len
-    .byte 5, $72, $61, $6E, $67, $65                        // "range"
-    .word builtin_range
-    .byte 4, $62, $6F, $6F, $6C                             // "bool"
-    .word builtin_bool
-    .byte 3, $61, $62, $73                                  // "abs"
-    .word builtin_abs
-    .byte 3, $63, $68, $72                                  // "chr"
-    .word builtin_chr
-    .byte 3, $6F, $72, $64                                  // "ord"
-    .word builtin_ord
-    .byte 4, $74, $79, $70, $65                             // "type"
-    .word builtin_type
-    .byte 3, $69, $6E, $74                                  // "int"
-    .word builtin_int
-    .byte 5, $66, $6C, $6F, $61, $74                        // "float"
-    .word builtin_float
-    .byte 3, $73, $74, $72                                  // "str"
-    .word builtin_str
-    .byte 2, $69, $64                                       // "id"
-    .word builtin_id
-    .byte 3, $63, $6D, $70                                  // "cmp"
-    .word builtin_cmp
-    .byte 3, $68, $65, $78                                  // "hex"
-    .word builtin_hex
-    .byte 4, $72, $65, $70, $72                             // "repr"
-    .word builtin_repr
-    .byte 4, $73, $6F, $72, $74                             // "sort"
-    .word builtin_sort
-    .byte 3, $72, $6E, $64                                  // "rnd"
-    .word builtin_rnd
-    .byte 0                                                  // terminator
+#import "tst_builtins.asm"
 
 // =============================================================================
-// _method_lookup — find a method handle by name in a per-type table.
+// _method_lookup — find a method's impl address by name in a per-type table.
 //
-// Tables are 0-terminated arrays of (name_handle, builtin_handle) pairs:
-//   .word STR_NAME_FOO, BUILTIN_FOO
+// Tables are 0-terminated arrays of (name_handle, impl_addr) pairs:
+//   .word STR_NAME_FOO, builtin_foo_impl
 //   .word 0   ; sentinel
 // Comparison goes through `val_eq` so name-string identity isn't required.
+// Methods are not first-class values in admiral, so the table holds raw impl
+// addresses and the lookup returns one in RV (the caller copies it into W3
+// before invoking `_call_dispatch`).
 //
 //   in:  W0 = table base, W1 = name handle (TYPE_STR)
-//   out: A = 1 if found, 0 if not. RV = builtin handle when A=1.
+//   out: A = 1 if found, 0 if not. RV = impl_addr when A = 1.
 //        Args remain on RS untouched.
 // V4'.
 // =============================================================================
@@ -2457,28 +2359,30 @@ _mlu_match:
     jmp postamble
 
 // --- Per-type method tables -------------------------------------------------
+// Each entry: 2-byte name_handle + 2-byte impl_addr. _method_lookup matches
+// by name and returns the impl_addr in RV (caller copies it into W3 for
+// _call_dispatch). No method-handle indirection — methods aren't first-class
+// values in admiral.
 str_methods:
-    .word STR_NAME_M_UPPER, BUILTIN_STR_UPPER
-    .word STR_NAME_M_LOWER, BUILTIN_STR_LOWER
-    .word STR_NAME_M_FIND, BUILTIN_STR_FIND
-    .word STR_NAME_M_STARTSWITH, BUILTIN_STR_STARTSWITH
-    .word STR_NAME_M_ENDSWITH, BUILTIN_STR_ENDSWITH
-    .word STR_NAME_M_ISALPHA, BUILTIN_STR_ISALPHA
-    .word STR_NAME_M_ISDIGIT, BUILTIN_STR_ISDIGIT
-    .word STR_NAME_M_REPLACE, BUILTIN_STR_REPLACE
-    .word STR_NAME_M_SPLIT, BUILTIN_STR_SPLIT
+    .word STR_NAME_M_UPPER, builtin_str_upper
+    .word STR_NAME_M_LOWER, builtin_str_lower
+    .word STR_NAME_M_FIND, builtin_str_find
+    .word STR_NAME_M_STARTSWITH, builtin_str_startswith
+    .word STR_NAME_M_ENDSWITH, builtin_str_endswith
+    .word STR_NAME_M_ISALPHA, builtin_str_isalpha
+    .word STR_NAME_M_ISDIGIT, builtin_str_isdigit
+    .word STR_NAME_M_REPLACE, builtin_str_replace
+    .word STR_NAME_M_SPLIT, builtin_str_split
     .word 0
 
 list_methods:
-    .word STR_NAME_M_APPEND, BUILTIN_LIST_APPEND
-    .word STR_NAME_M_INSERT, BUILTIN_LIST_INSERT
-    .word STR_NAME_M_POP, BUILTIN_LIST_POP
+    .word STR_NAME_M_APPEND, builtin_list_append
+    .word STR_NAME_M_INSERT, builtin_list_insert
+    .word STR_NAME_M_POP, builtin_list_pop
     .word 0
 
 dict_methods:
-    .word STR_NAME_M_HAS, BUILTIN_DICT_HAS
-    .word STR_NAME_M_GET, BUILTIN_DICT_GET
-    .word STR_NAME_M_KEYS, BUILTIN_DICT_KEYS
-    .word STR_NAME_M_VALUES, BUILTIN_DICT_VALUES
-    .word STR_NAME_M_CREATE, BUILTIN_DICT_CREATE
+    .word STR_NAME_M_KEYS, builtin_dict_keys
+    .word STR_NAME_M_VALUES, builtin_dict_values
+    .word STR_NAME_M_CREATE, builtin_dict_create
     .word 0

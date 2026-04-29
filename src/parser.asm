@@ -1877,25 +1877,20 @@ _nlb_recover:
     jmp _lh_recover_parser
 
 // -----------------------------------------------------------------------------
-// led_lparen — function call `f(arg1, arg2, ...)`.
+// led_lparen — `(` as an LED, i.e. the LHS is a runtime *value* being called.
 //
-// Pratt LED on TK_LPAREN: caller (expression's loop) has the callable on
-// RS as the LHS. We parse args (comma-separated), pushing each on RS, then
-// dispatch based on the callable's type. Stage 10 starter only handles
-// TYPE_BUILTIN: payload is a 2-byte impl address; we SMC-JSR to it.
-// User-defined functions (Stage 9c) will dispatch on TYPE_FUNC.
-//
-// RS layout maintained in body: [..., LHS, arg1, ..., argN]. Arg count
-// tracked in B0 so we can locate LHS in the dispatch step (it's at depth
-// B0 from RS top).
+// Built-in functions and methods are NOT first-class values in admiral, so
+// they never reach this routine — `nud_name` and `led_dot` peek for `(`
+// after the name and dispatch directly via `_call_dispatch`. The only thing
+// that is a callable runtime value is a TYPE_STR (lambda body re-lex'd in
+// a fresh scope). Anything else under `(` is a type error.
 // -----------------------------------------------------------------------------
 led_lparen:
-    preamble_args(1, 0)             // LHS on RS (the callable)
+    preamble_args(1, 0)             // LHS on RS (the callable value)
     jsr lexer_next                  // consume `(`
 
-    // Snapshot METHOD_RECEIVER (set by led_dot if this is a method call),
-    // push it onto RS as a root, then clear ZP. RS layout: [LHS, me_or_0].
-    // me_or_0 = NONE-handle-style 0 if no preceding led_dot.
+    // Snapshot METHOD_RECEIVER (set by led_dot for `dict.attr(...)` where
+    // attr is a user-stored TYPE_STR lambda). Push as me_or_0 root + clear ZP.
     lda METHOD_RECEIVER
     sta W0
     lda METHOD_RECEIVER+1
@@ -1905,53 +1900,62 @@ led_lparen:
     sta METHOD_RECEIVER
     sta METHOD_RECEIVER+1
 
-    // Peek LHS type before parsing args — TYPE_STR uses kwargs (`name=value`),
-    // TYPE_BUILTIN uses positional args. LHS is now at slot 1 (slot 0 = me).
-    rs_peek_at(W0, 1)
+    rs_peek_at(W0, 1)               // LHS lives at slot 1 (slot 0 = me)
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_STR
-    bne !try_builtin+
+    bne !err+
     jmp _llp_str_call
-!try_builtin:
-    cmp #TYPE_BUILTIN
-    beq _llp_builtin_call
-    lda #ERR_LEX
+!err:
+    lda #ERR_TYPE
     sta ERROR_CODE
     jmp error_handler
 
-// --- Built-in: positional args, dispatch via SMC JSR to impl ----------------
+// =============================================================================
+// _call_dispatch — leaf helper invoked by `nud_name` (free-function builtins)
+// and `led_dot` (method builtins) after either has resolved the name to an
+// impl address. Caller is V4'-wrapped; we just clobber W's/B's freely.
 //
-// Calling convention v2 (args tuple): we parse args onto RS as before, then
-// pack them into a TYPE_TUPLE and replace the loose args with the tuple as
-// the impl's sole RS arg. Method calls prepend `me` (from the me_or_0 slot
-// pushed by led_lparen) at tuple slot 0.
+//   in:  W3 = impl address.
+//        METHOD_RECEIVER = obj for method calls, 0 for free functions.
+//        Lexer positioned at TK_LPAREN.
+//        RS = [...] (caller has already consumed the name and any obj LHS;
+//                    no callable value sits on RS — _call_dispatch builds
+//                    the args tuple and JSRs the impl directly).
+//   out: RV = result of impl.
+//        RS unchanged from entry.
+//        FS unchanged from entry.
+//        METHOD_RECEIVER cleared.
 //
-// RS evolution:
-//   entry           [..., LHS, me_or_0]                       (B0=0)
-//   after arg loop  [..., LHS, me_or_0, arg1..argN]           (B0=N)
-//   after pack      [..., LHS, args_tuple]                    (impl reads top)
-_llp_builtin_call:
-    // Stash impl address on FS now, BEFORE parsing args. Free-function calls
-    // share BUILTIN_DISPATCH so a nested arg expression (`len(range(n))`)
-    // would otherwise overwrite our impl address while we recurse. fs_push
-    // bytes survive nested V4' frames intact.
-    ldy #H_PTR
-    lda (W0),y                      // W0 still = LHS handle from rs_peek_at above
-    sta W3
-    iny
-    lda (W0),y
-    sta W3+1
-    fs_push(W3)
+// Body parses positional args, packs them into a TYPE_TUPLE per V2 calling
+// convention (with `me` prepended at slot 0 for methods), then SMC-JSRs to
+// the impl. The impl is V4' and consumes the tuple via its own preamble.
+//
+// Nesting safety: the impl address is fs_push'd on entry so a nested
+// `_call_dispatch` invocation (e.g. from a nested arg expression like
+// `len(range(n))`) can run without disturbing our pending dispatch.
+// =============================================================================
+_call_dispatch:
+    fs_push(W3)                     // survive nested arg-eval
+    jsr lexer_next                  // consume `(`
+
+    lda METHOD_RECEIVER
+    sta W0
+    lda METHOD_RECEIVER+1
+    sta W0+1
+    rs_push(W0)                     // RS: [..., me_or_0]
+    lda #0
+    sta METHOD_RECEIVER
+    sta METHOD_RECEIVER+1
 
     lda #0
     sta B0                          // B0 = arg count
 
     lda LEX_TOKEN_KIND
     cmp #TK_RPAREN
-    beq _llp_b_args_done
+    beq _cd_args_done
 
-_llp_b_arg_loop:
+_cd_arg_loop:
     lda #0
     sta B7
     jsr expression                  // RV = arg
@@ -1960,20 +1964,18 @@ _llp_b_arg_loop:
 
     lda LEX_TOKEN_KIND
     cmp #TK_COMMA
-    bne _llp_b_args_done
+    bne _cd_args_done
     jsr lexer_next
-    jmp _llp_b_arg_loop
+    jmp _cd_arg_loop
 
-_llp_b_args_done:
+_cd_args_done:
     lda #TK_RPAREN
     jsr lexer_advance
 
-    // --- Pack args into a TYPE_TUPLE -----------------------------------------
-    //
-    // RS now: [..., LHS, me_or_0, arg1..argN]
-    // me_or_0 lives at byte offset 2*B0 from RSP top.
+    // --- Pack args into TYPE_TUPLE -------------------------------------------
+    // RS now: [..., me_or_0, arg1..argN]. me_or_0 at byte offset 2*B0 from RSP.
 
-    // Read me_or_0 into B2:B3 (body-saved scratch).
+    // Read me_or_0 into B2:B3.
     lda B0
     asl
     tay
@@ -1986,47 +1988,44 @@ _llp_b_args_done:
     // B1 = tuple size: B0 + 1 if method, else B0.
     lda B2
     ora B3
-    beq _llp_b_no_me
+    beq _cd_no_me
     lda B0
     clc
     adc #1
     sta B1
-    jmp _llp_b_have_size
-_llp_b_no_me:
+    jmp _cd_have_size
+_cd_no_me:
     lda B0
     sta B1
 
-_llp_b_have_size:
-    // Allocate tuple. tuple_alloc is V4' so caller B-regs survive. May GC,
-    // but RS holds all live arg roots so they're safe.
+_cd_have_size:
     lda B1
-    jsr tuple_alloc                 // RV = tuple, payload zeroed
-    rs_push(RV)                     // root. RS: [..., LHS, me, args, tuple]
+    jsr tuple_alloc                 // RV = tuple
+    rs_push(RV)                     // RS: [..., me, args, tuple]
 
-    // W0 = tuple handle for tuple_set_leaf.
     lda RV
     sta W0
     lda RV+1
     sta W0+1
 
-    // If method call, copy me into slot 0.
+    // For method calls, copy me into slot 0.
     lda B2
     ora B3
-    beq _llp_b_no_me_copy
+    beq _cd_no_me_copy
     lda B2
     sta W1
     lda B3
     sta W1+1
     lda #0
     jsr tuple_set_leaf
-_llp_b_no_me_copy:
+_cd_no_me_copy:
 
-    // Copy args into tuple. Loop var B5 counts down from B0 to 1.
-    // Source: arg at RS byte offset 2*B5 (above tuple). Dest slot: B1 - B5.
+    // Copy args into tuple. B5 counts down from B0 to 1; src offset 2*B5
+    // (above tuple), dest slot = B1 - B5.
     lda B0
     sta B5
-    beq _llp_b_args_copied
-_llp_b_arg_copy_loop:
+    beq _cd_args_copied
+_cd_arg_copy_loop:
     lda B5
     asl
     tay
@@ -2038,16 +2037,15 @@ _llp_b_arg_copy_loop:
 
     sec
     lda B1
-    sbc B5                          // A = dest slot
-    jsr tuple_set_leaf              // tuple_set_leaf preserves W0 / W1
+    sbc B5
+    jsr tuple_set_leaf
 
     dec B5
-    bne _llp_b_arg_copy_loop
-_llp_b_args_copied:
+    bne _cd_arg_copy_loop
+_cd_args_copied:
 
-    // Collapse RS: pop tuple, drop (B0+1) words (args + me_placeholder), push tuple.
-    rs_pop(W1)                      // W1 = tuple handle
-
+    // Collapse RS: pop tuple, drop (B0+1) words, push tuple.
+    rs_pop(W1)
     lda B0
     clc
     adc #1
@@ -2058,18 +2056,17 @@ _llp_b_args_copied:
     bcc !skip+
     inc RSP+1
 !skip:
-    rs_push(W1)                     // RS: [..., LHS, tuple]
+    rs_push(W1)                     // RS: [..., tuple]
 
-    // --- Dispatch -----------------------------------------------------------
-    // Pop the impl address we stashed on FS at routine entry.
+    // --- SMC JSR to impl ----------------------------------------------------
     fs_pop(W3)
     lda W3
-    sta _llp_jsr+1
+    sta _cd_jsr+1
     lda W3+1
-    sta _llp_jsr+2
-_llp_jsr:
-    jsr $0000                       // → builtin impl (consumes tuple)
-    jmp postamble                   // postamble cleans LHS off RS
+    sta _cd_jsr+2
+_cd_jsr:
+    jsr $0000                       // → impl (consumes tuple via its preamble)
+    rts                              // RV = result; RS balanced
 
 // --- TYPE_STR: kwargs, body re-lex in fresh scope ---------------------------
 //
@@ -2663,7 +2660,10 @@ _ldot_have_name:
     jmp postamble
 
 _ldot_method_prefix:
-    // Set METHOD_RECEIVER = obj (slot 1; name on top).
+    // Set METHOD_RECEIVER = obj (slot 1; name on top). Used by both the
+    // direct-dispatch path (free of values, for built-in methods) and the
+    // dict-user-attribute fallback (where we return the user value as a
+    // callable LHS for led_lparen → _llp_str_call).
     rs_peek_at(W0, 1)
     lda W0
     sta METHOD_RECEIVER
@@ -2671,10 +2671,10 @@ _ldot_method_prefix:
     sta METHOD_RECEIVER+1
 
     // Dispatch by receiver type:
-    //   TYPE_DICT  → user-defined methods come from the dict itself (existing
-    //                prototype pattern); fall back to dict_methods table on miss.
-    //   TYPE_STR   → str_methods table.
-    //   TYPE_LIST/TUPLE → list_methods table.
+    //   TYPE_DICT  → user-defined attributes win (prototype chain). On miss,
+    //                fall back to dict_methods built-in table.
+    //   TYPE_STR   → str_methods.
+    //   TYPE_LIST/TUPLE → list_methods.
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_DICT
@@ -2690,12 +2690,11 @@ _ldot_method_prefix:
     jmp error_handler
 
 _ldot_dict_method:
-    // User-dict-with-prototype-chain wins over built-ins. Walk the "_" chain
-    // until we find the name, or fall back to dict_methods on full-chain miss.
-    // RS: [..., dict, name]. dict_get_proto consumes both; we save name in W1
-    // first so we can re-stage for _method_lookup if the chain misses.
-    rs_peek(W1)                     // W1 = name (preserved across dict_get_proto)
-    jsr dict_get_proto              // consumes 2; RV = value or NONE
+    // Try user attribute chain first. RS: [..., dict, name]. dict_get_proto
+    // consumes 2; we save name in W1 first so we can re-stage for the
+    // method-table fallback (W1 is preserved across the V4' subcall).
+    rs_peek(W1)
+    jsr dict_get_proto              // RV = value or NONE
 
     lda RV+1
     cmp #>NONE
@@ -2704,20 +2703,27 @@ _ldot_dict_method:
     cmp #<NONE
     bne _ldot_dict_user_hit
 
-    // Miss across whole chain: try built-in dict methods. _method_lookup
-    // expects W1 = name — we restored that above (dict_get_proto's frame
-    // saved/restored W1).
+    // Chain miss: fall back to the dict_methods built-in table. We hold W1=
+    // name; RS = [...] (obj/name already consumed).
     lda #<dict_methods
     sta W0
     lda #>dict_methods
     sta W0+1
-    jsr _method_lookup              // A = 1/0; RV = builtin handle on hit
+    jsr _method_lookup              // RV = impl_addr on hit (A=1)
     cmp #0
     beq _ldot_dict_no_method
-    jmp postamble                   // RV = builtin handle
+    lda RV
+    sta W3
+    lda RV+1
+    sta W3+1
+    jsr _call_dispatch              // METHOD_RECEIVER already set above
+    jmp postamble
 
 _ldot_dict_user_hit:
-    jmp postamble                   // RV already holds the user-defined value
+    // RV = user attribute value. Return as a value via postamble; the parser
+    // will push RV, see TK_LPAREN, and call led_lparen → _llp_str_call (if
+    // the value is a TYPE_STR lambda) or panic ERR_TYPE (anything else).
+    jmp postamble
 
 _ldot_dict_no_method:
     lda #ERR_LEX
@@ -2737,16 +2743,22 @@ _ldot_list_method:
     lda #>list_methods
     sta W0+1
 _ldot_table_method:
-    // RS top = name handle. _method_lookup expects W0=table, W1=name (ZP only).
+    // RS: [..., obj, name]. Pop name; _method_lookup uses W0=table, W1=name.
     rs_pop(W1)                      // pop name; RS: [..., obj]
-    jsr _method_lookup              // A = 1/0; RV = builtin handle on hit
+    jsr _method_lookup              // RV = impl_addr on hit (A=1)
     cmp #0
-    bne _ldot_method_found
+    beq _ldot_method_miss
+    rs_pop(W0)                      // pop obj; RS: [...]. METHOD_RECEIVER set above.
+    lda RV
+    sta W3
+    lda RV+1
+    sta W3+1
+    jsr _call_dispatch
+    jmp postamble
+_ldot_method_miss:
     lda #ERR_TYPE
     sta ERROR_CODE
     jmp error_handler
-_ldot_method_found:
-    jmp postamble                   // RV = method builtin handle
 
 _ldot_assign:
     // Attribute assignment. dict_set takes [dict, key, value] on RS top.
@@ -2803,12 +2815,23 @@ nud_name:
     jmp _nname_augass
 
 _nname_get:
-    // Plain reference: try the builtin name table first; on hit it pops the
-    // name from RS and sets RV. On miss, scope_get does the same.
+    // If `(` follows, this is a call: try the builtin TST first. On hit,
+    // the name is popped and W3 = impl_addr → dispatch directly via
+    // _call_dispatch. On miss, the name is still on RS — fall through to
+    // scope_get, which returns the value (e.g. a TYPE_STR lambda); the
+    // parser then pushes RV and led_lparen handles the actual call.
+    cmp #TK_LPAREN
+    bne _nname_simple_get
     jsr try_builtin_lookup
-    bne _nname_get_done
+    beq _nname_simple_get
+    lda #0
+    sta METHOD_RECEIVER
+    sta METHOD_RECEIVER+1
+    jsr _call_dispatch
+    jmp postamble
+
+_nname_simple_get:
     jsr scope_get
-_nname_get_done:
     jmp postamble
 
 _nname_assign:
