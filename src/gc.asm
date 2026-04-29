@@ -117,6 +117,10 @@ gc_mark_p2_loop:
     cmp #TYPE_LIST
     beq _gc_mark_trace_array
     cmp #TYPE_DICT
+    beq _gc_mark_trace_array
+    cmp #TYPE_REF
+    beq _gc_mark_trace_array
+    cmp #TYPE_SUB
     bne gc_mark_p2_advance
 _gc_mark_trace_array:
     jsr _gc_trace_array

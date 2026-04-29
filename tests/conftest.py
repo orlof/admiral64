@@ -103,6 +103,11 @@ TYPE_TUPLE = 0x24
 TYPE_LIST = 0x25
 TYPE_DICT = 0x26
 TYPE_FLOAT = 0x27
+TYPE_REF = 0x2A
+TYPE_SUB = 0x2B
+
+ERR_TYPE = 0x05
+ERR_ARITY = 0x06
 
 # Heap region bounds (must stay in sync with src/defs.asm).
 HEAP_DATA_START = 0x8800

@@ -118,9 +118,21 @@ val_eq:
     jmp postamble
 
 _veq_not_same_handle:
+    // Read H_TYPE from each side, normalizing TYPE_NAME → TYPE_STR so a lazy
+    // name compares equal to a materialized string with matching bytes.
     ldy #H_TYPE
     lda (W0),y
-    cmp (W1),y
+    cmp #TYPE_NAME
+    bne !s+
+    lda #TYPE_STR
+!s:
+    sta B0
+    lda (W1),y
+    cmp #TYPE_NAME
+    bne !s+
+    lda #TYPE_STR
+!s:
+    cmp B0
     beq _veq_types_match
     lda #0
     jmp postamble
@@ -232,10 +244,23 @@ val_cmp:
     jmp postamble
 
 _vc_diff_handles:
-    // 2. Different types → compare type tags numerically.
+    // 2. Different types → compare type tags numerically. Normalize TYPE_NAME
+    // → TYPE_STR so a lazy name compares like a string with matching bytes.
+    // Load b's type first into B0, then a's type into A, so `cmp B0` computes
+    // a - b (carry set when a >= b).
     ldy #H_TYPE
+    lda (W1),y
+    cmp #TYPE_NAME
+    bne !s+
+    lda #TYPE_STR
+!s:
+    sta B0
     lda (W0),y
-    cmp (W1),y
+    cmp #TYPE_NAME
+    bne !s+
+    lda #TYPE_STR
+!s:
+    cmp B0
     beq _vc_same_type
     bcs _vc_pos
     lda #$FF
@@ -249,6 +274,8 @@ _vc_same_type:
     beq _vc_int                  // bool stored same as 1-byte int; int_cmp works
     cmp #TYPE_STR
     beq _vc_str
+    cmp #TYPE_NAME
+    beq _vc_str                  // names compare bytewise like strings
     cmp #TYPE_FLOAT
     beq _vc_float
     cmp #TYPE_TUPLE

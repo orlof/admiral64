@@ -31,6 +31,9 @@
 // general Python precedence ordering.
 // -----------------------------------------------------------------------------
 .const LBP_TERM    = 0       // EOF, NEWLINE, RPAREN, etc. — no infix binding
+.const LBP_ASSIGN  = $01     // = and augmented (right-assoc, lowest binder)
+.const LBP_COMMA   = $02     // tuple constructor — binds tighter than `=` so
+                             // `a, b = c, d` parses as `(a, b) = (c, d)`
 .const LBP_OR      = $05     // or
 .const LBP_AND     = $06     // and
 .const LBP_CMP     = $08     // < <= > >= == != is `is not`
@@ -144,6 +147,8 @@ stmt_expression:
     lda #0
     sta B7
     jsr expression
+    rs_push(RV)
+    jsr eval                        // force lazy NAME/REF/SUB/TUPLE → value
     jmp postamble
 
 // -----------------------------------------------------------------------------
@@ -197,7 +202,9 @@ stmt_return:
 
     lda #0
     sta B7
-    jsr expression                  // RV = return value
+    jsr expression                  // RV = lazy return value
+    rs_push(RV)
+    jsr eval                        // force to a concrete value
     jmp _sret_have_value
 
 _sret_no_value:
@@ -256,9 +263,11 @@ _sd_have_name:
     jsr lexer_advance               // consume `[`
 
     rs_push(RV)                     // RS: [container]
-    lda #0
+    lda #LBP_COMMA
     sta B7
-    jsr expression                  // RV = index/key
+    jsr expression                  // RV = lazy index/key
+    rs_push(RV)
+    jsr eval                        // force index/key
 
     lda #TK_RBRACK
     jsr lexer_advance               // consume `]`
@@ -451,7 +460,9 @@ _sif_main_clause:
     // Just consumed `if` or `elif`. Eval condition.
     lda #0
     sta B7
-    jsr expression                  // RV = condition value
+    jsr expression                  // RV = lazy condition
+    rs_push(RV)
+    jsr eval                        // RV = condition value
 
     lda #TK_COLON
     jsr lexer_advance               // consume `:`
@@ -550,7 +561,9 @@ _swh_loop:
     // Eval cond.
     lda #0
     sta B7
-    jsr expression                  // RV = cond
+    jsr expression                  // RV = lazy cond
+    rs_push(RV)
+    jsr eval                        // RV = cond value
 
     lda #TK_COLON
     jsr lexer_advance               // consume `:`
@@ -623,29 +636,25 @@ stmt_for:
     preamble_args(0, 0)
     jsr lexer_next                  // consume `for`
 
-    // Loop variable name.
-    lda LEX_TOKEN_KIND
-    cmp #TK_NAME
-    beq _sfor_have_name
-    jmp _lh_recover                 // expected a name
-_sfor_have_name:
-    jsr lexer_get_token_as_string   // RV = name TYPE_STR
-    rs_push(RV)                     // RS: [..., name]
-    jsr lexer_next                  // advance past name
+    jsr parse_for_target            // RV = TYPE_NAME or TYPE_TUPLE of targets
+    rs_push(RV)                     // RS: [..., target]
 
+_sfor_target_ready:
     lda #TK_IN
     jsr lexer_advance               // consume `in`
 
     // Container expression.
     lda #0
     sta B7
-    jsr expression                  // RV = container
-    rs_push(RV)                     // RS: [..., name, container]
+    jsr expression                  // RV = lazy container
+    rs_push(RV)
+    jsr eval                        // RV = forced container value
+    rs_push(RV)                     // RS top = container
 
-    // Detect container kind for the loop body. B4 selects the iter mode:
-    //   0 = LIST/TUPLE — use the element handle directly.
-    //   1 = DICT       — element is (key, value) tuple; bind .key.
-    //   2 = STR        — fetch payload byte at index, alloc a fresh 1-char STR.
+    // Detect container kind for the loop body. B4 selects iter mode:
+    //   0 = LIST/TUPLE — element is the slot value.
+    //   1 = DICT       — element is the (key, value) entry tuple (bind whole).
+    //   2 = STR        — fetch payload byte and alloc a fresh 1-char STR.
     lda #0
     sta B4
     ldy #H_TYPE
@@ -698,6 +707,8 @@ _sfor_loop:
     beq _sfor_str_iter
 
     // LIST / TUPLE / DICT path: fetch container[index] via array_get.
+    // For dicts, the element is the (key, value) entry tuple — `assign` will
+    // unpack it into a tuple-LHS target or bind it whole to a single name.
     rs_peek_at(W0, 0)
     rs_push(W0)
     lda B5
@@ -706,21 +717,6 @@ _sfor_loop:
     sta W2+1
     fs_push(W2)                     // index on FS
     jsr array_get                   // RV = element
-
-    // Dict iteration: RV is a (key, value) 2-tuple — extract the key.
-    lda B4
-    beq _sfor_bind                  // list/tuple: bind RV directly
-    lda RV
-    sta W0
-    lda RV+1
-    sta W0+1
-    jsr deref_W0_to_W2              // W2 = entry payload (post-header)
-    ldy #0
-    lda (W2),y
-    sta RV
-    iny
-    lda (W2),y
-    sta RV+1
     jmp _sfor_bind
 
 _sfor_str_iter:
@@ -753,11 +749,13 @@ _sfor_str_iter:
 
 _sfor_bind:
 
-    // scope_set(name, RV).
-    rs_peek_at(W0, 1)               // W0 = name (slot 1; container is slot 0)
+    // assign(target, RV) — handles single-name (TYPE_NAME → scope_set) and
+    // tuple-LHS (TYPE_TUPLE → recursive arity-checked unpack) uniformly.
+    // Target is at RS slot 1 (container is at slot 0).
+    rs_peek_at(W0, 1)               // W0 = target (TYPE_NAME or TYPE_TUPLE)
     rs_push(W0)
     rs_push(RV)
-    jsr scope_set                   // consumes 2
+    jsr assign                      // consumes 2
 
     // Restore lexer to body position, re-save for next iter.
     jsr lexer_restore
@@ -802,6 +800,103 @@ _sfor_done_post_body:
     jmp postamble_return_none
 
 // -----------------------------------------------------------------------------
+// parse_for_target — parse a `for` loop's lvalue target. Recognizes
+// comma-separated atoms; each atom is either TK_NAME or `( inner )`.
+// Returns RV = TYPE_NAME (single) or TYPE_TUPLE (multi). Stops at TK_IN /
+// TK_RPAREN / TK_COLON. Cannot reuse `expression` because TK_IN binds as a
+// LED (membership test) at any usable rbp.
+// V4'.
+// -----------------------------------------------------------------------------
+parse_for_target:
+    preamble_args(0, 0)
+
+    jsr parse_for_atom              // RV = first atom (NAME or nested TUPLE)
+    rs_push(RV)
+    lda #1
+    sta B0                          // B0 = atom count
+
+_pft_loop:
+    lda LEX_TOKEN_KIND
+    cmp #TK_COMMA
+    bne _pft_done
+    jsr lexer_next                  // consume `,`
+    jsr parse_for_atom
+    rs_push(RV)
+    inc B0
+    jmp _pft_loop
+
+_pft_done:
+    lda B0
+    cmp #1
+    bne _pft_build_tuple
+
+    // Single atom — RV already holds it (last assignment from parse_for_atom).
+    rs_peek(RV)                     // re-load (defensive: postamble preserves RV
+                                    //  but rs_pop would shift RSP)
+    jmp postamble
+
+_pft_build_tuple:
+    // Allocate a tuple of size B0 with the atoms as payload.
+    lda B0
+    ldx #TYPE_TUPLE
+    jsr _array_alloc_init           // RV = tuple, payload zeroed
+    rs_push(RV)                     // root for the fill loop
+    lda RV
+    sta W0
+    lda RV+1
+    sta W0+1
+
+    lda #0
+    sta B1
+_pft_pack:
+    lda B1
+    cmp B0
+    beq _pft_packed
+    sec
+    lda B0
+    sbc B1                          // depth = N - i (tuple at depth 0)
+    asl
+    tay
+    jsr rs_peek_at_w1               // W1 = atom[i]
+    lda B1
+    jsr tuple_set_leaf
+    inc B1
+    jmp _pft_pack
+_pft_packed:
+    // RV still = tuple; postamble preserves it and sweeps RS roots.
+    jmp postamble
+
+// -----------------------------------------------------------------------------
+// parse_for_atom — single target atom: TK_NAME → TYPE_NAME, or `( inner )`
+// → recursive parse_for_target inside parens.
+// V4'.
+// -----------------------------------------------------------------------------
+parse_for_atom:
+    preamble_args(0, 0)
+
+    lda LEX_TOKEN_KIND
+    cmp #TK_NAME
+    beq _pfa_name
+    cmp #TK_LPAREN
+    beq _pfa_paren
+    jmp _lh_recover
+
+_pfa_name:
+    jsr lexer_get_token_as_string   // RV = TYPE_STR (mutate to TYPE_NAME below)
+    ldy #H_TYPE
+    lda #TYPE_NAME
+    sta (RV),y
+    jsr lexer_next
+    jmp postamble
+
+_pfa_paren:
+    jsr lexer_next                  // consume `(`
+    jsr parse_for_target            // RV = inner target
+    lda #TK_RPAREN
+    jsr lexer_advance               // consume `)`
+    jmp postamble
+
+// -----------------------------------------------------------------------------
 // stmt_print — `print expr`. Evaluates expr, prints via print_value, emits a
 // trailing newline. Returns NONE.
 // -----------------------------------------------------------------------------
@@ -810,7 +905,9 @@ stmt_print:
     jsr lexer_next                  // consume `print`
     lda #0
     sta B7
-    jsr expression                  // RV = value
+    jsr expression                  // RV = lazy value
+    rs_push(RV)
+    jsr eval                        // RV = forced value
     rs_push(RV)
     jsr print_value                 // consumes 1 arg
     lda #$0D
@@ -1093,12 +1190,19 @@ _ccnt_type_error:
 // indirection since we already eagerly evaluate operands.
 // -----------------------------------------------------------------------------
 infix_eval:
+    // Force LHS (lazy NAME/REF/SUB → value). eval is idempotent on values.
+    jsr eval                          // consumes RS top (lazy LHS), RV = value
+    rs_push(RV)                       // RS: [..., LHS_v]
+
     ldx LEX_TOKEN_KIND
     lda lbp_table,x
     sta B7                            // rbp for left-associative recursion
     jsr lexer_next                    // consume the operator token
-    jsr expression                    // RV = RHS handle (W/B preserved by V4')
-    rs_push(RV)                       // RS: [..., LHS, RHS]
+    jsr expression                    // RV = RHS lazy handle (W/B preserved by V4')
+
+    rs_push(RV)
+    jsr eval                          // RV = RHS value
+    rs_push(RV)                       // RS: [..., LHS_v, RHS_v]
     rts
 
 // -----------------------------------------------------------------------------
@@ -1106,6 +1210,9 @@ infix_eval:
 // Used by `**` (power) when it lands.
 // -----------------------------------------------------------------------------
 infixr_eval:
+    jsr eval
+    rs_push(RV)
+
     ldx LEX_TOKEN_KIND
     lda lbp_table,x
     sec
@@ -1113,6 +1220,9 @@ infixr_eval:
     sta B7
     jsr lexer_next
     jsr expression
+
+    rs_push(RV)
+    jsr eval
     rs_push(RV)
     rts
 
@@ -1360,6 +1470,8 @@ nud_minus:
     sta B7
     jsr expression
     rs_push(RV)
+    jsr eval                      // force lazy operand
+    rs_push(RV)
     // Dispatch on operand type. INT/BOOL → int_negate; FLOAT → float_neg;
     // anything else panics ERR_TYPE.
     rs_peek(W0)
@@ -1386,7 +1498,9 @@ nud_plus:
     jsr lexer_next
     lda #LBP_UNARY
     sta B7
-    jsr expression                // RV = operand value (already in RV)
+    jsr expression
+    rs_push(RV)
+    jsr eval                      // force lazy operand → value
     jmp postamble
 
 // -----------------------------------------------------------------------------
@@ -1415,10 +1529,13 @@ nud_lparen:
     jmp postamble
 
 _nlp_first:
-    // Parse first expression.
-    lda #0
+    // Parse first expression at rbp=LBP_COMMA so the comma operator doesn't
+    // bind here — we handle commas explicitly below. Elements are kept LAZY
+    // (NAME / REF / SUB) so the resulting tuple can serve as either a value
+    // (eval forces in-place via _ev_tuple) or an LHS pattern (assign recurses).
+    lda #LBP_COMMA
     sta B7
-    jsr expression                // RV = first element
+    jsr expression                // RV = first element (lazy ok)
     jsr _skip_layout              // newlines OK before `,` / `)`
 
     // Next token decides: `)` → grouping; `,` → tuple build.
@@ -1453,9 +1570,9 @@ _nlp_tloop:
     lda LEX_TOKEN_KIND
     cmp #TK_RPAREN
     beq _nlp_tclose
-    lda #0
+    lda #LBP_COMMA
     sta B7
-    jsr expression                // RV = next element
+    jsr expression                // RV = next element (lazy ok — see _nlp_first)
     jsr _skip_layout              // newlines OK before `,` / `)`
     rs_peek(W0)
     rs_push(W0)                   // RS: [list, list]
@@ -1498,10 +1615,12 @@ _ndc_loop:
     rs_peek(W0)
     rs_push(W0)                   // RS: [dict, dict_copy]
 
-    // Parse key.
-    lda #0
+    // Parse key — rbp=LBP_COMMA so `,` doesn't bind here.
+    lda #LBP_COMMA
     sta B7
-    jsr expression
+    jsr expression                // RV = lazy key
+    rs_push(RV)
+    jsr eval                      // force key to value
     jsr _skip_layout              // newlines OK before `:`
     rs_push(RV)                   // RS: [dict, dict_copy, key]
 
@@ -1510,9 +1629,11 @@ _ndc_loop:
     jsr _skip_layout              // newlines OK after `:`
 
     // Parse value.
-    lda #0
+    lda #LBP_COMMA
     sta B7
-    jsr expression
+    jsr expression                // RV = lazy value
+    rs_push(RV)
+    jsr eval                      // force value
     jsr _skip_layout              // newlines OK before `,` / `}`
     rs_push(RV)                   // RS: [dict, dict_copy, key, value]
 
@@ -1632,7 +1753,9 @@ nud_tilde:
     jsr lexer_next                // consume '~'
     lda #LBP_UNARY
     sta B7
-    jsr expression                // RV = operand
+    jsr expression                // RV = lazy operand
+    rs_push(RV)
+    jsr eval                      // RV = forced operand
     rs_push(RV)
     jsr int_bitwise_not           // RV = ~x
     jmp postamble
@@ -1647,7 +1770,9 @@ nud_not:
     jsr lexer_next                // consume `not`
     lda #LBP_AND
     sta B7
-    jsr expression                // RV = operand handle
+    jsr expression                // RV = lazy operand
+    rs_push(RV)
+    jsr eval                      // RV = forced value
     lda RV
     sta W0
     lda RV+1
@@ -1670,10 +1795,14 @@ _nn_to_false:
 //   x or  y  →  x if     truthy(x) else y
 // -----------------------------------------------------------------------------
 led_and:
-    preamble_args(1, 0)               // LHS on RS
+    preamble_args(1, 0)               // LHS on RS (possibly lazy)
     jsr lexer_next                    // consume `and`
 
-    rs_peek(W0)                       // W0 = LHS handle
+    // Force LHS in-place.
+    jsr eval                          // consumes 1; RV = forced LHS
+    rs_push(RV)                       // RS: [..., LHS_value]
+
+    rs_peek(W0)                       // W0 = LHS value
     jsr val_truthy
     beq _land_short                   // LHS falsy → short-circuit
 
@@ -1681,6 +1810,8 @@ led_and:
     lda #LBP_AND
     sta B7
     jsr expression
+    rs_push(RV)
+    jsr eval                          // force RHS
     jmp postamble
 
 _land_short:
@@ -1695,6 +1826,10 @@ led_or:
     preamble_args(1, 0)
     jsr lexer_next                    // consume `or`
 
+    // Force LHS in-place.
+    jsr eval
+    rs_push(RV)
+
     rs_peek(W0)
     jsr val_truthy
     bne _lor_short                    // LHS truthy → short-circuit
@@ -1703,6 +1838,8 @@ led_or:
     lda #LBP_OR
     sta B7
     jsr expression
+    rs_push(RV)
+    jsr eval                          // force RHS
     jmp postamble
 
 _lor_short:
@@ -1721,6 +1858,11 @@ _lor_short:
 led_is:
     preamble_args(1, 0)
     jsr lexer_next                    // consume `is`
+
+    // Force LHS to a real handle (lazy NAME(a) handle != value handle).
+    jsr eval
+    rs_push(RV)
+
     lda #0
     sta B0                            // B0 = invert flag (0 = `is`, 1 = `is not`)
     lda LEX_TOKEN_KIND
@@ -1732,7 +1874,9 @@ led_is:
 !skip_not:
     lda #LBP_CMP
     sta B7
-    jsr expression                    // RV = RHS handle
+    jsr expression                    // RV = lazy RHS
+    rs_push(RV)
+    jsr eval                          // RV = forced RHS handle
 
     // Handle-pointer compare: LHS (still on RS top) vs RV.
     rs_peek(W0)
@@ -1840,10 +1984,12 @@ nud_lbrack:
     jmp postamble
 
 _nlb_loop:
-    // Parse element expression at top precedence.
-    lda #0
+    // Parse element expression at LBP_COMMA so `,` doesn't bind to led_comma.
+    lda #LBP_COMMA
     sta B7
-    jsr expression                    // RV = element
+    jsr expression                    // RV = lazy element
+    rs_push(RV)
+    jsr eval                          // RV = element value
     jsr _skip_layout                  // newlines OK before `,` / `]`
 
     // Append: list_append wants RS [list, child]. We have [list]; push a
@@ -1886,7 +2032,46 @@ _nlb_recover:
 // a fresh scope). Anything else under `(` is a type error.
 // -----------------------------------------------------------------------------
 led_lparen:
-    preamble_args(1, 0)             // LHS on RS (the callable value)
+    preamble_args(1, 0)             // LHS on RS (callable: TYPE_NAME or TYPE_STR)
+
+    // LHS dispatch:
+    //   TYPE_NAME → free-function builtin (TST lookup in builtins table)
+    //   TYPE_STR  → lambda body re-lex'd in a fresh scope
+    //   anything else → ERR_TYPE
+    rs_peek(W0)
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_NAME
+    beq _llp_name_call
+    cmp #TYPE_STR
+    beq _llp_str_prefix
+    lda #ERR_TYPE
+    sta ERROR_CODE
+    jmp error_handler
+
+_llp_name_call:
+    // Free-function builtin: try TST lookup. On hit, drop the name from RS
+    // and tail into _call_dispatch (which handles `(`-paren-onward).
+    jsr try_builtin_lookup          // A=1 hit (W3=impl_addr, name popped); A=0 miss
+    cmp #0
+    beq _llp_name_miss
+    jsr _call_dispatch              // METHOD_RECEIVER == 0 → free function
+    jmp postamble
+_llp_name_miss:
+    // Not a known builtin — try evaluating the name (in case the user bound
+    // a TYPE_STR lambda to it via `f = "..."`). On a value, recurse-style.
+    jsr eval                        // consumes 1; RV = bound value
+    rs_push(RV)                     // RS: [..., value]
+    rs_peek(W0)
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_STR
+    beq _llp_str_prefix
+    lda #ERR_TYPE
+    sta ERROR_CODE
+    jmp error_handler
+
+_llp_str_prefix:
     jsr lexer_next                  // consume `(`
 
     // Snapshot METHOD_RECEIVER (set by led_dot for `dict.attr(...)` where
@@ -1900,16 +2085,7 @@ led_lparen:
     sta METHOD_RECEIVER
     sta METHOD_RECEIVER+1
 
-    rs_peek_at(W0, 1)               // LHS lives at slot 1 (slot 0 = me)
-    ldy #H_TYPE
-    lda (W0),y
-    cmp #TYPE_STR
-    bne !err+
     jmp _llp_str_call
-!err:
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
 
 // =============================================================================
 // _call_dispatch — leaf helper invoked by `nud_name` (free-function builtins)
@@ -1956,9 +2132,11 @@ _call_dispatch:
     beq _cd_args_done
 
 _cd_arg_loop:
-    lda #0
+    lda #LBP_COMMA                  // rbp=LBP_COMMA so `,` doesn't bind here
     sta B7
-    jsr expression                  // RV = arg
+    jsr expression                  // RV = lazy arg
+    rs_push(RV)
+    jsr eval                        // RV = forced value
     rs_push(RV)
     inc B0
 
@@ -2123,9 +2301,11 @@ _llp_s_have_name:
     jsr lexer_next                  // consume name
     lda #TK_ASSIGN
     jsr lexer_advance               // consume `=`
-    lda #0
+    lda #LBP_COMMA                  // rbp=LBP_COMMA — `,` separates kwargs
     sta B7
-    jsr expression                  // RV = value (resolved in caller scope)
+    jsr expression                  // RV = lazy value (resolved in caller scope)
+    rs_push(RV)
+    jsr eval                        // force kwarg value
     rs_push(RV)                     // RS: [..., new, ..., name, value]
     inc B0
 
@@ -2264,19 +2444,27 @@ _llp_s_done:
     jmp postamble                    // postamble cleans LHS off RS
 
 // -----------------------------------------------------------------------------
-// led_lbrack — subscription:
-//   `a[i]`           read    → RV = element
-//   `a[i] = value`   assign  → mutates a; RV = NONE
-// Dispatch on LHS type for both:
-//   LIST / TUPLE → integer index (list_set / array_get)
-//   DICT         → key
+// led_lbrack — subscription. Returns either:
+//   - TYPE_SUB(container, index)  — for plain `a[i]` (assigned to via the
+//     generic `assign` LED path; eval'd to a value when used as an rvalue).
+//   - A new TYPE_LIST  — for slice form `a[start:stop]` (eager value).
+//
+// The unified TYPE_SUB representation lets `(a, lst[0]) = (...)` mixed-lvalue
+// tuple unpack work uniformly with single-name and attribute LHSes.
 // -----------------------------------------------------------------------------
 led_lbrack:
-    preamble_args(1, 0)               // LHS on RS
+    preamble_args(1, 0)               // LHS on RS (possibly lazy)
+
+    // Force LHS in-place — `a[i]` requires a's container value.
+    jsr eval                          // consumes 1; RV = forced container
+    rs_push(RV)                       // RS: [..., container]
+
     jsr lexer_next                    // consume '['
-    lda #0
+    lda #LBP_COMMA                    // rbp = LBP_COMMA — disallow tuple here
     sta B7
-    jsr expression                    // RV = index/start
+    jsr expression                    // RV = lazy index/start
+    rs_push(RV)
+    jsr eval                          // RV = forced index
 
     // Slice form: `a[start:stop]`?
     lda LEX_TOKEN_KIND
@@ -2288,172 +2476,11 @@ _llb_no_slice:
     lda #TK_RBRACK
     jsr lexer_advance                 // consume ']'
 
-    // Check for assignment.
-    lda LEX_TOKEN_KIND
-    cmp #TK_ASSIGN
-    bne !skip+
-    jmp _llb_assign
-!skip:
-
-    rs_peek(W0)                       // W0 = container handle
-    ldy #H_TYPE
-    lda (W0),y
-    cmp #TYPE_DICT
-    bne !skip+
-    jmp _llb_dict
-!skip:
-    cmp #TYPE_STR
-    bne !skip+
-    jmp _llb_str_get
-!skip:
-
-    // LIST / TUPLE — extract index byte from int handle in RV.
-    lda RV
-    sta W1
-    lda RV+1
-    sta W1+1
-    ldy #H_PTR
-    lda (W1),y
-    sta W2
-    iny
-    lda (W1),y
-    sta W2+1
-    ldy #O_HEADER
-    lda (W2),y                        // A = raw index byte
-    // Normalize: if bit 7 set, A += container.O_LEN low byte (Python `a[-1]`).
-    bpl _llb_idx_pos
-    sta B6
-    rs_peek(W0)
-    jsr deref_W0_to_W2
-    clc
-    adc B6
-_llb_idx_pos:
-    sta W3
-    lda #0
-    sta W3+1
-    fs_push(W3)                       // index goes on FS as a word
-    jsr array_get                     // consumes RS+FS args; RV = element
+    // Build TYPE_SUB(container, index). RS already in alloc_sub's order
+    // (container deeper, index on top once we push RV).
+    rs_push(RV)                       // RS: [..., container, index]
+    jsr alloc_sub                     // consumes 2; RV = SUB handle
     jmp postamble
-
-_llb_dict:
-    // Dict subscript: walk prototype chain (matches `obj.attr` semantics and
-    // Admiral's `eval_subscription_dict` → scope_get).
-    rs_push(RV)
-    jsr dict_get_proto
-    jmp postamble
-
-_llb_str_get:
-    // String subscript: read 1 byte at the (possibly-negative) index, alloc
-    // a fresh 1-char TYPE_STR with that byte. Mirrors stmt_for's str path.
-    lda RV
-    sta W1
-    lda RV+1
-    sta W1+1
-    ldy #H_PTR
-    lda (W1),y
-    sta W2
-    iny
-    lda (W1),y
-    sta W2+1
-    ldy #O_HEADER
-    lda (W2),y                        // A = raw index byte
-    bpl _llb_str_idx_pos
-    sta B6
-    rs_peek(W0)
-    jsr deref_W0_to_W2
-    clc
-    adc B6
-_llb_str_idx_pos:
-    sta B5                            // B5 = effective index
-
-    // Alloc 1-byte TYPE_STR.
-    lda #1
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    lda #TYPE_STR
-    sta ALLOC_TYPE
-    jsr alloc                         // RV = new 1-byte STR
-
-    // Re-deref container after alloc (GC may have moved it).
-    rs_peek(W0)
-    jsr deref_W0_to_W2                // W2 = me payload
-    ldy B5
-    lda (W2),y
-    sta B5                            // stash byte (W2 about to be overwritten)
-
-    // Write to RV.payload[0].
-    ldy #H_PTR
-    lda (RV),y
-    sta W3
-    iny
-    lda (RV),y
-    sta W3+1
-    ldy #O_HEADER
-    lda B5
-    sta (W3),y
-    jmp postamble
-
-// Subscript assignment: `a[i] = value`. RS at entry: [container]; RV = index.
-// Push index on RS (= [container, index]), parse RHS, dispatch on container.
-_llb_assign:
-    rs_push(RV)                       // RS: [container, index]
-    jsr lexer_next                    // consume `=`
-    lda #0
-    sta B7
-    jsr expression                    // RV = value
-    rs_push(RV)                       // RS: [container, index, value]
-
-    rs_peek_at(W0, 2)                 // W0 = container
-    ldy #H_TYPE
-    lda (W0),y
-    cmp #TYPE_DICT
-    bne !next+
-    jmp _llb_assign_dict
-!next:
-    cmp #TYPE_LIST
-    bne !next+
-    jmp _llb_assign_list
-!next:
-    // STR / TUPLE / other → immutable; reject.
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
-
-_llb_assign_list:
-    // LIST: list_set wants RS [container, child], FS [index_word].
-    rs_pop(W1)                        // W1 = value
-    rs_pop(W0)                        // W0 = index handle. RS: [container]
-    // Extract index byte from int handle.
-    ldy #H_PTR
-    lda (W0),y
-    sta W2
-    iny
-    lda (W0),y
-    sta W2+1
-    ldy #O_HEADER
-    lda (W2),y                        // A = raw index byte
-    // Normalize: if bit 7 set, A += container.O_LEN low byte.
-    bpl _llba_idx_pos
-    sta B6
-    rs_peek(W0)
-    jsr deref_W0_to_W2
-    clc
-    adc B6
-_llba_idx_pos:
-    sta W2
-    lda #0
-    sta W2+1
-    fs_push(W2)
-    rs_push(W1)                       // RS: [container, value]
-    jsr list_set                      // consumes 2 RS + 1 FS
-
-    jmp postamble_return_none
-
-_llb_assign_dict:
-    // dict_set takes RS [dict, key, value] — exactly what we have.
-    jsr dict_set
-    jmp postamble_return_none
 
 // Slice form: `a[start:stop]`. Entry: RS top = container, RV = start handle,
 // `:` is the current token. Push start, parse stop, expect `]`, then fall
@@ -2630,7 +2657,12 @@ _lh_recover_parser:
 // pollute unrelated later call sites.
 // -----------------------------------------------------------------------------
 led_dot:
-    preamble_args(1, 0)             // LHS on RS = the dict
+    preamble_args(1, 0)             // LHS on RS = the dict (possibly lazy)
+
+    // Force LHS in-place — `a.b` requires a's value, not the lazy NAME(a).
+    jsr eval                        // consumes 1; RV = forced LHS value
+    rs_push(RV)                     // RS: [..., dict_value]
+
     jsr lexer_next                  // consume `.`
 
     lda LEX_TOKEN_KIND
@@ -2641,22 +2673,22 @@ led_dot:
     jmp error_handler
 _ldot_have_name:
     jsr lexer_get_token_as_string   // RV = name TYPE_STR
-    rs_push(RV)                     // RS: [..., dict, name]
+    rs_push(RV)                     // RS: [..., receiver, name]
     jsr lexer_next                  // consume name
 
-    // Branch on the token following the name.
+    // Method call: `obj.name(args)`. Methods are not first-class values, so
+    // we dispatch directly here; the alternative (returning a REF and letting
+    // led_lparen do the lookup) would require a separate REF-aware call path.
     lda LEX_TOKEN_KIND
-    cmp #TK_ASSIGN
-    bne !next+
-    jmp _ldot_assign
-!next:
     cmp #TK_LPAREN
     bne !next+
     jmp _ldot_method_prefix
 !next:
 
-    // Property read — walk prototype chain on miss.
-    jsr dict_get_proto              // consumes 2; RV = value or NONE
+    // Otherwise build TYPE_REF(receiver, name) and let consumers eval (read)
+    // or assign (LHS). This unifies single-attr assignment with mixed-lvalue
+    // tuple-LHS unpacking, e.g. `(a, obj.x) = (1, 99)`.
+    jsr alloc_ref                   // consumes 2; RV = REF handle
     jmp postamble
 
 _ldot_method_prefix:
@@ -2760,20 +2792,6 @@ _ldot_method_miss:
     sta ERROR_CODE
     jmp error_handler
 
-_ldot_assign:
-    // Attribute assignment. dict_set takes [dict, key, value] on RS top.
-    // We have [..., dict, name]; need to push value on top.
-    jsr lexer_next                  // consume `=`
-    lda #0
-    sta B7
-    jsr expression                  // RV = RHS value
-    rs_push(RV)                     // RS: [..., dict, name, value]
-    jsr dict_set                    // consumes 3 → applies in place
-
-    // Assignment-as-expression returns NONE (matches Python; matches our
-    // existing nud_name assignment convention).
-    jmp postamble_return_none
-
 // -----------------------------------------------------------------------------
 // nud_float — parse a TK_FLOAT_LIT span into a TYPE_FLOAT handle.
 // Materializes the span as a TYPE_STR (via lexer_get_token_as_string), then
@@ -2788,90 +2806,165 @@ nud_float:
     jmp postamble
 
 // -----------------------------------------------------------------------------
-// nud_name — TK_NAME prefix.
-//   `name`         → scope_get(name) → value
-//   `name = rhs`   → eval rhs; scope_set(name, rhs); return NONE
-//
-// Assignment is handled at the NUD level (rather than at parser_stmt) so
-// statements like `x = 1 + 2` work without a separate statement-vs-
-// expression switch — Python's ban on `(x = 5)` doesn't apply here yet.
+// nud_name — TK_NAME prefix. Admiral-style: returns a lazy TYPE_NAME handle.
+// All dispatch (`=`, `(`, `+=`, etc.) happens via LEDs in the expression loop.
+// `eval(TYPE_NAME)` deferreds to `scope_get`.
 // -----------------------------------------------------------------------------
 nud_name:
     preamble_args(0, 0)
-
-    // Materialize the name as a TYPE_STR. Push for rooting.
     jsr lexer_get_token_as_string  // RV = TYPE_STR for the identifier span
-    rs_push(RV)                     // RS: [..., name]
-    jsr lexer_next                  // advance past the name
-
-    // Assignment / augmented assignment?
-    lda LEX_TOKEN_KIND
-    cmp #TK_ASSIGN
-    beq _nname_assign
-    cmp #TK_AUGASS_BASE
-    bcc _nname_get
-    cmp #TK_AUGASS_LAST + 1
-    bcs _nname_get
-    jmp _nname_augass
-
-_nname_get:
-    // If `(` follows, this is a call: try the builtin TST first. On hit,
-    // the name is popped and W3 = impl_addr → dispatch directly via
-    // _call_dispatch. On miss, the name is still on RS — fall through to
-    // scope_get, which returns the value (e.g. a TYPE_STR lambda); the
-    // parser then pushes RV and led_lparen handles the actual call.
-    cmp #TK_LPAREN
-    bne _nname_simple_get
-    jsr try_builtin_lookup
-    beq _nname_simple_get
-    lda #0
-    sta METHOD_RECEIVER
-    sta METHOD_RECEIVER+1
-    jsr _call_dispatch
+    // Mutate H_TYPE → TYPE_NAME so `eval` routes to scope_get instead of
+    // returning the bytes.
+    ldy #H_TYPE
+    lda #TYPE_NAME
+    sta (RV),y
+    jsr lexer_next
     jmp postamble
 
-_nname_simple_get:
-    jsr scope_get
-    jmp postamble
+// -----------------------------------------------------------------------------
+// led_assign — TK_ASSIGN binary LED. Right-associative.
+//   in:  RS top = LHS (lazy: TYPE_NAME / TYPE_REF / TYPE_SUB / TYPE_TUPLE).
+//        Lexer at TK_ASSIGN.
+//   out: RV = NONE_HANDLE (assignment is a statement; produces no value).
+//        Side effect: writes RHS value to LHS via `assign`.
+// V4'.
+// -----------------------------------------------------------------------------
+led_assign:
+    preamble_args(1, 0)             // RS: [..., LHS_lazy]
 
-_nname_assign:
     jsr lexer_next                  // consume `=`
     lda #0
-    sta B7
-    jsr expression                  // RV = RHS value
-    rs_push(RV)                     // RS: [..., name, value]
-    jsr scope_set                   // consumes 2 → side effect
+    sta B7                          // rbp = 0 — RHS picks up commas (tuple)
+    jsr expression                  // RV = lazy RHS (single or tuple)
 
-    // Assignment-as-expression returns NONE (matches Python's `=` which is
-    // a statement, but here we're an expression so we need *some* value).
+    rs_push(RV)
+    jsr eval                        // RV = forced RHS value (in-place for TUPLE)
+
+    rs_push(RV)                     // RS: [..., LHS_lazy, value]
+    jsr assign                      // consumes 2; RV unspecified
+
     jmp postamble_return_none
 
-// Augmented assignment: `x op= rhs` rewrites to `x = x op rhs`. We delegate
-// to the matching `led_*` function via the augass_lo/hi tables — each
-// led_* expects RS top = LHS and the current lexer token = the operator,
-// so we leave the augass token in place, push the current value of x, and
-// SMC-jsr into the right `led_op`. After it returns RV = result, store back
-// into x via scope_set.
-_nname_augass:
-    rs_peek(W0)                     // duplicate name handle
-    rs_push(W0)
-    jsr scope_get                   // consumes the dup; RV = current x value
+// -----------------------------------------------------------------------------
+// led_augass — TK_AUGASS_* (`+=`, `-=`, ...). Right-associative.
+//   in:  RS top = LHS (lazy). Lexer at the augass token.
+//   out: RV = NONE_HANDLE.
+//
+// Strategy:
+//   1. Duplicate LHS_lazy onto RS so the binary-op LED can consume one copy.
+//   2. SMC-JSR through augass_lo/hi to the matching led_<op> (e.g. led_plus).
+//      led_<op>'s preamble consumes the dup, infix_eval evals it, parses RHS,
+//      evals RHS, op_routine produces RV = result. RS top is back to LHS_lazy.
+//   3. Push RV, jsr assign — writes result to the lazy target.
+// V4'.
+// -----------------------------------------------------------------------------
+led_augass:
+    preamble_args(1, 0)             // RS: [..., LHS_lazy]
 
-    rs_push(RV)                     // RS: [..., name, x_val]
-
+    // SMC the trampoline before lexer_next consumes the augass token.
     ldx LEX_TOKEN_KIND
     lda augass_lo - TK_AUGASS_BASE,x
-    sta _nna_jsr+1
+    sta _laa_jsr+1
     lda augass_hi - TK_AUGASS_BASE,x
-    sta _nna_jsr+2
-_nna_jsr:
+    sta _laa_jsr+2
+
+    rs_peek(W0)
+    rs_push(W0)                     // RS: [..., LHS_lazy, LHS_lazy]
+_laa_jsr:
     jsr $0000                       // → led_plus / led_minus / etc.
-                                    // led_op consumes x_val + the augass token
-                                    // + the RHS span; returns RV = result.
-    rs_push(RV)                     // RS: [..., name, result]
-    jsr scope_set                   // consumes 2
+                                    // Consumes 1, parses RHS, RV = result.
+                                    // RS now: [..., LHS_lazy].
+
+    rs_push(RV)                     // RS: [..., LHS_lazy, result]
+    jsr assign                      // consumes 2
 
     jmp postamble_return_none
+
+// -----------------------------------------------------------------------------
+// led_comma — TK_COMMA binary LED. Builds a TYPE_TUPLE of comma-separated
+// items, starting from LHS (already on RS). Items are KEPT LAZY — they get
+// evaluated by `eval(TYPE_TUPLE)` only when used as a value (e.g. RHS of
+// assignment). As an LHS pattern, the lazy items are walked recursively by
+// `assign`.
+//
+//   in:  RS top = first item (lazy). Lexer at TK_COMMA.
+//   out: RV = TYPE_TUPLE handle. RS swept by V4' postamble.
+//
+// Trailing comma is allowed: `a, b,` ends the tuple at 2 items.
+// Inside container literals (parens / brackets / braces) and call-arg lists
+// the surrounding NUD/LED parses each item at rbp = LBP_COMMA, so this LED
+// is bypassed there — only top-level statement commas reach this routine.
+// V4'.
+// -----------------------------------------------------------------------------
+led_comma:
+    preamble_args(1, 0)             // RS: [..., first_item]
+
+    lda #1
+    sta B0                          // B0 = item count
+
+_lc_loop:
+    jsr lexer_next                  // consume `,`
+
+    // Trailing comma: if next token has no NUD, stop (e.g. `)`, `]`, EOF).
+    ldx LEX_TOKEN_KIND
+    lda nud_lo,x
+    cmp #<nud_recover
+    bne _lc_has_expr
+    lda nud_hi,x
+    cmp #>nud_recover
+    beq _lc_break
+
+_lc_has_expr:
+    lda #LBP_COMMA                  // rbp = LBP_COMMA — next `,` won't recurse
+    sta B7
+    jsr expression                  // RV = next item (lazy)
+    rs_push(RV)
+    inc B0
+
+    lda LEX_TOKEN_KIND
+    cmp #TK_COMMA
+    beq _lc_loop
+
+_lc_break:
+    // Allocate TYPE_TUPLE of size B0. _array_alloc_init may GC; items on RS
+    // are roots (V4' frame + body's pushes).
+    lda B0
+    ldx #TYPE_TUPLE
+    jsr _array_alloc_init           // RV = tuple handle, payload zeroed
+
+    // Push tuple as root before touching its payload.
+    rs_push(RV)                     // RS: [..., item0, .., itemN-1, tuple]
+    lda RV
+    sta W0
+    lda RV+1
+    sta W0+1
+
+    // Fill tuple[i] = item[i]. item[i] sits at RS depth (B0 - i); top is tuple
+    // at depth 0, RS[depth*2] = byte offset.
+    lda #0
+    sta B1                          // B1 = i
+
+_lc_fill:
+    lda B1
+    cmp B0
+    beq _lc_filled
+
+    sec
+    lda B0
+    sbc B1                          // A = B0 - i (depth in words)
+    asl                             // Y = byte offset
+    tay
+    jsr rs_peek_at_w1               // W1 = RS[depth] = item[i]
+
+    lda B1
+    jsr tuple_set_leaf              // W0=tuple, W1=item, A=index
+
+    inc B1
+    jmp _lc_fill
+
+_lc_filled:
+    // RV still = tuple (set by _array_alloc_init; postamble preserves RV).
+    jmp postamble
 
 // -----------------------------------------------------------------------------
 // nud_str — parse a TK_STR span into a TYPE_STR handle via
@@ -2984,7 +3077,7 @@ led_lo:
     .byte <led_recover                             // 13 TK_RBRACK
     .byte <led_recover                             // 14 TK_LCURLY
     .byte <led_recover                             // 15 TK_RCURLY
-    .byte <led_recover                             // 16 TK_COMMA
+    .byte <led_comma                               // 16 TK_COMMA
     .byte <led_recover                             // 17 TK_COLON
     .byte <led_recover                             // 18 TK_SEMICOLON
     .byte <led_dot                                 // 19 TK_DOT (attr access)
@@ -3008,7 +3101,9 @@ led_lo:
     .byte <led_ge                                  // 37 TK_GE
     .byte <led_eq                                  // 38 TK_EQ
     .byte <led_neq                                 // 39 TK_NEQ
-    .fill TK_IN - TK_NEQ - 1, <led_recover         // $28..$39
+    .byte <led_assign                              // $28 TK_ASSIGN
+    .fill TK_AUGASS_LAST - TK_AUGASS_BASE + 1, <led_augass // $29..$34 TK_AUGASS_*
+    .fill TK_IN - TK_AUGASS_LAST - 1, <led_recover         // $35..$39 keywords (NUDs only)
     .byte <led_in                                  // $3A TK_IN (binary `in`)
     .fill TK_AND - TK_IN - 1, <led_recover         // $3B..$43
     .byte <led_and                                 // $44 TK_AND
@@ -3019,15 +3114,15 @@ led_lo:
 
 led_hi:
     .fill TK_LPAREN, >led_recover
-    .byte >led_lparen
-    .byte >led_recover
-    .byte >led_lbrack
-    .byte >led_recover
-    .byte >led_recover
-    .byte >led_recover
-    .byte >led_recover
-    .byte >led_recover
-    .byte >led_recover
+    .byte >led_lparen                              // 10 TK_LPAREN
+    .byte >led_recover                             // 11 TK_RPAREN
+    .byte >led_lbrack                              // 12 TK_LBRACK
+    .byte >led_recover                             // 13 TK_RBRACK
+    .byte >led_recover                             // 14 TK_LCURLY
+    .byte >led_recover                             // 15 TK_RCURLY
+    .byte >led_comma                               // 16 TK_COMMA
+    .byte >led_recover                             // 17 TK_COLON
+    .byte >led_recover                             // 18 TK_SEMICOLON
     .byte >led_dot                                 // 19 TK_DOT
     .fill TK_PLUS - TK_DOT - 1, >led_recover
     .byte >led_plus
@@ -3049,7 +3144,9 @@ led_hi:
     .byte >led_ge
     .byte >led_eq
     .byte >led_neq
-    .fill TK_IN - TK_NEQ - 1, >led_recover
+    .byte >led_assign                              // $28 TK_ASSIGN
+    .fill TK_AUGASS_LAST - TK_AUGASS_BASE + 1, >led_augass // $29..$34 TK_AUGASS_*
+    .fill TK_IN - TK_AUGASS_LAST - 1, >led_recover         // $35..$39 keywords (NUDs only)
     .byte >led_in
     .fill TK_AND - TK_IN - 1, >led_recover
     .byte >led_and
@@ -3067,7 +3164,7 @@ lbp_table:
     .byte LBP_TERM                                 // TK_RBRACK
     .byte LBP_TERM                                 // TK_LCURLY
     .byte LBP_TERM                                 // TK_RCURLY
-    .byte LBP_TERM                                 // TK_COMMA
+    .byte LBP_COMMA                                // TK_COMMA — tuple ctor
     .byte LBP_TERM                                 // TK_COLON
     .byte LBP_TERM                                 // TK_SEMICOLON
     .byte LBP_INDEX                                // TK_DOT (attr access)
@@ -3091,7 +3188,9 @@ lbp_table:
     .byte LBP_CMP                                  // TK_GE
     .byte LBP_CMP                                  // TK_EQ
     .byte LBP_CMP                                  // TK_NEQ
-    .fill TK_IN - TK_NEQ - 1, LBP_TERM             // $28..$39
+    .byte LBP_ASSIGN                               // $28 TK_ASSIGN
+    .fill TK_AUGASS_LAST - TK_AUGASS_BASE + 1, LBP_ASSIGN  // $29..$34 TK_AUGASS
+    .fill TK_IN - TK_AUGASS_LAST - 1, LBP_TERM             // $35..$39 keywords
     .byte LBP_CMP                                  // $3A TK_IN — binary membership
     .fill TK_AND - TK_IN - 1, LBP_TERM
     .byte LBP_AND                                  // $44 TK_AND

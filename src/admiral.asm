@@ -91,6 +91,7 @@ error_handler:
 #import "scope.asm"
 #import "rnd.asm"
 #import "builtins.asm"
+#import "assign.asm"
 #import "parser.asm"
 
 // -----------------------------------------------------------------------------

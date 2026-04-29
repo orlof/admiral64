@@ -2507,34 +2507,49 @@ def test_multiline_nested_literals(h):
     assert _eval(h, src) == 20
 
 
-def test_for_over_dict_iterates_keys(h):
-    """`for k in d:` iterates over keys (Python convention)."""
+def test_for_over_dict_iterates_entries(h):
+    """`for k, v in d:` unpacks each entry tuple (admiral semantics)."""
     src = (
         'd = {1: 10, 2: 20, 3: 30}\n'
-        'total = 0\n'
-        'for k in d:\n'
-        '    total = total + k\n'
-        'total'
+        'k_total = 0\n'
+        'v_total = 0\n'
+        'for k, v in d:\n'
+        '    k_total = k_total + k\n'
+        '    v_total = v_total + v\n'
+        'k_total + v_total * 100'
     )
-    assert _eval(h, src) == 6  # 1 + 2 + 3
+    # 1+2+3 = 6; 10+20+30 = 60. Encoded: 6 + 60*100 = 6006.
+    assert _eval(h, src) == 6006
 
 
-def test_for_over_dict_string_keys(h):
-    """Iterating a dict with string keys still binds the keys to the var."""
+def test_for_over_dict_keys_only(h):
+    """`for k, _ in d:` — Python-style "keys only" via underscore unpack."""
     src = (
         'd = {"a": 1, "b": 2, "c": 3}\n'
         'count = 0\n'
-        'for k in d:\n'
+        'for k, _ in d:\n'
         '    count = count + d[k]\n'
         'count'
     )
     assert _eval(h, src) == 6
 
 
+def test_for_over_dict_entry_via_index(h):
+    """`for entry in d:` binds the whole (key, value) tuple — index it."""
+    src = (
+        'd = {1: 100, 2: 200}\n'
+        'total = 0\n'
+        'for entry in d:\n'
+        '    total = total + entry[0] + entry[1]\n'
+        'total'
+    )
+    assert _eval(h, src) == 303  # (1+100) + (2+200)
+
+
 def test_for_over_empty_dict_zero_iterations(h):
     src = (
         'count = 0\n'
-        'for k in {}:\n'
+        'for k, v in {}:\n'
         '    count = count + 1\n'
         'count'
     )
@@ -2545,15 +2560,15 @@ def test_for_over_dict_with_break(h):
     """`break` inside a dict-iter loop exits cleanly."""
     src = (
         'd = {1: 10, 2: 20, 3: 30}\n'
-        'last = 0\n'
-        'for k in d:\n'
-        '    last = k\n'
+        'last_v = 0\n'
+        'for k, v in d:\n'
+        '    last_v = v\n'
         '    if k == 2:\n'
         '        break\n'
-        'last'
+        'last_v'
     )
-    # Keys are sorted: iteration order = 1, 2, then break.
-    assert _eval(h, src) == 2
+    # Keys are sorted: iteration visits (1,10), (2,20), then break.
+    assert _eval(h, src) == 20
 
 
 def test_multiline_literal_inside_function_body(h):
@@ -3420,3 +3435,335 @@ def test_rnd_too_many_args_panics(hfp):
     hfp.rs_push(handle)
     hfp.call('parser_eval', expect_panic=True, max_steps=2_000_000)
     assert hfp.mpu.memory[ERROR_CODE_ZP] == 0x06  # ERR_ARITY
+
+
+# --- Phase B: tuple-unpacking assignments ----------------------------------
+# `stmt_assign_or_expr` speculatively parses TK_NAME / TK_LPAREN statements
+# as a `testlist` target tree. On `=` it commits via `assign(target, value)`;
+# otherwise it rolls back via lexer_restore and falls through to expression.
+
+def test_tuple_assign_two_names(h):
+    src = (
+        'a, b = (1, 2)\n'
+        'a + b * 10'
+    )
+    assert _eval(h, src) == 21
+
+
+def test_tuple_assign_three_names(h):
+    src = (
+        'a, b, c = (10, 20, 30)\n'
+        'a + b + c'
+    )
+    assert _eval(h, src) == 60
+
+
+def test_tuple_assign_unparenthesized_rhs(h):
+    """`a, b = 1, 2` — RHS is implicitly a tuple."""
+    src = (
+        'a, b = 1, 2\n'
+        'a * 10 + b'
+    )
+    assert _eval(h, src) == 12
+
+
+def test_tuple_assign_swap(h):
+    """Tuple unpacking lets us swap without a temp."""
+    src = (
+        'a = 1\n'
+        'b = 2\n'
+        'a, b = b, a\n'
+        'a * 10 + b'
+    )
+    assert _eval(h, src) == 21
+
+
+def test_tuple_assign_nested_lhs(h):
+    """`a, (b, c) = (1, (2, 3))` — recursive unpack."""
+    src = (
+        'a, (b, c) = (1, (2, 3))\n'
+        'a + b * 10 + c * 100'
+    )
+    assert _eval(h, src) == 321
+
+
+def test_tuple_assign_deeply_nested(h):
+    src = (
+        'a, (b, (c, d)) = (1, (2, (3, 4)))\n'
+        'a + b * 10 + c * 100 + d * 1000'
+    )
+    assert _eval(h, src) == 4321
+
+
+def test_tuple_assign_paren_lhs_only(h):
+    """`(a, b) = (1, 2)` — LHS in outer parens."""
+    src = (
+        '(a, b) = (1, 2)\n'
+        'a + b * 10'
+    )
+    assert _eval(h, src) == 21
+
+
+def test_tuple_assign_rhs_can_be_list(h):
+    """RHS of tuple LHS may be a list (any sequence with the array layout)."""
+    src = (
+        'a, b, c = [7, 8, 9]\n'
+        'a + b * 10 + c * 100'
+    )
+    assert _eval(h, src) == 987
+
+
+def test_tuple_assign_with_subscript_target(h):
+    """`a, lst[0] = (1, 99)` — mixed name + subscript LHS."""
+    src = (
+        'lst = [0, 0, 0]\n'
+        'a, lst[0] = (1, 99)\n'
+        'a + lst[0] * 10'
+    )
+    assert _eval(h, src) == 991
+
+
+def test_tuple_assign_with_attr_target(h):
+    """`a, obj.x = (1, 99)` — mixed name + attribute LHS."""
+    src = (
+        'obj = {"x": 0}\n'
+        'a, obj.x = (1, 99)\n'
+        'a + obj.x * 10'
+    )
+    assert _eval(h, src) == 991
+
+
+def test_tuple_assign_chain_target(h):
+    """`a, obj.inner.v = (1, 99)` — chain attribute LHS."""
+    src = (
+        'obj = {"inner": {"v": 0}}\n'
+        'a, obj.inner.v = (1, 99)\n'
+        'a + obj.inner.v * 10'
+    )
+    assert _eval(h, src) == 991
+
+
+def test_tuple_assign_arity_mismatch_panics(h):
+    """LHS and RHS lengths must match; otherwise ERR_ARITY."""
+    from conftest import ERROR_CODE_ZP, ERR_ARITY
+    src = 'a, b = (1, 2, 3)'
+    payload = list(src.encode("ascii"))
+    handle = place_str(h, 0x8500, payload)
+    h.rs_push(handle)
+    h.call("parser_eval", expect_panic=True, max_steps=2_000_000)
+    assert h.mpu.memory[ERROR_CODE_ZP] == ERR_ARITY
+
+
+def test_tuple_assign_non_sequence_rhs_panics(h):
+    from conftest import ERROR_CODE_ZP, ERR_TYPE
+    src = 'a, b = 5'
+    payload = list(src.encode("ascii"))
+    handle = place_str(h, 0x8500, payload)
+    h.rs_push(handle)
+    h.call("parser_eval", expect_panic=True, max_steps=2_000_000)
+    assert h.mpu.memory[ERROR_CODE_ZP] == ERR_TYPE
+
+
+# --- Regressions: speculative testlist must not break expression statements
+
+def test_no_regression_function_call_stmt(h):
+    """`len(...)` at statement level is parsed by testlist first; rollback
+    must still leave the call working."""
+    src = 'len("abc")'
+    assert _eval(h, src) == 3
+
+
+def test_no_regression_method_call_stmt(h):
+    src = (
+        's = "hello"\n'
+        's.upper()'
+    )
+    assert _eval_str(h, src) == b"HELLO"
+
+
+def test_no_regression_arithmetic_with_name(h):
+    src = (
+        'x = 5\n'
+        'x + 3 * 2'
+    )
+    assert _eval(h, src) == 11
+
+
+def test_no_regression_slice_at_stmt_top(h):
+    """`a[1:3]` — `[` chain in testlist must abort on `:` so slice still parses."""
+    src = (
+        'a = [10, 20, 30, 40]\n'
+        'a[1:3]'
+    )
+    assert _eval_list_ints(h, src) == [20, 30]
+
+
+def test_no_regression_paren_arith_stmt(h):
+    """`(1 + 2) * 3` — TK_LPAREN-starting statement that isn't a target."""
+    assert _eval(h, '(1 + 2) * 3') == 9
+
+
+def test_no_regression_paren_tuple_lookup(h):
+    """`(1, 2, 3)[1]` — TK_LPAREN-starting tuple expr followed by subscript."""
+    assert _eval(h, '(10, 20, 30)[1]') == 20
+
+
+def test_no_regression_simple_assign(h):
+    """`x = 5` flows through testlist + assign; verify it still works."""
+    src = (
+        'x = 42\n'
+        'x'
+    )
+    assert _eval(h, src) == 42
+
+
+def test_no_regression_subscript_assign(h):
+    src = (
+        'a = [1, 2, 3]\n'
+        'a[1] = 99\n'
+        'a[1]'
+    )
+    assert _eval(h, src) == 99
+
+
+def test_no_regression_attr_assign(h):
+    src = (
+        'o = {}\n'
+        'o.x = 7\n'
+        'o.x'
+    )
+    assert _eval(h, src) == 7
+
+
+# --- Phase C: for-loop tuple unpacking + dict iteration --------------------
+# `stmt_for` parses the loop target via `testlist`, so any LHS form works
+# (single name, tuple, nested, .attr / [i] suffixes). DICT iteration binds
+# the entry tuple — admiral semantics.
+
+def test_for_tuple_unpack_over_list_of_pairs(h):
+    """`for a, b in lst` — list of 2-tuples."""
+    src = (
+        'pairs = [(1, 10), (2, 20), (3, 30)]\n'
+        'a_sum = 0\n'
+        'b_sum = 0\n'
+        'for a, b in pairs:\n'
+        '    a_sum = a_sum + a\n'
+        '    b_sum = b_sum + b\n'
+        'a_sum * 100 + b_sum'
+    )
+    assert _eval(h, src) == 660  # 6*100 + 60
+
+
+def test_for_tuple_unpack_three_elements(h):
+    src = (
+        'rows = [(1, 2, 3), (4, 5, 6)]\n'
+        'total = 0\n'
+        'for x, y, z in rows:\n'
+        '    total = total + x + y + z\n'
+        'total'
+    )
+    assert _eval(h, src) == 21
+
+
+def test_for_nested_tuple_unpack(h):
+    """`for a, (b, c) in pairs:` — nested unpacking."""
+    src = (
+        'pairs = [(1, (2, 3)), (10, (20, 30))]\n'
+        'total = 0\n'
+        'for a, (b, c) in pairs:\n'
+        '    total = total + a + b + c\n'
+        'total'
+    )
+    assert _eval(h, src) == 66  # 1+2+3 + 10+20+30
+
+
+def test_for_tuple_unpack_over_list_of_lists(h):
+    """RHS items can be lists (not just tuples)."""
+    src = (
+        'data = [[1, 10], [2, 20]]\n'
+        'sum = 0\n'
+        'for k, v in data:\n'
+        '    sum = sum + k * v\n'
+        'sum'
+    )
+    assert _eval(h, src) == 50  # 1*10 + 2*20
+
+
+def test_for_dict_iteration_uses_keys_for_lookup(h):
+    """Common idiom: `for k, v in d` to iterate entries directly."""
+    src = (
+        'd = {"a": 1, "b": 2, "c": 3}\n'
+        'total = 0\n'
+        'for k, v in d:\n'
+        '    total = total + v\n'
+        'total'
+    )
+    assert _eval(h, src) == 6
+
+
+def test_for_single_name_over_dict_binds_entry(h):
+    """`for entry in d` binds the whole (key, value) tuple."""
+    src = (
+        'd = {10: 1, 20: 2}\n'
+        'k0 = 0\n'
+        'v0 = 0\n'
+        'for entry in d:\n'
+        '    k0 = entry[0]\n'
+        '    v0 = entry[1]\n'
+        '    break\n'
+        'k0 * 100 + v0'
+    )
+    # First entry (sorted): (10, 1)
+    assert _eval(h, src) == 1001
+
+
+def test_for_tuple_arity_mismatch_panics(h):
+    """`for a, b, c in pairs_of_2:` — arity mismatch panics."""
+    from conftest import ERROR_CODE_ZP, ERR_ARITY
+    src = (
+        'pairs = [(1, 2), (3, 4)]\n'
+        'for a, b, c in pairs:\n'
+        '    pass'
+    )
+    payload = list(src.encode("ascii"))
+    handle = place_str(h, 0x8500, payload)
+    h.rs_push(handle)
+    h.call("parser_eval", expect_panic=True, max_steps=2_000_000)
+    assert h.mpu.memory[ERROR_CODE_ZP] == ERR_ARITY
+
+
+def test_for_no_regression_single_name(h):
+    """`for x in list` — bare-name target still works."""
+    src = (
+        'total = 0\n'
+        'for x in [1, 2, 3, 4]:\n'
+        '    total = total + x\n'
+        'total'
+    )
+    assert _eval(h, src) == 10
+
+
+def test_for_no_regression_string_iteration(h):
+    """`for c in "abc"` — string iteration with bare-name target."""
+    src = (
+        'count = 0\n'
+        'for c in "abc":\n'
+        '    count = count + 1\n'
+        'count'
+    )
+    assert _eval(h, src) == 3
+
+
+def test_for_no_regression_break_continue(h):
+    """break / continue still work with the new testlist-based for-loop."""
+    src = (
+        'total = 0\n'
+        'for i in [1, 2, 3, 4, 5]:\n'
+        '    if i == 2:\n'
+        '        continue\n'
+        '    if i == 4:\n'
+        '        break\n'
+        '    total = total + i\n'
+        'total'
+    )
+    assert _eval(h, src) == 4  # 1 + 3

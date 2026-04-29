@@ -161,6 +161,20 @@
 .const TYPE_BUILTIN = $29  // built-in function. Payload = 2-byte impl address.
                            // led_lparen reads the impl pointer and SMC-JSRs.
 
+// --- Lazy / target types (admiral-style deferred eval) ----------------------
+// Stored as 2-handle arrays (same payload shape as a 2-tuple) for TYPE_REF
+// and TYPE_SUB; GC traces them like tuples. eval() resolves these into a
+// concrete value; assign() consumes them as targets.
+.const TYPE_REF   = $2A    // `obj.attr` lazy: payload = (receiver, name_str).
+                           // eval → dict_get_proto(receiver, name).
+                           // assign → dict_set(receiver, name, value).
+.const TYPE_SUB   = $2B    // `obj[i]` lazy: payload = (container, index).
+                           // eval → list/dict get; assign → list/dict set.
+.const TYPE_NAME  = $2C    // bare name reference. Same heap layout as TYPE_STR
+                           // (raw byte payload). nud_name allocates a TYPE_STR
+                           // and mutates H_TYPE to this so eval() routes to
+                           // scope_get instead of returning the bytes.
+
 // --- Token kinds (lexer output) ---------------------------------------------
 // Dense numbering 0..N-1 so dispatch tables can be array-indexed. **Stays
 // under 128** so a single byte holds the kind. Augmented-assigns are
