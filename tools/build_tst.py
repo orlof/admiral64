@@ -22,11 +22,13 @@
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
 # (admiral-source name, kickass impl label).
-# Insertion order shapes the tree — kept in source-file order for now.
+# Insertion order shapes the tree, but main() sorts by reversed name and
+# inserts median-first so the source order below is purely cosmetic.
 BUILTINS = [
     ("len",   "builtin_len"),
     ("range", "builtin_range"),
@@ -44,6 +46,18 @@ BUILTINS = [
     ("repr",  "builtin_repr"),
     ("sort",  "builtin_sort"),
     ("rnd",   "builtin_rnd"),
+    ("mem",     "builtin_mem"),
+    ("globals", "builtin_globals"),
+    ("locals",  "builtin_locals"),
+    ("wset",    "builtin_wset"),
+    ("wget",    "builtin_wget"),
+    ("cursor",  "builtin_cursor"),
+    ("scroll",  "builtin_scroll"),
+    ("cls",     "builtin_cls"),
+    ("getc",    "builtin_getc"),
+    ("key",     "builtin_key"),
+    ("input",   "builtin_input"),
+    ("edit",    "builtin_edit"),
 ]
 
 
@@ -93,12 +107,20 @@ def dfs_assign(root: Node) -> list[Node]:
 
 def lookup(root: Node, name: str) -> str | None:
     """Reference TST walk used to verify the built tree before emit."""
+    payload, _ = walk(root, name)
+    return payload
+
+
+def walk(root: Node, name: str) -> tuple[str | None, int]:
+    """Like lookup, but also returns the node-visit count for cost-checking."""
     chars = list(reversed(name))
     if not chars:
-        return None
+        return None, 0
     n: Node | None = root
     i = 0
+    visits = 0
     while n is not None:
+        visits += 1
         c = chars[i]
         if c < n.char:
             n = n.lt
@@ -107,9 +129,9 @@ def lookup(root: Node, name: str) -> str | None:
         else:
             i += 1
             if i == len(chars):
-                return n.payload
+                return n.payload, visits
             n = n.eq
-    return None
+    return None, visits
 
 
 def fmt_chars(values: list[str]) -> str:
@@ -170,17 +192,36 @@ def emit(nodes: list[Node], names_in_order: list[tuple[str, str]],
     output_path.write_text("\n".join(lines))
 
 
+def build_balanced(builtins: list[tuple[str, str]]) -> Node:
+    """Insert names median-first by reversed-name order so the resulting tree
+    is well-balanced regardless of source-file order. Each recursive half is
+    again inserted median-first, which keeps the per-level BSTs balanced too."""
+    items = sorted(builtins, key=lambda it: it[0][::-1])
+
+    root: Node | None = None
+
+    def insert_median(lo: int, hi: int) -> None:
+        nonlocal root
+        if lo >= hi:
+            return
+        mid = (lo + hi) // 2
+        name, label = items[mid]
+        root = insert(root, list(reversed(name)), 0, label)
+        insert_median(lo, mid)
+        insert_median(mid + 1, hi)
+
+    insert_median(0, len(items))
+    assert root is not None
+    return root
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: build_tst.py <output.asm>", file=sys.stderr)
         return 2
     out_path = Path(sys.argv[1])
 
-    root: Node | None = None
-    for name, label in BUILTINS:
-        chars = list(reversed(name))
-        root = insert(root, chars, 0, label)
-    assert root is not None
+    root = build_balanced(BUILTINS)
 
     # Sanity: every registered name resolves through the built tree to its
     # own label, and a few negative cases miss.
@@ -192,10 +233,29 @@ def main() -> int:
         if lookup(root, negative) is not None:
             raise SystemExit(f"self-check failed: {negative!r} should miss")
 
+    # Cost ceiling: in a TST, a hit visits at least len(name) nodes (one char
+    # match per position) plus lt/gt steps inside each level's BST. A balanced
+    # per-level BST adds at most ceil(log2(N)) visits across all levels, so
+    # max_name_len + ceil(log2(N)) is a safe defensive ceiling. If a future
+    # builtin pushes us over, this trips and we know to look at the layout.
+    max_name_len = max(len(name) for name, _ in BUILTINS)
+    ceiling = max_name_len + max(1, math.ceil(math.log2(len(BUILTINS))))
+    worst_name, worst_visits = max(
+        ((name, walk(root, name)[1]) for name, _ in BUILTINS),
+        key=lambda it: it[1],
+    )
+    if worst_visits > ceiling:
+        raise SystemExit(
+            f"build_tst.py: walk depth regression — {worst_name!r} costs "
+            f"{worst_visits} node visits, ceiling is {ceiling}. Reorder "
+            f"BUILTINS or revisit build_balanced()."
+        )
+
     nodes = dfs_assign(root)
     emit(nodes, BUILTINS, out_path)
     print(f"build_tst.py: wrote {out_path} ({len(nodes)} nodes, "
-          f"{len(BUILTINS)} payloads)", file=sys.stderr)
+          f"{len(BUILTINS)} payloads, worst walk = {worst_visits} visits "
+          f"on {worst_name!r}, ceiling = {ceiling})", file=sys.stderr)
     return 0
 
 
