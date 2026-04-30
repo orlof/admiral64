@@ -37,21 +37,8 @@ int_negate:
                               // alloc, but keep the discipline uniform.
 
     // --- Deref new handle to get payload pointer in W3 ---
-    // (deref_RV_to_W2 writes W2; we need W3 free for writes, and W2 holds the
-    // source payload. Manually deref to W3.)
-    ldy #H_PTR
-    lda (RV),y
-    sta W3
-    iny
-    lda (RV),y
-    sta W3+1
-    clc
-    lda W3
-    adc #O_HEADER
-    sta W3
-    bcc !+
-    inc W3+1
-!:
+    // (W2 holds the source payload; deref RV→W3 leaves W2 untouched.)
+    jsr deref_RV_to_W3
 
     // --- Compute 0 - input into (W3),y via SBC chain ---
     sec                       // initial C=1 (no borrow)

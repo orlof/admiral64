@@ -27,29 +27,50 @@
 #import "rnd.asm"
 
 // -----------------------------------------------------------------------------
-// basic_call(addr) — bank BASIC ROM in, JSR, bank back out.
+// basic_call(addr) / basic_binop(addr) — bank BASIC + KERNAL ROM in, JSR,
+// bank back out. Both bracket the call with `_basic_zp_save` /
+// `_basic_zp_restore` so the BASIC ROM can freely scribble on our pseudo-
+// register file without corrupting V4' frames or allocator state.
 //
-// BASIC sits at $A000-$BFFF when bit 0 of $01 is set. We flip in just for the
-// JSR window. KERNAL stays mapped in both states, so IRQs (CIA1 jiffy, CIA2)
-// remain serviced from KERNAL ROM and don't see a stale state.
+// BASIC sits at $A000-$BFFF when bit 0 of $01 is set; KERNAL at $E000-$FFFF
+// when bit 1 is set. We flip both in for the JSR window — some BASIC
+// routines call into KERNAL (POLY1/POLYX for transcendentals), so KERNAL
+// has to be present too.
 //
-// Use this for single-FAC ops (NEGOP, QINT, FOUT, GIVAYF). For binary
-// register-form arithmetic (FADDT/FSUBT/FMULTT/FDIVT) use `basic_binop`,
-// which additionally preloads A=FAC1 exp and $6F=combined sign — the
-// register-form entries assume what a memory-form CONUPK would have set.
-// -----------------------------------------------------------------------------
+// `basic_call` — single-FAC ops where the caller may have preloaded A/Y
+// (GIVAYF needs A=hi, Y=lo). The save/restore preserves A and Y across
+// the save (HW stack), so the caller's setup survives to the JSR.
+//
+// `basic_binop` — register-form binary ops (FADDT/FSUBT/FMULTT/FDIVT/FPWRT).
+// These need A=FAC1 exp and $6F=combined sign at JSR time. The macro sets
+// those up itself AFTER `_basic_zp_save`, so no caller registers need to
+// survive — `lda FAC1` at the bottom sets Z/N for the BNE/BEQ on A that
+// every register-form entry begins with.
+//
 // Bank flip via `inc $01` / `dec $01` (not `lda #$37 ; sta $01`) so A, X, Y
-// are preserved through the switch — register-form binary ops need A=FAC1
-// exp at JSR time, and GIVAYF needs A=lo / Y=hi. We rely on $01 staying at
-// $36 in steady state; INC $36 → $37 banks BASIC IN, DEC $37 → $36 banks
-// BASIC OUT.
+// are preserved through the switch. Steady-state $01 is MEM_NORMAL
+// ($34, all ROMs + I/O out); three INCs reach $37 (all in), three DECs
+// return to $34.
 .macro basic_call(addr) {
+    pha
+    tya
+    pha
+    jsr _basic_zp_save
+    pla
+    tay
+    pla
+    inc $01
+    inc $01
     inc $01
     jsr addr
     dec $01
+    dec $01
+    dec $01
+    jsr _basic_zp_restore
 }
 
 .macro basic_binop(addr) {
+    jsr _basic_zp_save
     // ARISGN ($6F) = FAC1.sign XOR FAC2.sign — what BASIC's CONUPK would have
     // computed. Multiplication and division read it for result sign;
     // addition/subtraction recompute internally so the value is harmless.
@@ -57,12 +78,17 @@
     eor FAC2+5
     sta ARISGN
     inc $01
+    inc $01
+    inc $01
     // A = FAC1 exp — the register-form entries start with a BNE/BEQ on A,
     // expecting it to reflect the FAC1-zero (or FAC2-zero for FSUBT) check.
     // INC $01 clobbers Z/N flags so the LDA must come *after* it.
     lda FAC1
     jsr addr
     dec $01
+    dec $01
+    dec $01
+    jsr _basic_zp_restore
 }
 
 // -----------------------------------------------------------------------------
@@ -295,34 +321,43 @@ _fdiv_ok:
     jmp postamble
 
 // -----------------------------------------------------------------------------
-// _fp_zp_save / _fp_zp_restore — protect allocator + parser ZP against the
-// transcendental BASIC FP routines (FPWRT/INT/EXP/LOG and the POLY1/POLYX
-// helpers in KERNAL ROM). These routines scribble across $20-$2F (allocator
-// state — same range FIN clobbers, called out in str_to_float) and into
-// $71-$7D (BASIC POLY scratch). Our V4' preamble already covers $10-$1F
-// (W/B), so we need to additionally save $20-$2F. Done from leaf helpers
-// to keep the call sites tiny.
+// _basic_zp_save / _basic_zp_restore — bracket every BASIC-ROM call so its
+// scratch writes can't corrupt our state. Saves the entire `BASIC_ZP_LO ..
+// BASIC_ZP_HI` range — every ZP location our code uses, contiguous from
+// FSP/RSP/FP/RV through allocator state, lexer state, and runtime scope.
+// We don't audit which BASIC routine touches what; we save it all and the
+// next addition to our ZP map is automatically protected.
 //
-// Leaf — does NOT preserve W/B/A/X/Y. Callers must arrange around that.
+// The buffer lives in the code segment; total ~140 cycles per save +
+// restore pair, negligible against BASIC FP ops (~10K cycles each).
+//
+// Leaf — does NOT preserve A/X/Y/flags. The basic_call macro saves A/Y on
+// HW stack across `_basic_zp_save` so caller-set-up registers survive to
+// the JSR; basic_binop sets up its registers AFTER the save and so doesn't
+// need to.
 // -----------------------------------------------------------------------------
-_fp_zp_save:
-    ldy #15
+.const BASIC_ZP_LO  = $02
+.const BASIC_ZP_HI  = $47
+.const BASIC_ZP_LEN = BASIC_ZP_HI - BASIC_ZP_LO + 1
+
+_basic_zp_save:
+    ldy #BASIC_ZP_LEN - 1
 !loop:
-    lda $20,y
-    sta _fp_zp_buf,y
+    lda BASIC_ZP_LO,y
+    sta _basic_zp_buf,y
     dey
     bpl !loop-
     rts
-_fp_zp_restore:
-    ldy #15
+_basic_zp_restore:
+    ldy #BASIC_ZP_LEN - 1
 !loop:
-    lda _fp_zp_buf,y
-    sta $20,y
+    lda _basic_zp_buf,y
+    sta BASIC_ZP_LO,y
     dey
     bpl !loop-
     rts
-_fp_zp_buf:
-    .fill 16, 0
+_basic_zp_buf:
+    .fill BASIC_ZP_LEN, 0
 
 // -----------------------------------------------------------------------------
 // float_pow — FAC1 = FAC2 ** FAC1 via BASIC FPWRT (which calls EXP/LOG and
@@ -334,9 +369,7 @@ _fp_zp_buf:
 float_pow:
     preamble_args(2, 0)
     jsr _fp_load_left_right
-    jsr _fp_zp_save
     basic_binop(BASIC_FPWRT)
-    jsr _fp_zp_restore
     jsr _fp_alloc_and_pack
     jmp postamble
 
@@ -359,10 +392,8 @@ float_floordiv:
     sta ERROR_CODE
     jmp error_handler
 _ffd_ok:
-    jsr _fp_zp_save
     basic_binop(BASIC_FDIVT)         // FAC1 = a / b
     basic_call(BASIC_INT)            // FAC1 = floor(FAC1)
-    jsr _fp_zp_restore
     jsr _fp_alloc_and_pack
     jmp postamble
 
@@ -384,13 +415,10 @@ float_mod:
     sta ERROR_CODE
     jmp error_handler
 _fmod_ok:
-    jsr _fp_zp_save
     basic_binop(BASIC_FDIVT)         // FAC1 = a / b
     basic_call(BASIC_INT)            // FAC1 = floor(a/b)
 
-    // Reload b → FAC2, then FAC1 *= b. The reload reads from RS, which we
-    // didn't save — RSP/FSP/FP all live in $02-$07 and so far INT/FDIVT
-    // haven't touched them. Same assumption as float_div.
+    // Reload b → FAC2, then FAC1 *= b.
     rs_peek_at(W0, 0)
     jsr deref_W0_to_W2
     jsr _fp_unpack_to_fac2
@@ -402,7 +430,6 @@ _fmod_ok:
     jsr _fp_unpack_to_fac2
     basic_binop(BASIC_FSUBT)         // FAC1 = a - floor(a/b)*b
 
-    jsr _fp_zp_restore
     jsr _fp_alloc_and_pack
     jmp postamble
 
@@ -428,37 +455,43 @@ float_neg:
 // float_random — return a TYPE_FLOAT in [0, 1).
 //
 //   in:  (no args)
-//   out: RV = freshly-allocated TYPE_FLOAT, granularity 1/256.
+//   out: RV = freshly-allocated TYPE_FLOAT, ~31-bit mantissa precision.
 //
-// Samples one byte from rand8 and computes byte / 256. The "÷256" is a single
-// exponent decrement (-8 biased) since the value already lives at the right
-// scale. The 256 distinct values including 0 are enough for game / UI use; a
-// finer 24-bit-mantissa sample would cost 3× rand8 calls and a manual mantissa
-// construction.
+// Build a value in [1.0, 2.0) by stuffing 4 rand8 bytes directly into FAC1
+// (top mantissa byte's bit 7 is the explicit hidden-1; the remaining 31 bits
+// are random), then subtract 1.0 to translate the range to [0.0, 1.0).
+// Mirrors admiral's float__random uniformity. Costs 4× rand8 + one FSUB.
 // -----------------------------------------------------------------------------
 float_random:
     preamble_args(0, 0)
 
-    jsr rand8                       // A = byte 0..255
-    bne _fr_nonzero
+    lda #$81
+    sta FAC1                        // exp = 1 (excess-128) → value in [1.0, 2.0)
 
-    // Zero sample → 0.0. float_alloc returns a 5-zero-byte TYPE_FLOAT.
-    jsr float_alloc
-    jmp postamble
+    jsr rand8
+    and #$7F                         // clear sign bit of mantissa MSB...
+    ora #$80                         // ...and force the hidden-1 bit explicit.
+    sta FAC1+1
+    jsr rand8
+    sta FAC1+2
+    jsr rand8
+    sta FAC1+3
+    jsr rand8
+    sta FAC1+4
 
-_fr_nonzero:
-    // Convert byte (1..255) to FAC1 as a positive 16-bit integer, then
-    // divide by 256 by decrementing the biased exponent by 8.
-    tay                             // Y = byte (low)
-    lda #0                          // A = high (zero-extend to 16-bit)
-    basic_call(BASIC_GIVAYF)        // FAC1 = byte
+    lda #0
+    sta FAC1+5                       // sign byte = positive
 
-    sec
-    lda FAC1
-    sbc #8
-    sta FAC1                        // exp -= 8 → value /= 256
+    jsr _fp_alloc_and_pack           // RV = packed [1.0, 2.0)
 
-    jsr _fp_alloc_and_pack          // RV = packed TYPE_FLOAT
+    // Subtract 1.0: float_sub takes RS [a, b], returns a - b.
+    rs_push(RV)
+    lda #<FLOAT_ONE
+    sta W0
+    lda #>FLOAT_ONE
+    sta W0+1
+    rs_push(W0)
+    jsr float_sub                    // RV = our_random - 1.0 → [0.0, 1.0)
     jmp postamble
 
 // -----------------------------------------------------------------------------
@@ -772,11 +805,7 @@ _f2i_normalize:
 
 _f2i_alloc_zero:
     lda #1
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int
-    jsr deref_RV_to_W2
+    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
     lda #0
     ldy #0
     sta (W2),y

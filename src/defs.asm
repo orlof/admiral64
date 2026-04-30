@@ -276,13 +276,16 @@
 .const DICT_VAL   = 1
 
 // --- Heap region layout (bump allocator) -------------------------------------
-// Heap lives in $8500..$BFFF — the 16KB freed by switching BASIC ROM off,
-// minus the 1.25KB consumed by FS ($8000-$83FF) and RS ($8400-$84FF).
-// Data grows UP from $8500; handles grow DOWN from $C000 (wall below I/O).
+// With MEM_NORMAL ($34) the entire upper RAM is ours: $A000-$BFFF (under
+// BASIC ROM), $C000-$CFFF (always-RAM gap), $D000-$DFFF (under I/O), and
+// $E000-$FFF8 (under KERNAL ROM, minus the IRQ/NMI/RESET vectors at the top).
+// Data grows UP from $8800 (right after FS at $8000-$83FF and RS at
+// $8400-$87FF); handles grow DOWN from $FFF8 — one byte below the NMI vector
+// at $FFFA. Net usable heap: ~30 KB.
 .const HEAP_DATA_START   = $8800   // data heap grows UP from here
-.const HEAP_HANDLE_START = $D000   // handle table grows DOWN from here (just
-                                   // below VIC-II I/O at $D000-$DFFF when
-                                   // KERNAL+I/O are banked in via $01=$36)
+.const HEAP_HANDLE_START = $FFF8   // handle table grows DOWN from here (just
+                                   // below the IRQ/NMI/RESET vectors at
+                                   // $FFFA-$FFFF — RAM with $01=$34)
 
 // --- VIC-II / screen layout (bank 0 default) ---------------------------------
 // Text mode in VIC-II bank 0. See ARCHITECTURE.md for future bank-3 migration.
@@ -290,6 +293,9 @@
 .const COLOR_BASE  = $D800         // color RAM (4-bit per cell, dual-ported)
 .const VIC_BORDER  = $D020         // border color register
 .const VIC_BG      = $D021         // screen background color register
+.const VIC_MEMPTR  = $D018         // screen-mem + char-gen pointers
+                                   // $15 = unshifted (uppercase + graphics)
+                                   // $17 = shifted   (lowercase + uppercase)
 .const SCREEN_COLS = 40
 .const SCREEN_ROWS = 25
 
@@ -300,13 +306,30 @@
 .const COLOR_BG     = $05          // dark (mid) green
 .const COLOR_FG     = $0D          // light green
 
+// --- $01 banking modes -------------------------------------------------------
+// Steady state is MEM_NORMAL ($34) — BASIC + KERNAL + I/O all banked OUT.
+// $D000-$DFFF and $E000-$FFFF are plain RAM, available for the heap.
+// Tight bracketed sections temporarily flip to:
+//   MEM_IO  ($35) — I/O on (VIC, color RAM, CIA1) for screen and keyboard
+//                   matrix access.
+//   MEM_KERNAL ($36) — KERNAL+I/O on for KERNAL_GETIN (kbd_getchar) and
+//                      KERNAL_SCNKEY (irq_handler).
+//   MEM_FP  ($37) — BASIC+KERNAL+I/O on across each BASIC ROM FP JSR.
+//   $34: LORAM=0 HIRAM=0 CHAREN=0 — full RAM at $A000+$D000+$E000
+//   $35: LORAM=1 HIRAM=0 CHAREN=1 — RAM @ $A000+$E000, I/O @ $D000
+//   $36: LORAM=0 HIRAM=1 CHAREN=1 — RAM @ $A000, KERNAL @ $E000, I/O @ $D000
+//   $37: LORAM=1 HIRAM=1 CHAREN=1 — BASIC+KERNAL+I/O all in
+.const MEM_NORMAL = $34
+.const MEM_IO     = $35
+.const MEM_KERNAL = $36
+.const MEM_FP     = $37
+
 // --- KERNAL entry points we use ----------------------------------------------
 .const KERNAL_GETIN = $FFE4        // read one key from buffer; A=0 if empty
+.const KERNAL_SCNKEY = $EA87       // scan keyboard matrix → $0277 ringbuf
 
 // --- BASIC ROM entry points (FP routines) ------------------------------------
-// Steady state is $01=$36 (BASIC ROM banked OUT). float.asm flips to $37 only
-// across each JSR into BASIC space. All addresses verified against the
-// standard C64 BASIC ROM (basic-901226-01).
+// All addresses verified against the standard C64 BASIC ROM (basic-901226-01).
 //
 // Register-form binary-op entries (FADDT/FMULTT/FDIVT) require the caller to
 // preload A = FAC1 exponent ($61) before JSR — they begin with a BNE/BEQ on

@@ -53,16 +53,44 @@ INT_10_OBJ:
     .word 1
     .byte 10
 
-// STR_BANNER — boot banner printed by admiral.asm's boot sequence.
+// STR_BANNER — boot banner line 1, printed by admiral.asm's boot sequence.
+// Mimics the C64's BASIC startup screen (`**** COMMODORE 64 BASIC V2 ****`)
+// with our flavor. 5 leading spaces center the 30-char `**** … ****` block in
+// the 40-column screen.
 STR_BANNER:
     .word STR_BANNER_OBJ
-    .word 2 + 11             // H_SIZE = O_HEADER + payload length
+    .word 2 + 35             // H_SIZE = O_HEADER + payload length
     .word 0
     .byte TYPE_STR
     .byte 0
 STR_BANNER_OBJ:
-    .word 11                 // O_LEN = payload length
-    .text "ADMIRAL C64"
+    .word 35                 // O_LEN = payload length
+    .text "     **** COMMODORE 64 ADMIRAL ****"
+
+// STR_BANNER_2A / STR_BANNER_2B — banner line 2 split around the heap-free
+// integer that boot computes at runtime: prints A, then the int, then B.
+//   " 64K RAM SYSTEM  " <int> " HEAP BYTES FREE"
+// One leading space centers the full 39-char line (with a 5-digit heap-free,
+// e.g. 18432) symmetrically inside 40 columns.
+STR_BANNER_2A:
+    .word STR_BANNER_2A_OBJ
+    .word 2 + 17
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_BANNER_2A_OBJ:
+    .word 17
+    .text " 64K RAM SYSTEM  "
+
+STR_BANNER_2B:
+    .word STR_BANNER_2B_OBJ
+    .word 2 + 16
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_BANNER_2B_OBJ:
+    .word 16
+    .text " HEAP BYTES FREE"
 
 // TRUE / FALSE — bool singletons. Payload byte distinguishes them (so a
 // hypothetical freshly-allocated bool would still byte-compare correctly),
@@ -399,25 +427,29 @@ STR_RCURLY_OBJ:
     .word 1
     .byte $7D                       // "}"
 
+// Container element separators. We render without the trailing space — on a
+// 40-column screen, every spare column matters, and `[1,2,3]` is just as
+// readable as `[1, 2, 3]`. The label names are kept (rather than renaming to
+// STR_COMMA / STR_COLON) so callers in str.asm / dict.asm don't churn.
 STR_COMMA_SPACE:
     .word STR_COMMA_SPACE_OBJ
-    .word 4
+    .word 3
     .word 0
     .byte TYPE_STR
     .byte 0
 STR_COMMA_SPACE_OBJ:
-    .word 2
-    .byte $2C, $20                  // ", "
+    .word 1
+    .byte $2C                       // ","
 
 STR_COLON_SPACE:
     .word STR_COLON_SPACE_OBJ
-    .word 4
+    .word 3
     .word 0
     .byte TYPE_STR
     .byte 0
 STR_COLON_SPACE_OBJ:
-    .word 2
-    .byte $3A, $20                  // ": "
+    .word 1
+    .byte $3A                       // ":"
 
 // Single-quote singleton, used by builtin_repr to wrap TYPE_STR.
 STR_QUOTE:

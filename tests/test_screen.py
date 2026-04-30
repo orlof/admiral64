@@ -184,6 +184,52 @@ def test_scroll_triggers_when_row_exceeds_bottom(h):
     assert h.mpu.memory[SCREEN_COL_ZP] == 0
 
 
+# --- show/hide cursor: bit-7 toggle preserves underlying glyph -----------------
+
+def test_show_cursor_sets_reverse_bit_on_empty_cell(h):
+    """Over a freshly cleared cell ($20 space), show flips bit 7 → $A0
+    (reverse-video space, the classic solid-block cursor)."""
+    h.call("screen_init")
+    h.mpu.memory[SCREEN_ROW_ZP] = 3
+    h.mpu.memory[SCREEN_COL_ZP] = 7
+    h.call("screen_show_cursor")
+    assert h.mpu.memory[_screen_offset(3, 7)] == 0xA0
+
+
+def test_show_cursor_reverses_existing_glyph(h):
+    """Over a typed character, show inverts the glyph rather than replacing
+    it — the underlying letter must remain visible (in reverse video) so the
+    user can still read what's under the cursor while editing mid-line."""
+    h.call("screen_init")
+    h.mpu.memory[_screen_offset(3, 7)] = 0x02   # screen-code 'B'
+    h.mpu.memory[SCREEN_ROW_ZP] = 3
+    h.mpu.memory[SCREEN_COL_ZP] = 7
+    h.call("screen_show_cursor")
+    assert h.mpu.memory[_screen_offset(3, 7)] == 0x82   # 'B' with bit 7
+
+
+def test_hide_cursor_restores_underlying_glyph(h):
+    """show + hide must round-trip back to the original cell — important when
+    the cursor moves over a typed char then off it on the next keystroke."""
+    h.call("screen_init")
+    h.mpu.memory[_screen_offset(3, 7)] = 0x02
+    h.mpu.memory[SCREEN_ROW_ZP] = 3
+    h.mpu.memory[SCREEN_COL_ZP] = 7
+    h.call("screen_show_cursor")
+    h.call("screen_hide_cursor")
+    assert h.mpu.memory[_screen_offset(3, 7)] == 0x02
+
+
+def test_hide_cursor_on_unreversed_cell_is_idempotent(h):
+    """Defensive: hide on a cell that wasn't reversed must leave it alone."""
+    h.call("screen_init")
+    h.mpu.memory[_screen_offset(3, 7)] = 0x05
+    h.mpu.memory[SCREEN_ROW_ZP] = 3
+    h.mpu.memory[SCREEN_COL_ZP] = 7
+    h.call("screen_hide_cursor")
+    assert h.mpu.memory[_screen_offset(3, 7)] == 0x05
+
+
 def test_scroll_preserves_middle_rows(h):
     h.call("screen_init")
     # Put distinct markers in rows 5 and 15.

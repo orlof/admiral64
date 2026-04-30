@@ -59,11 +59,7 @@ _ipd_loop:
 
     // Allocate a 1-byte int and write the digit value to its payload.
     lda #1
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int                // RV = fresh handle
-    jsr deref_RV_to_W2           // W2 = payload base
+    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
     lda B2
     ldy #0
     sta (W2),y
@@ -132,11 +128,7 @@ _iph_have:
     sta B2
 
     lda #1
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int
-    jsr deref_RV_to_W2
+    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
     lda B2
     ldy #0
     sta (W2),y
@@ -183,11 +175,7 @@ _ipb_loop:
     sta B2
 
     lda #1
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int
-    jsr deref_RV_to_W2
+    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
     lda B2
     ldy #0
     sta (W2),y

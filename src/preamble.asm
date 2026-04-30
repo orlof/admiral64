@@ -30,11 +30,18 @@
 #import "defs.asm"
 
 // Convenience macro for call sites. Sets X = handle_count, Y = nonhandle_count,
-// then jumps into `preamble`.
+// then jumps into `preamble`. The three most common signatures — (0,0),
+// (1,0), (2,0) — collapse to a 3-byte `jsr preamble_N_0` against shared
+// entry stubs (defined below); other shapes still expand inline.
 .macro preamble_args(h, n) {
-    ldx #h
-    ldy #n
-    jsr preamble
+    .if (n == 0 && h == 0) { jsr preamble_0_0 }
+    else .if (n == 0 && h == 1) { jsr preamble_1_0 }
+    else .if (n == 0 && h == 2) { jsr preamble_2_0 }
+    else {
+        ldx #h
+        ldy #n
+        jsr preamble
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -113,6 +120,25 @@
     sta dest+1
 !done:
 }
+
+// -----------------------------------------------------------------------------
+// preamble_{0,1,2}_0 — shared entry stubs for the three most common
+// preamble_args signatures. Each loads X=H, Y=0, then falls through to
+// preamble. The chain uses the classic `.byte $2C` (BIT abs) trick so each
+// upper entry skips the LDX of the entries below it without taking a real
+// branch — three entry points in 13 bytes total. The BIT operands resolve
+// to ZP+stack-page reads ($00A2/$01A2/$02A2), which are always safe RAM.
+// -----------------------------------------------------------------------------
+preamble_2_0:
+    ldx #2
+    .byte $2C            // BIT abs — eats `ldx #1` of preamble_1_0
+preamble_1_0:
+    ldx #1
+    .byte $2C            // BIT abs — eats `ldx #0` of preamble_0_0
+preamble_0_0:
+    ldx #0
+    ldy #0
+    jmp preamble
 
 // -----------------------------------------------------------------------------
 // preamble — carve a new frame on FS and save caller state.
@@ -362,3 +388,23 @@ postamble:
 
     pla                       // restore A
     rts
+
+// -----------------------------------------------------------------------------
+// postamble_set_rv_int_b0 — tail helper that allocates a 1-byte TYPE_INT
+// holding the value in B0, points RV at it, and runs postamble. Used by every
+// builtin whose return shape is "wrap a single byte as an INT" (builtin_len,
+// builtin_type, builtin_ord positive case, builtin_int from BOOL, etc.).
+//
+// Caller: stash the byte in B0, then `jmp postamble_set_rv_int_b0`.
+// -----------------------------------------------------------------------------
+postamble_set_rv_int_b0:
+    lda #1
+    sta ALLOC_SIZE
+    lda #0
+    sta ALLOC_SIZE+1
+    jsr alloc_int
+    jsr deref_RV_to_W2
+    lda B0
+    ldy #0
+    sta (W2),y
+    jmp postamble

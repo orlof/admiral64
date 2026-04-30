@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import RV
+from conftest import RV, NEXT_HANDLE_ZP
 from test_int_parse import _read_int
 from test_str import place_str
 
@@ -237,6 +237,63 @@ def test_str_literal(h):
     rv = h.read_word(RV)
     from test_str import read_str
     assert bytes(read_str(h, rv)) == b"hello"
+
+
+# --- str + anything → auto-coerce via str() (Option B, BASIC-style) --------
+# `+` with at least one STR operand falls back to byte concatenation after
+# str()-coercing the non-STR side. This keeps user code short on a 64K box.
+
+def _eval_str(h, source: str) -> bytes:
+    payload = list(source.encode("ascii"))
+    handle = place_str(h, 0x8500, payload)
+    h.rs_push(handle)
+    h.call("parser_eval", max_steps=2_000_000)
+    rv = h.read_word(RV)
+    from test_str import read_str
+    return bytes(read_str(h, rv))
+
+
+def test_str_plus_int(h):
+    assert _eval_str(h, '"x=" + 42') == b"x=42"
+
+
+def test_int_plus_str(h):
+    assert _eval_str(h, '42 + "%"') == b"42%"
+
+
+def test_str_plus_negative_int(h):
+    assert _eval_str(h, '"v" + -7') == b"v-7"
+
+
+def test_str_plus_bool_true(h):
+    assert _eval_str(h, '"f=" + True') == b"f=True"
+
+
+def test_str_plus_bool_false(h):
+    assert _eval_str(h, '"f=" + False') == b"f=False"
+
+
+def test_str_plus_none(h):
+    assert _eval_str(h, '"v=" + None') == b"v=None"
+
+
+def test_str_plus_list(h):
+    """List operand renders via builtin_str: '[1,2,3]'. Brackets and bare-comma
+    separator come from STR_LBRACK / STR_RBRACK / STR_COMMA_SPACE statics."""
+    assert _eval_str(h, '"data: " + [1, 2, 3]') == b"data: [1,2,3]"
+
+
+def test_str_plus_str_unchanged(h):
+    """Pre-existing STR + STR byte concatenation must still work — the
+    auto-coerce path explicitly skips the case where both sides are already
+    STR (no _str_w0 call, no extra alloc)."""
+    assert _eval_str(h, '"abc" + "DEF"') == b"abcDEF"
+
+
+def test_str_plus_chained(h):
+    """Three+ operands. `+` is left-associative, so `"a"+1+"b"` parses as
+    `("a"+1)+"b"` → "a1" + "b" → "a1b"."""
+    assert _eval_str(h, '"a" + 1 + "b"') == b"a1b"
 
 
 # --- boolean: not / and / or ------------------------------------------------
@@ -566,6 +623,31 @@ def test_float_handle_is_typed(hfp):
     assert hfp.mpu.memory[rv + 6] == TYPE_FLOAT  # H_TYPE
 
 
+# --- multi-statement float regression --------------------------------------
+# These used to hang (PC stuck in KERNAL ROM territory) on the pre-admiral
+# parser before assign.asm + eval() landed. Keep them green so any future
+# refactor that touches the assign path can't silently reintroduce the bug.
+
+def test_float_two_assignments_then_add(hfp):
+    assert _eval_float(hfp, "a = 0.5\nb = 0.6\na + b") == pytest.approx(1.1)
+
+
+def test_float_three_assignments_then_chain(hfp):
+    src = "a = 1.5\nb = 2.5\nc = 0.25\na + b + c"
+    assert _eval_float(hfp, src) == pytest.approx(4.25)
+
+
+def test_float_int_mix_through_assignments(hfp):
+    assert _eval_float(hfp, "a = 1\nb = 2.5\na + b") == pytest.approx(3.5)
+
+
+def test_three_rnd_calls_via_assignments(hfp):
+    """Original Phase-4 workaround test, now without the workaround."""
+    src = "a = rnd()\nb = rnd()\nc = rnd()\na + b + c"
+    # Each rnd() consumes 4 rand8 bytes; sum across 3 calls.
+    assert _eval_float(hfp, src) == pytest.approx(0.8532366217, rel=1e-6)
+
+
 # --- bitwise NOT -----------------------------------------------------------
 
 @pytest.mark.parametrize("text,expected", [
@@ -679,6 +761,42 @@ def test_mixed_int_float_arith(hfp, text, expected):
 def test_mixed_compound_expression(hfp):
     """`1 + 2 * 1.5` should follow precedence: 1 + (2*1.5) = 1 + 3.0 = 4.0."""
     assert _eval_float(hfp, "1 + 2 * 1.5") == pytest.approx(4.0)
+
+
+# --- float `**`, `//`, `%` -------------------------------------------------
+# These three go through BASIC's transcendental routines (FPWRT, INT). INT
+# scribbles ZP $07 — which collides with our FP+1 — so they need
+# `_fp_zp_save`/`_fp_zp_restore` to bracket the BASIC call. Without it the
+# V4' frame's saved target_RSP is corrupted and the postamble walks RSP to
+# garbage (caller sees RV=0). Regression test.
+
+@pytest.mark.parametrize("text,expected", [
+    ("5.0 ** 2.0", 25.0),
+    ("5.0 ** 2",   25.0),
+    ("5 ** 2.0",   25.0),
+    ("2.0 ** 3.0", 8.0),
+    ("2.0 ** 0.0", 1.0),
+])
+def test_float_power(hfp, text, expected):
+    assert _eval_float(hfp, text) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("5.0 // 2.0", 2.0),
+    ("5.0 // 2",   2.0),
+    ("7.5 // 2.5", 3.0),
+])
+def test_float_floordiv(hfp, text, expected):
+    assert _eval_float(hfp, text) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("5.0 % 2.0", 1.0),
+    ("5.0 % 2",   1.0),
+    ("7.5 % 2.5", 0.0),
+])
+def test_float_mod(hfp, text, expected):
+    assert _eval_float(hfp, text) == pytest.approx(expected)
 
 
 def test_mixed_in_parens(hfp):
@@ -2616,6 +2734,84 @@ def test_str_find_empty_returns_zero(h):
     assert _eval(h, '"hello".find("")') == 0
 
 
+# --- str.find with optional start / end -------------------------------------
+
+def test_str_find_start_skips_first_match(h):
+    """`find("l", 3)` skips the two l's at indices 2,3 and finds none after."""
+    # "hello".find("l", 3) → index 3 (second 'l')
+    assert _eval(h, '"hello".find("l", 3)') == 3
+
+
+def test_str_find_start_past_first(h):
+    """Start one past the first occurrence finds the second."""
+    assert _eval(h, '"abcabc".find("b", 2)') == 4
+
+
+def test_str_find_start_past_last_returns_neg1(h):
+    assert _eval(h, '"hello".find("o", 5)') == -1
+
+
+def test_str_find_start_zero_equals_no_arg(h):
+    assert _eval(h, '"hello".find("h", 0)') == 0
+
+
+def test_str_find_end_excludes_match(h):
+    """Match starts at index 4 (second 'b'); end=4 excludes it."""
+    assert _eval(h, '"abcabc".find("b", 0, 4)') == 1
+
+
+def test_str_find_end_includes_match(h):
+    assert _eval(h, '"abcabc".find("b", 0, 5)') == 1
+
+
+def test_str_find_end_too_short_for_match(h):
+    """`needle` len 2; end=2 leaves only 'he' which doesn't contain 'lo'."""
+    assert _eval(h, '"hello".find("lo", 0, 2)') == -1
+
+
+def test_str_find_negative_start(h):
+    """Negative start = me_len + start (Python semantics)."""
+    # "hello".find("l", -2) → search "lo" → l is at index 3
+    assert _eval(h, '"hello".find("l", -2)') == 3
+
+
+def test_str_find_negative_end(h):
+    """Negative end clips off the tail."""
+    # "abcabc".find("c", 0, -1) → search "abcab" → c at index 2
+    assert _eval(h, '"abcabc".find("c", 0, -1)') == 2
+
+
+def test_str_find_negative_both(h):
+    # "abcabc".find("a", -4, -1) → search "cab" (indices 2,3,4) → a at 3
+    assert _eval(h, '"abcabc".find("a", -4, -1)') == 3
+
+
+def test_str_find_empty_with_start(h):
+    """Empty needle returns the (clamped) start position."""
+    assert _eval(h, '"hello".find("", 2)') == 2
+
+
+def test_str_find_empty_with_start_past_end(h):
+    """Empty needle, start past length → clamps to length."""
+    assert _eval(h, '"hello".find("", 99)') == 5
+
+
+def test_str_find_start_greater_than_end(h):
+    """start > end → no valid window → -1."""
+    assert _eval(h, '"hello".find("e", 4, 2)') == -1
+
+
+def test_str_find_full_range_explicit(h):
+    """Explicit (0, 99) matches plain 2-arg form."""
+    assert _eval(h, '"hello".find("l", 0, 99)') == 2
+
+
+def test_str_find_membership_still_works(h):
+    """Regression: `x in s` uses str_find_pos with the full-range sentinel."""
+    assert _eval_bool(h, '"ll" in "hello"') is True
+    assert _eval_bool(h, '"xx" in "hello"') is False
+
+
 def test_str_startswith_match(h):
     assert _eval_bool(h, '"hello".startswith("he")') is True
 
@@ -3123,22 +3319,24 @@ def test_repr_none_unchanged(h):
 
 
 def test_str_list_quotes_inner_strings(h):
-    """str([1, 'hi']) → "[1, 'hi']" — inner strings are quoted."""
-    assert _eval_str(h, 'str([1, "hi"])') == b"[1, 'hi']"
+    """str([1, 'hi']) → "[1,'hi']" — inner strings are quoted. Separator is
+    a bare comma (no trailing space) — see STR_COMMA_SPACE in statics.asm."""
+    assert _eval_str(h, 'str([1, "hi"])') == b"[1,'hi']"
 
 
 def test_str_int_in_list_unchanged(h):
-    """str([1, 2]) → "[1, 2]" — int elements unaffected."""
-    assert _eval_str(h, 'str([1, 2])') == b"[1, 2]"
+    """str([1, 2]) → "[1,2]"."""
+    assert _eval_str(h, 'str([1, 2])') == b"[1,2]"
 
 
 def test_str_dict_quotes_string_keys_and_values(h):
-    """str({'a': 'b'}) → "{'a': 'b'}" — both key and value quoted."""
-    assert _eval_str(h, 'str({"a": "b"})') == b"{'a': 'b'}"
+    """str({'a': 'b'}) → "{'a':'b'}" — both key and value quoted, key/value
+    separator is a bare colon."""
+    assert _eval_str(h, 'str({"a": "b"})') == b"{'a':'b'}"
 
 
 def test_str_tuple_quotes_inner(h):
-    assert _eval_str(h, 'str(("x",))') == b"('x',)" or _eval_str(h, 'str(("x", 1))') == b"('x', 1)"
+    assert _eval_str(h, 'str(("x",))') == b"('x',)" or _eval_str(h, 'str(("x", 1))') == b"('x',1)"
 
 
 def test_repr_list_same_as_str(h):
@@ -3265,6 +3463,60 @@ def test_split_empty_sep_panics(h):
     h.call("parser_eval", expect_panic=True, max_steps=2_000_000)
 
 
+# --- str.split() whitespace mode -------------------------------------------
+# Zero-arg split: any run of whitespace ($20 / $0D) acts as a single
+# separator, leading/trailing whitespace is stripped, empty segments are
+# never emitted. Mirrors Python's `str.split()`.
+
+def test_split_ws_basic(h):
+    assert _eval(h, 'len("a b c".split())') == 3
+
+
+def test_split_ws_collapses_runs(h):
+    """Multiple spaces between words count as one separator."""
+    assert _eval(h, 'len("a   b".split())') == 2
+
+
+def test_split_ws_strips_leading(h):
+    assert _eval_str(h, '"   hi".split()[0]') == b"hi"
+
+
+def test_split_ws_strips_trailing(h):
+    assert _eval(h, 'len("hi   ".split())') == 1
+
+
+def test_split_ws_strips_both(h):
+    assert _eval_str(h, '"  one  two  ".split()[1]') == b"two"
+
+
+def test_split_ws_empty_string(h):
+    """Whitespace mode on empty string → empty list (NOT [""])."""
+    assert _eval(h, 'len("".split())') == 0
+
+
+def test_split_ws_only_whitespace(h):
+    """All-whitespace input → empty list."""
+    assert _eval(h, 'len("    ".split())') == 0
+
+
+def test_split_ws_handles_cr(h):
+    """$0D (CR) is also whitespace."""
+    src = 'len("a\\rb".split())'
+    # Use literal CR via chr(13) so the source is parsed correctly.
+    src = 'len(("a" + chr(13) + "b").split())'
+    assert _eval(h, src) == 2
+
+
+def test_split_ws_mixed_separators(h):
+    """Mix of space + CR runs together as one separator."""
+    src = '("a" + chr(13) + "  " + chr(13) + "b").split()'
+    assert _eval(h, f'len({src})') == 2
+
+
+def test_split_ws_segment_values(h):
+    assert _eval_str(h, '"  hello world  ".split()[0]') == b"hello"
+
+
 # --- sort ------------------------------------------------------------------
 
 def test_sort_str(h):
@@ -3360,12 +3612,15 @@ def test_rnd_no_args_returns_float_in_unit_interval(hfp):
 
 
 def test_rnd_no_args_first_value_from_seed_0(hfp):
-    """rand8 with seed 0 → first byte is 184 → rnd() = 184/256 = 0.71875."""
-    assert _eval_float(hfp, 'rnd()') == pytest.approx(184 / 256)
+    """float_random consumes 4 rand8 bytes; with seed 0 the first 4 bytes are
+    (184, 163, 27, 16). The mantissa is built as $B8_A3_1B_10 with bit 31
+    forced (hidden-1 explicit), giving value 1.44247... in [1, 2). Subtract
+    1.0 → ~0.44248."""
+    assert _eval_float(hfp, 'rnd()') == pytest.approx(0.4424775913, rel=1e-7)
 
 
 def test_rnd_no_args_sequence_from_seed_0(hfp):
-    """Three successive rnd() calls match (184, 163, 27) / 256."""
+    """Three successive rnd() calls each pull 4 rand8 bytes."""
     payload = list("rnd() + rnd() + rnd()".encode("ascii"))
     handle = place_str(hfp, 0x8500, payload)
     hfp.rs_push(handle)
@@ -3373,8 +3628,9 @@ def test_rnd_no_args_sequence_from_seed_0(hfp):
     rv = hfp.read_word(RV)
     obj = hfp.read_word(rv)
     payload_bytes = hfp.read_bytes(obj + 2, 5)
-    expected = (184 + 163 + 27) / 256
-    assert msbasic_to_python(payload_bytes) == pytest.approx(expected)
+    assert msbasic_to_python(payload_bytes) == pytest.approx(
+        0.8532366217, rel=1e-6,
+    )
 
 
 def test_rnd_int_end_returns_int_in_range(hfp):
@@ -3406,25 +3662,63 @@ def test_rnd_int_two_args_returns_int_in_range(hfp):
 def test_rnd_float_end_returns_float_in_range(hfp):
     """rnd(end) with FLOAT end scales float_random by end."""
     v = _eval_float(hfp, 'rnd(2.0)')
-    # 184/256 * 2.0 = 1.4375.
-    assert v == pytest.approx(184 / 256 * 2.0)
+    # First float_random ≈ 0.44248; * 2.0 ≈ 0.88496.
+    assert v == pytest.approx(0.8849551826, rel=1e-6)
 
 
 def test_rnd_float_two_args_returns_float_in_range(hfp):
     """rnd(start, end) with both FLOAT scales float_random into [start, end)."""
     v = _eval_float(hfp, 'rnd(10.0, 12.0)')
-    # 10.0 + 184/256 * (12.0 - 10.0) = 10.0 + 1.4375 = 11.4375.
-    assert v == pytest.approx(10.0 + 184 / 256 * 2.0)
+    # 10.0 + first_random * (12.0 - 10.0) ≈ 10.88496.
+    assert v == pytest.approx(10.8849551826, rel=1e-6)
 
 
-def test_rnd_mixed_int_float_panics(hfp):
-    """rnd(INT, FLOAT) — types must match, panics ERR_TYPE."""
+def test_rnd_mixed_int_float_promotes_to_float(hfp):
+    """rnd(INT, FLOAT) — admiral-style auto-promotion to FLOAT.
+
+    With cast_common_number_type the INT side is promoted, so the result is
+    a FLOAT in [start, end). Mirrors admiral's `built_in_rnd_2`.
+    """
+    v = _eval_float(hfp, 'rnd(1, 2.0)')
+    assert 1.0 <= v < 2.0
+
+
+def test_rnd_bool_arg_panics(hfp):
+    """rnd(True) — admiral rejects BOOL with ERR_TYPE; the C64 port matches."""
     from conftest import ERROR_CODE_ZP
-    payload = list('rnd(1, 2.0)'.encode('ascii'))
+    payload = list('rnd(True)'.encode('ascii'))
     handle = place_str(hfp, 0x8500, payload)
     hfp.rs_push(handle)
     hfp.call('parser_eval', expect_panic=True, max_steps=2_000_000)
     assert hfp.mpu.memory[ERROR_CODE_ZP] == 0x05  # ERR_TYPE
+
+
+def test_rnd_bool_second_arg_panics(hfp):
+    """rnd(0, True) also panics — BOOL reject applies to either position."""
+    from conftest import ERROR_CODE_ZP
+    payload = list('rnd(0, True)'.encode('ascii'))
+    handle = place_str(hfp, 0x8500, payload)
+    hfp.rs_push(handle)
+    hfp.call('parser_eval', expect_panic=True, max_steps=2_000_000)
+    assert hfp.mpu.memory[ERROR_CODE_ZP] == 0x05  # ERR_TYPE
+
+
+def test_rnd_int_large_range_in_bounds(hfp):
+    """rnd(0, 1000) returns a value in [0, 1000)."""
+    v = _eval(hfp, 'rnd(0, 1000)')
+    assert 0 <= v < 1000
+
+
+def test_rnd_int_large_range_distribution(hfp):
+    """rnd over a > 256 range produces values spanning beyond 256.
+
+    With seed 0, rand8 yields (184, 163, ...). _brnd_alloc_rand fills the
+    top entropy byte first, so high=184, low=163, producing a random of
+    184*256 + 163 = 47267; 47267 % 1000 = 267. The old single-byte algorithm
+    would have produced 184 % 1000 = 184 — i.e. impossible to ever exceed
+    255 even though the requested range is 1000.
+    """
+    assert _eval(hfp, 'rnd(0, 1000)') == 267
 
 
 def test_rnd_too_many_args_panics(hfp):
@@ -3767,3 +4061,685 @@ def test_for_no_regression_break_continue(h):
         'total'
     )
     assert _eval(h, src) == 4  # 1 + 3
+
+
+# --- mem / globals / locals -----------------------------------------------
+
+def test_globals_returns_dict(h):
+    from conftest import TYPE_DICT
+    h_type, _ = _eval_container_type_and_len(h, "globals()")
+    assert h_type == TYPE_DICT
+
+
+def test_locals_returns_dict(h):
+    from conftest import TYPE_DICT
+    h_type, _ = _eval_container_type_and_len(h, "locals()")
+    assert h_type == TYPE_DICT
+
+
+def test_globals_locals_same_handle_at_top_level(h):
+    """At top level, globals() and locals() return the same scope dict."""
+    assert _eval_bool(h, "id(globals()) == id(locals())") is True
+
+
+def test_globals_contains_top_level_assignment(h):
+    src = 'x = 42\nlen(globals())'
+    assert _eval(h, src) == 1
+
+
+def test_locals_contains_top_level_assignment(h):
+    src = 'y = 99\nlen(locals())'
+    assert _eval(h, src) == 1
+
+
+def test_mem_returns_positive_int(h):
+    assert _eval_bool(h, "mem() > 0") is True
+
+
+def test_mem_decreases_after_alloc(h):
+    """Allocating a list reduces mem()'s reported free heap."""
+    src = (
+        'before = mem()\n'
+        'data = [1, 2, 3, 4, 5]\n'
+        'after = mem()\n'
+        'before > after'
+    )
+    assert _eval_bool(h, src) is True
+
+
+# --- wset / wget / cursor (console builtins) -------------------------------
+
+SCREEN_BASE = 0x0400
+COLOR_BASE = 0xD800
+SCREEN_COLS = 40
+SCREEN_ROW_ZP = 0x33
+SCREEN_COL_ZP = 0x34
+
+
+def _eval_no_result(h, source: str) -> None:
+    """Like _eval, but for builtins that return None."""
+    payload = list(source.encode("ascii"))
+    handle = place_str(h, 0x8500, payload)
+    h.rs_push(handle)
+    h.call("parser_eval", max_steps=2_000_000)
+
+
+def test_wset_writes_screen_code(h):
+    """wset(0, 0, 'A') writes screen code $01 (the C64 code for 'A')."""
+    h.mpu.memory[SCREEN_BASE] = 0x00
+    _eval_no_result(h, 'wset(0, 0, "A")')
+    assert h.mpu.memory[SCREEN_BASE] == 0x01
+
+
+def test_wset_writes_at_correct_offset(h):
+    """wset(5, 3, 'B') targets SCREEN_BASE + 3*40 + 5."""
+    addr = SCREEN_BASE + 3 * SCREEN_COLS + 5
+    h.mpu.memory[addr] = 0x00
+    _eval_no_result(h, 'wset(5, 3, "B")')
+    assert h.mpu.memory[addr] == 0x02
+
+
+def test_wset_translates_lowercase(h):
+    """Lowercase PETSCII 'z' ($7A) → screen code $1A. The $61..$7A range is
+    a special-cased remap (subtract $60) so lowercase ASCII strings render
+    as uppercase glyphs in the unshifted charset — the BASIC look on C64."""
+    h.mpu.memory[SCREEN_BASE] = 0x00
+    _eval_no_result(h, 'wset(0, 0, "z")')
+    assert h.mpu.memory[SCREEN_BASE] == 0x1A
+
+
+def test_wset_writes_color_ram(h):
+    """wset paints COLOR_FG into the matching color cell."""
+    color_addr = COLOR_BASE + 3 * SCREEN_COLS + 5
+    screen_addr = SCREEN_BASE + 3 * SCREEN_COLS + 5
+    h.mpu.memory[color_addr] = 0x00
+    h.mpu.memory[screen_addr] = 0x00
+    _eval_no_result(h, 'wset(5, 3, "X")')
+    # Confirm screen wrote (sanity check).
+    assert h.mpu.memory[screen_addr] == 0x18, "screen RAM should hold $18 (X)"
+    # Now color.
+    assert h.mpu.memory[color_addr] == 0x0D  # COLOR_FG
+
+
+def test_wset_oob_col_no_op(h):
+    """col >= 40 → silent no-op, screen RAM untouched."""
+    h.mpu.memory[SCREEN_BASE] = 0xEE
+    _eval_no_result(h, 'wset(40, 0, "A")')
+    assert h.mpu.memory[SCREEN_BASE] == 0xEE
+
+
+def test_wset_oob_row_no_op(h):
+    """row >= 25 → silent no-op."""
+    addr = SCREEN_BASE + 24 * SCREEN_COLS
+    h.mpu.memory[addr] = 0xEE
+    _eval_no_result(h, 'wset(0, 25, "A")')
+    assert h.mpu.memory[addr] == 0xEE
+
+
+def test_wset_negative_no_op(h):
+    """Negative col → silent no-op (sign bit set ≥ $80 ≥ 40)."""
+    h.mpu.memory[SCREEN_BASE] = 0xEE
+    _eval_no_result(h, 'wset(-1, 0, "A")')
+    assert h.mpu.memory[SCREEN_BASE] == 0xEE
+
+
+def test_wget_returns_petscii_str(h):
+    """wget(5, 3) reads screen code $01 → 1-char STR with PETSCII 'A'."""
+    addr = SCREEN_BASE + 3 * SCREEN_COLS + 5
+    h.mpu.memory[addr] = 0x01
+    payload = list('wget(5, 3)'.encode("ascii"))
+    handle = place_str(h, 0x8500, payload)
+    h.rs_push(handle)
+    h.call("parser_eval", max_steps=2_000_000)
+    rv = h.read_word(RV)
+    obj = h.read_word(rv)
+    o_len = h.read_word(obj)
+    assert o_len == 1
+    assert h.mpu.memory[obj + 2] == 0x41  # PETSCII 'A'
+
+
+def test_wget_passes_through_high_codes(h):
+    """Screen codes >= $20 are returned as-is (no inverse translation)."""
+    addr = SCREEN_BASE + 0
+    h.mpu.memory[addr] = 0x7A
+    payload = list('wget(0, 0)'.encode("ascii"))
+    handle = place_str(h, 0x8500, payload)
+    h.rs_push(handle)
+    h.call("parser_eval", max_steps=2_000_000)
+    rv = h.read_word(RV)
+    obj = h.read_word(rv)
+    assert h.mpu.memory[obj + 2] == 0x7A
+
+
+def test_wset_wget_roundtrip(h):
+    """wset then wget recovers the original PETSCII char."""
+    src = 'wset(7, 4, "Q")\nwget(7, 4)'
+    payload = list(src.encode("ascii"))
+    handle = place_str(h, 0x8500, payload)
+    h.rs_push(handle)
+    h.call("parser_eval", max_steps=2_000_000)
+    rv = h.read_word(RV)
+    obj = h.read_word(rv)
+    o_len = h.read_word(obj)
+    assert o_len == 1
+    assert h.mpu.memory[obj + 2] == ord("Q")
+
+
+def test_cursor_set_updates_zp(h):
+    """cursor(7, 3) writes SCREEN_COL=7, SCREEN_ROW=3."""
+    h.mpu.memory[SCREEN_COL_ZP] = 0
+    h.mpu.memory[SCREEN_ROW_ZP] = 0
+    _eval_no_result(h, 'cursor(7, 3)')
+    assert h.mpu.memory[SCREEN_COL_ZP] == 7
+    assert h.mpu.memory[SCREEN_ROW_ZP] == 3
+
+
+def test_cursor_set_clamps_high(h):
+    """cursor(50, 50) clamps to (39, 24)."""
+    _eval_no_result(h, 'cursor(50, 50)')
+    assert h.mpu.memory[SCREEN_COL_ZP] == 39
+    assert h.mpu.memory[SCREEN_ROW_ZP] == 24
+
+
+def test_cursor_set_clamps_negative(h):
+    """cursor(-1, -1) clamps both to max-bound (negatives wrap to 0xFF, > limit)."""
+    _eval_no_result(h, 'cursor(-1, -1)')
+    assert h.mpu.memory[SCREEN_COL_ZP] == 39
+    assert h.mpu.memory[SCREEN_ROW_ZP] == 24
+
+
+def test_cursor_get_returns_col(h):
+    assert _eval(h, 'cursor(7, 3)\ncursor()[0]') == 7
+
+
+def test_cursor_get_returns_row(h):
+    assert _eval(h, 'cursor(7, 3)\ncursor()[1]') == 3
+
+
+def test_cursor_get_returns_tuple(h):
+    """cursor() result is a 2-tuple."""
+    from conftest import TYPE_TUPLE
+    h_type, o_len = _eval_container_type_and_len(h, 'cursor(2, 1)\ncursor()')
+    assert h_type == TYPE_TUPLE
+    assert o_len == 2
+
+
+def test_cursor_arity_one_panics(h):
+    """cursor(5) — single arg is invalid; panics ERR_ARITY."""
+    from conftest import ERROR_CODE_ZP, ERR_ARITY
+    payload = list('cursor(5)'.encode("ascii"))
+    handle = place_str(h, 0x8500, payload)
+    h.rs_push(handle)
+    with pytest.raises(Exception):
+        h.call("parser_eval", max_steps=2_000_000)
+    assert h.mpu.memory[ERROR_CODE_ZP] == ERR_ARITY
+
+
+# --- scroll ----------------------------------------------------------------
+
+def _fill_screen_row(h, row: int, value: int) -> None:
+    base = SCREEN_BASE + row * SCREEN_COLS
+    for col in range(SCREEN_COLS):
+        h.mpu.memory[base + col] = value
+
+
+def test_scroll_default_one_line(h):
+    """scroll() with no arg moves rows up by 1 (row 1 → row 0)."""
+    _fill_screen_row(h, 0, 0xAA)
+    _fill_screen_row(h, 1, 0xBB)
+    _eval_no_result(h, 'scroll()')
+    assert h.mpu.memory[SCREEN_BASE] == 0xBB
+    # row 24 (last) is blanked.
+    assert h.mpu.memory[SCREEN_BASE + 24 * SCREEN_COLS] == 0x20
+
+
+def test_scroll_two_lines(h):
+    """scroll(2) shifts rows up by 2 (row 2 → row 0)."""
+    _fill_screen_row(h, 0, 0x11)
+    _fill_screen_row(h, 1, 0x22)
+    _fill_screen_row(h, 2, 0x33)
+    _eval_no_result(h, 'scroll(2)')
+    assert h.mpu.memory[SCREEN_BASE] == 0x33
+
+
+def test_scroll_zero_is_noop(h):
+    """scroll(0) leaves the screen alone."""
+    _fill_screen_row(h, 0, 0x77)
+    _eval_no_result(h, 'scroll(0)')
+    assert h.mpu.memory[SCREEN_BASE] == 0x77
+
+
+def test_scroll_full_blanks_screen(h):
+    """scroll(SCREEN_ROWS) (=25) blanks every row."""
+    for row in range(25):
+        _fill_screen_row(h, row, 0x42)
+    _eval_no_result(h, 'scroll(25)')
+    # Every cell should be screen-code space ($20).
+    for i in range(25 * SCREEN_COLS):
+        assert h.mpu.memory[SCREEN_BASE + i] == 0x20, f"cell {i} not blanked"
+
+
+# --- cls -------------------------------------------------------------------
+
+def test_cls_blanks_screen(h):
+    """cls() fills every cell with screen-code space."""
+    for row in range(25):
+        _fill_screen_row(h, row, 0x42)
+    _eval_no_result(h, 'cls()')
+    for i in range(25 * SCREEN_COLS):
+        assert h.mpu.memory[SCREEN_BASE + i] == 0x20, f"cell {i} not blanked"
+
+
+def test_cls_resets_cursor(h):
+    """cls() moves cursor to (0, 0)."""
+    _eval_no_result(h, 'cursor(13, 7)\ncls()')
+    assert _eval(h, 'cursor()[0]') == 0
+    assert _eval(h, 'cursor()[1]') == 0
+
+
+# --- getc / key (KERNAL GETIN-backed builtins) -----------------------------
+
+KERNAL_GETIN = 0xFFE4
+
+
+def _stub_getin_always(h, return_val: int) -> None:
+    """Stub $FFE4 to always return `return_val` in A. Mirrors test_keyboard.
+
+    Also relocates NEXT_HANDLE to $C000 — handles normally start at $FFF8 and
+    grow DOWN through the area where this stub lives ($FFE4..$FFE6). On real
+    hardware a $01=$36 bank flip puts KERNAL ROM there, so the stub bytes
+    come from ROM not heap; in py65 we just bypass the collision by moving
+    handles below the ROM space."""
+    h.write_word(NEXT_HANDLE_ZP, 0xC000)
+    h.mpu.memory[KERNAL_GETIN + 0] = 0xA9      # LDA #imm
+    h.mpu.memory[KERNAL_GETIN + 1] = return_val
+    h.mpu.memory[KERNAL_GETIN + 2] = 0x60      # RTS
+
+
+def _eval_to_str(h, source: str) -> bytes:
+    """Evaluate source, return RV's TYPE_STR payload as bytes."""
+    payload = list(source.encode("ascii"))
+    handle = place_str(h, 0x8500, payload)
+    h.rs_push(handle)
+    h.call("parser_eval", max_steps=2_000_000)
+    rv = h.read_word(RV)
+    obj = h.read_word(rv)
+    o_len = h.read_word(obj)
+    return bytes(h.mpu.memory[obj + 2 + i] for i in range(o_len))
+
+
+def test_getc_returns_petscii_str(h):
+    """getc() returns a 1-char STR with the byte GETIN gave."""
+    _stub_getin_always(h, 0x41)  # 'A'
+    assert _eval_to_str(h, 'getc()') == b'A'
+
+
+def test_getc_returns_petscii_for_lowercase(h):
+    """getc() doesn't translate — passes PETSCII through verbatim."""
+    _stub_getin_always(h, 0x7A)  # 'z'
+    assert _eval_to_str(h, 'getc()') == b'z'
+
+
+def test_key_returns_none_when_buffer_empty(h):
+    """key() returns None when GETIN gives 0."""
+    from conftest import TYPE_NONE
+    _stub_getin_always(h, 0x00)
+    payload = list('key()'.encode("ascii"))
+    handle = place_str(h, 0x8500, payload)
+    h.rs_push(handle)
+    h.call("parser_eval", max_steps=2_000_000)
+    rv = h.read_word(RV)
+    assert h.mpu.memory[rv + 6] == TYPE_NONE  # H_TYPE
+
+
+def test_key_returns_str_when_key_available(h):
+    """key() returns a 1-char STR when GETIN gives non-zero."""
+    _stub_getin_always(h, 0x58)  # 'X'
+    assert _eval_to_str(h, 'key()') == b'X'
+
+
+# --- input -----------------------------------------------------------------
+
+def _stub_getin_queue(h, bytes_in: bytes) -> None:
+    """Stub GETIN to walk through `bytes_in` (one byte per call), looping back
+    to the start once exhausted. Tests that want input(...) to terminate must
+    include a $0D byte in the queue.
+
+    Queue at $C800, cursor at $C7FF. Caps queue at 255 bytes (cpx #imm range).
+
+    Stub at $FFE4 must leave Z set based on the byte (so caller's `beq`
+    after JSR works) — PHA the byte, do cursor bookkeeping, PLA right
+    before RTS so Z reflects the byte value.
+
+    Also relocates NEXT_HANDLE to $C000 — handles normally start at $FFF8 and
+    grow DOWN through both the stub at $FFE4 and the queue at $C800. Move
+    them below the queue so neither gets clobbered.
+    """
+    h.write_word(NEXT_HANDLE_ZP, 0xC000)
+    assert len(bytes_in) <= 255
+    queue_len = len(bytes_in)
+    h.mpu.memory[0xC7FF] = 0
+    for i, b in enumerate(bytes_in):
+        h.mpu.memory[0xC800 + i] = b
+    stub = [
+        0xAE, 0xFF, 0xC7,   # ldx $C7FF
+        0xBD, 0x00, 0xC8,   # lda $C800,x
+        0x48,               # pha
+        0xE8,               # inx
+        0xE0, queue_len,    # cpx #queue_len
+        0xD0, 0x02,         # bne +2
+        0xA2, 0x00,         # ldx #0
+        0x8E, 0xFF, 0xC7,   # stx $C7FF
+        0x68,               # pla — restores byte AND re-sets Z/N from byte
+        0x60,               # rts
+    ]
+    for i, b in enumerate(stub):
+        h.mpu.memory[KERNAL_GETIN + i] = b
+
+
+def test_input_no_prompt_returns_buffer(h):
+    """input() reads chars until $0D, returns them as STR (no newline)."""
+    _stub_getin_queue(h, b'HELLO\r')
+    assert _eval_to_str(h, 'input()') == b'HELLO'
+
+
+def test_input_empty_returns_empty_str(h):
+    """input() with immediate RETURN returns an empty TYPE_STR."""
+    _stub_getin_queue(h, b'\r')
+    assert _eval_to_str(h, 'input()') == b''
+
+
+def test_input_del_removes_last_char(h):
+    """DEL ($14) removes the last buffered char before RETURN."""
+    _stub_getin_queue(h, b'CAB\x14\r')
+    assert _eval_to_str(h, 'input()') == b'CA'
+
+
+def test_input_del_on_empty_is_noop(h):
+    """DEL with empty buffer is ignored, doesn't underflow."""
+    _stub_getin_queue(h, b'\x14\x14X\r')
+    assert _eval_to_str(h, 'input()') == b'X'
+
+
+def test_input_echoes_to_screen(h):
+    """Each accepted char is echoed via screen_put_char."""
+    _stub_getin_queue(h, b'AB\r')
+    h.mpu.memory[SCREEN_BASE] = 0x00
+    h.mpu.memory[SCREEN_BASE + 1] = 0x00
+    h.mpu.memory[SCREEN_COL_ZP] = 0
+    h.mpu.memory[SCREEN_ROW_ZP] = 0
+    _eval_to_str(h, 'input()')
+    # 'A' → screen code $01, 'B' → $02.
+    assert h.mpu.memory[SCREEN_BASE] == 0x01
+    assert h.mpu.memory[SCREEN_BASE + 1] == 0x02
+
+
+def test_input_prompt_printed(h):
+    """input(prompt) prints the prompt before reading."""
+    _stub_getin_queue(h, b'X\r')
+    h.mpu.memory[SCREEN_COL_ZP] = 0
+    h.mpu.memory[SCREEN_ROW_ZP] = 0
+    _eval_to_str(h, 'input(">")')
+    # '>' is screen code $1E (PETSCII $3E, no translation since < $40).
+    assert h.mpu.memory[SCREEN_BASE] == 0x3E
+    # 'X' echoed at column 1.
+    assert h.mpu.memory[SCREEN_BASE + 1] == 0x18
+
+
+def test_input_prompt_wrong_type_panics(h):
+    """input(non-STR) panics ERR_TYPE."""
+    from conftest import ERROR_CODE_ZP, ERR_TYPE
+    payload = list('input(42)'.encode("ascii"))
+    handle = place_str(h, 0x8500, payload)
+    h.rs_push(handle)
+    with pytest.raises(Exception):
+        h.call("parser_eval", max_steps=2_000_000)
+    assert h.mpu.memory[ERROR_CODE_ZP] == ERR_TYPE
+
+
+def test_input_caps_at_80(h):
+    """Buffer caps at 80 chars; further keystrokes (before RETURN) are dropped."""
+    _stub_getin_queue(h, b'A' * 90 + b'\r')
+    payload = list('len(input())'.encode("ascii"))
+    handle = place_str(h, 0x8500, payload)
+    h.rs_push(handle)
+    h.call("parser_eval", max_steps=10_000_000)
+    rv = h.read_word(RV)
+    obj = h.read_word(rv)
+    assert h.mpu.memory[obj + 2] == 80
+
+
+# --- edit() builtin --------------------------------------------------------
+
+F1_SAVE = 0x85
+F3_CANCEL = 0x86
+
+
+def test_edit_no_arg_save_immediate(h):
+    """edit() with F1 immediately → empty STR."""
+    _stub_getin_queue(h, bytes([F1_SAVE]))
+    assert _eval_to_str(h, 'edit()') == b''
+
+
+def test_edit_with_text_save_unchanged(h):
+    """edit("hello") + F1 → 'hello'."""
+    _stub_getin_queue(h, bytes([F1_SAVE]))
+    assert _eval_to_str(h, 'edit("hello")') == b'hello'
+
+
+def test_edit_type_chars_then_save(h):
+    """edit() + 'A' 'B' + F1 → 'ab' (typed uppercase A-Z fold to lowercase
+    so the lexer's keyword table — which is lowercase-only — recognizes
+    `for`/`print`/etc. when an edit() result is exec'd via str-call)."""
+    _stub_getin_queue(h, b'AB' + bytes([F1_SAVE]))
+    assert _eval_to_str(h, 'edit()') == b'ab'
+
+
+def test_edit_bs_removes_last_char(h):
+    """edit() + 'X' + BS + 'Y' + F1 → 'y' (typed letters fold to lowercase)."""
+    _stub_getin_queue(h, b'X\x14Y' + bytes([F1_SAVE]))
+    assert _eval_to_str(h, 'edit()') == b'y'
+
+
+def test_edit_cancel_returns_original(h):
+    """edit('orig') + F3 → 'orig' (cancel returns the input arg)."""
+    _stub_getin_queue(h, bytes([F3_CANCEL]))
+    assert _eval_to_str(h, 'edit("orig")') == b'orig'
+
+
+def test_edit_cancel_no_arg_returns_empty(h):
+    """edit() + F3 → empty STR."""
+    _stub_getin_queue(h, bytes([F3_CANCEL]))
+    assert _eval_to_str(h, 'edit()') == b''
+
+
+def test_edit_wrong_arg_type_panics(h):
+    """edit(123) panics ERR_TYPE."""
+    from conftest import ERROR_CODE_ZP, ERR_TYPE
+    payload = list('edit(123)'.encode("ascii"))
+    handle = place_str(h, 0x8500, payload)
+    h.rs_push(handle)
+    with pytest.raises(Exception):
+        h.call("parser_eval", max_steps=2_000_000)
+    assert h.mpu.memory[ERROR_CODE_ZP] == ERR_TYPE
+
+
+def test_edit_type_into_existing(h):
+    """edit('AB') + cursor-left + 'X' + F1 → 'AxB' — the initial 'AB' is
+    seeded via the arg path (which doesn't fold), but the typed 'X' goes
+    through _bedit_insert and folds to 'x'."""
+    CRSR_LEFT = 0x9D
+    _stub_getin_queue(h, bytes([CRSR_LEFT, ord('X'), F1_SAVE]))
+    assert _eval_to_str(h, 'edit("AB")') == b'AxB'
+
+
+# --- edit() Phase E: kill / yank -------------------------------------------
+
+F5_KILL = 0x87
+F7_YANK = 0x88
+
+
+def test_edit_kill_to_eol(h):
+    """edit('hello') → cursor at end. Move left 5x → at start. F5 kills
+    the whole line, save → ''."""
+    CRSR_LEFT = 0x9D
+    _stub_getin_queue(h, bytes([CRSR_LEFT] * 5 + [F5_KILL, F1_SAVE]))
+    assert _eval_to_str(h, 'edit("hello")') == b''
+
+
+def test_edit_yank_after_kill(h):
+    """edit('hello') + 5 left + F5 + F7 + F1 → 'hello' (killed text yanked
+    back at the same cursor position)."""
+    CRSR_LEFT = 0x9D
+    _stub_getin_queue(h, bytes([CRSR_LEFT] * 5 + [F5_KILL, F7_YANK, F1_SAVE]))
+    assert _eval_to_str(h, 'edit("hello")') == b'hello'
+
+
+def test_edit_yank_at_different_position(h):
+    """edit('AB') + F5 (kill 'AB') + cursor-left + F7 → 'AB' inserted at start.
+    But cursor-left at start is no-op, so still 'AB'."""
+    CRSR_LEFT = 0x9D
+    _stub_getin_queue(h, bytes([F5_KILL, CRSR_LEFT, F7_YANK, F1_SAVE]))
+    assert _eval_to_str(h, 'edit("AB")') == b'AB'
+
+
+def test_edit_yank_with_no_clip_is_noop(h):
+    """edit('X') + F7 (no kill yet) + F1 → 'X'."""
+    _stub_getin_queue(h, bytes([F7_YANK, F1_SAVE]))
+    assert _eval_to_str(h, 'edit("X")') == b'X'
+
+
+# --- parser_exec — REPL-flavored variant that reuses caller's scope ---------
+
+def test_error_handler_recovers_to_repl_loop(h):
+    """A panic during parser_exec must not wedge the system: error_handler
+    restores the snapshot, prints `?ERROR XX`, and jumps to repl_loop. We
+    verify by setting up a fake REPL state, triggering a panic, and asserting
+    PC eventually reaches repl_loop (i.e., the prompt is about to redraw)."""
+    GLOBAL_SCOPE = 0x42
+    ROOT_SCOPE = 0x44
+    h.call("screen_init")
+    h.call("dict_alloc")
+    scope = h.read_word(RV)
+    h.write_word(GLOBAL_SCOPE, scope)
+    h.write_word(ROOT_SCOPE, scope)
+    h.rs_push(scope)
+
+    repl_rec_s = h.sym["repl_rec_s"]
+    repl_rec_rsp = h.sym["repl_rec_rsp"]
+    repl_rec_fsp = h.sym["repl_rec_fsp"]
+    repl_rec_fp = h.sym["repl_rec_fp"]
+    h.mpu.memory[repl_rec_s] = h.mpu.sp
+    h.write_word(repl_rec_rsp, h.read_word(0x04))
+    h.write_word(repl_rec_fsp, h.read_word(0x02))
+    h.write_word(repl_rec_fp,  h.read_word(0x06))
+
+    # `mem` is a builtin, but bare-name lookup raises ERR_LEX because the
+    # scope chain doesn't contain builtins. Drives the panic-and-recover
+    # path the user hits when they type any unbound name.
+    src = place_str(h, 0x8500, list(b"mem"))
+    h.rs_push(src)
+    repl_loop = h.sym["repl_loop"]
+    h.mpu.pc = h.sym["parser_exec"]
+    for _ in range(2_000_000):
+        if h.mpu.pc == repl_loop:
+            break
+        h.mpu.step()
+    else:
+        raise TimeoutError("error_handler did not jmp repl_loop")
+
+    # ERROR_CODE should be cleared by error_handler before reprompt.
+    assert h.mpu.memory[0x27] == 0
+    # The "?ERR" prefix should have been printed somewhere on screen.
+    screen_chunk = bytes(h.mpu.memory[0x0400:0x0500])
+    # Screen-codes for '?ERR': '?'=$3F, 'E'→$05, 'R'→$12.
+    # Look for the sequence anywhere in the row band.
+    needle = bytes([0x3F, 0x05, 0x12, 0x12])
+    assert needle in screen_chunk, "?ERR text not found in screen RAM"
+
+
+def test_parser_exec_prints_int_expression(h):
+    """`print 1+2` writes '3' to screen RAM via parser_exec — the REPL's
+    smoke test, mirroring the exact source bytes repl_loop builds for
+    `PRINT 1+2` typed on the keyboard (after the lowercase fold)."""
+    GLOBAL_SCOPE = 0x42
+    ROOT_SCOPE = 0x44
+    h.call("screen_init")
+    h.call("dict_alloc")
+    scope = h.read_word(RV)
+    h.write_word(GLOBAL_SCOPE, scope)
+    h.write_word(ROOT_SCOPE, scope)
+    h.rs_push(scope)
+
+    src = place_str(h, 0x8500, list(b"print 1+2"))
+    h.rs_push(src)
+    h.call("parser_exec", max_steps=2_000_000)
+
+    # '3' = ASCII $33, screen code $33 (digit range is 1:1 in petscii→screen).
+    assert h.mpu.memory[0x0400] == 0x33, (
+        f"expected '3' at screen base, got ${h.mpu.memory[0x0400]:02X}"
+    )
+
+
+def test_parser_exec_prints_list(h):
+    """`print [1,2,3]` must render via builtin_str — produces the literal
+    `[1, 2, 3]` on screen, NOT a `?` placeholder. Regression: print_value
+    used to emit a hardcoded '?' for any container type."""
+    GLOBAL_SCOPE = 0x42
+    ROOT_SCOPE = 0x44
+    h.call("screen_init")
+    h.call("dict_alloc")
+    scope = h.read_word(RV)
+    h.write_word(GLOBAL_SCOPE, scope)
+    h.write_word(ROOT_SCOPE, scope)
+    h.rs_push(scope)
+
+    src = place_str(h, 0x8500, list(b"print [1,2,3]"))
+    h.rs_push(src)
+    h.call("parser_exec", max_steps=2_000_000)
+
+    # Expect "[1,2,3]" at screen row 0 starting at col 0. Screen-codes:
+    # '[' = $1B, ',' = $2C, '1'..'3' = $31..$33, ']' = $1D.
+    expected = bytes([0x1B, 0x31, 0x2C, 0x32, 0x2C, 0x33, 0x1D])
+    actual = bytes(h.mpu.memory[0x0400 : 0x0400 + len(expected)])
+    assert actual == expected, (
+        f"expected list rendering at screen base, got {actual!r}"
+    )
+
+
+def test_parser_exec_persists_vars_across_calls(h):
+    """parser_exec keeps a caller-supplied scope rooted on RS, so successive
+    calls can see each other's bindings. This is the REPL's reason-to-exist:
+    `x = 5` in turn N must be visible as `x` in turn N+1.
+    """
+    # GLOBAL_SCOPE / ROOT_SCOPE are .const ZP addresses (defs.asm), not labels.
+    GLOBAL_SCOPE = 0x42
+    ROOT_SCOPE = 0x44
+
+    # Caller-side setup (what repl_main does once at boot): allocate a root
+    # scope, push it as a permanent RS root, cache the handle in the two
+    # scope-pointer ZP cells.
+    h.call("dict_alloc")
+    scope = h.read_word(RV)
+    h.write_word(GLOBAL_SCOPE, scope)
+    h.write_word(ROOT_SCOPE, scope)
+    h.rs_push(scope)
+
+    # Turn 1: `x = 7`. Body returns NONE (assignment); side-effect is a new
+    # binding in the persistent scope.
+    src1 = place_str(h, 0x8500, list(b"x = 7"))
+    h.rs_push(src1)
+    h.call("parser_exec", max_steps=2_000_000)
+
+    # Turn 2: `x` (bare-name expression). Should resolve via scope_get and
+    # return 7. parser_exec leaves RV = last statement's value.
+    src2 = place_str(h, 0x8600, list(b"x"))
+    h.rs_push(src2)
+    h.call("parser_exec", max_steps=2_000_000)
+    assert _read_int(h, h.read_word(RV)) == 7
+
+    # Turn 3: `x + 1` — verifies arithmetic still works on the persisted value.
+    src3 = place_str(h, 0x8700, list(b"x + 1"))
+    h.rs_push(src3)
+    h.call("parser_exec", max_steps=2_000_000)
+    assert _read_int(h, h.read_word(RV)) == 8

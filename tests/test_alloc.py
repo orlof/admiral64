@@ -94,8 +94,8 @@ def test_alloc_one_byte_short_panics_oom(h):
 
 
 def test_alloc_gap_overflow_panics_oom(h):
-    # Fresh heap gap is $3B00 (15104). Ask for 20 KB — definite OOM.
-    h.alloc_panics(20_000, TYPE_INT, ERR_OOM)
+    # Fresh heap gap is ~30 KB ($FFF8 - $8800). Ask for 32 KB — definite OOM.
+    h.alloc_panics(32_000, TYPE_INT, ERR_OOM)
 
 
 # --- OOM (need-overflow, 17th-bit carry) → panic ----------------------------

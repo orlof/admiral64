@@ -703,36 +703,11 @@ _amrg_alloc_str:
     jsr alloc                          // RV = new TYPE_STR; O_LEN already = total.
 
 _amrg_do_copy:
-    // dst = RV.H_PTR + O_HEADER, in W2.
-    ldy #H_PTR
-    lda (RV),y
-    sta W2
-    iny
-    lda (RV),y
-    sta W2+1
-    clc
-    lda W2
-    adc #O_HEADER
-    sta W2
-    bcc !+
-    inc W2+1
-!:
+    jsr deref_RV_to_W2                // dst = RV's payload base
 
     // Phase 1: copy B4 bytes from a's payload to W2.
     rs_peek_at(W0, 1)
-    ldy #H_PTR
-    lda (W0),y
-    sta W3
-    iny
-    lda (W0),y
-    sta W3+1
-    clc
-    lda W3
-    adc #O_HEADER
-    sta W3
-    bcc !+
-    inc W3+1
-!:
+    jsr deref_W0_to_W3                // src = a's payload base
     ldy #0
 _amrg_loop_a:
     cpy B4
@@ -753,19 +728,7 @@ _amrg_a_done:
 
     // Phase 2: copy B5 bytes from b's payload.
     rs_peek_at(W0, 0)
-    ldy #H_PTR
-    lda (W0),y
-    sta W3
-    iny
-    lda (W0),y
-    sta W3+1
-    clc
-    lda W3
-    adc #O_HEADER
-    sta W3
-    bcc !+
-    inc W3+1
-!:
+    jsr deref_W0_to_W3                // src = b's payload base
     ldy #0
 _amrg_loop_b:
     cpy B5
@@ -904,42 +867,17 @@ _arep_alloc_str:
     jsr alloc
 
 _arep_do_copy:
-    // dst = RV.H_PTR + O_HEADER (in W2).
-    ldy #H_PTR
-    lda (RV),y
-    sta W2
-    iny
-    lda (RV),y
-    sta W2+1
-    clc
-    lda W2
-    adc #O_HEADER
-    sta W2
-    bcc !+
-    inc W2+1
-!:
+    jsr deref_RV_to_W2                // dst = RV's payload base
 
     // If N == 0, nothing to copy.
     lda B5
     beq _arep_done
 
 _arep_outer:
-    // src = container.H_PTR + O_HEADER (re-read each iter; container doesn't
-    // move during this loop, but cheap to re-read).
+    // src = container's payload (re-read each iter; container doesn't move
+    // during this loop, but cheap to re-read).
     rs_peek_at(W0, 1)
-    ldy #H_PTR
-    lda (W0),y
-    sta W3
-    iny
-    lda (W0),y
-    sta W3+1
-    clc
-    lda W3
-    adc #O_HEADER
-    sta W3
-    bcc !+
-    inc W3+1
-!:
+    jsr deref_W0_to_W3
     ldy #0
 _arep_inner:
     cpy B4

@@ -116,11 +116,7 @@ lexer_next:
     // Phase 0: if cursor is already at EOF, force indent target = 0 and
     // flush the indent stack. The next phase will drain any DEDENTs;
     // when current == target, _ln_match emits TK_EOF.
-    lda LEX_PTR
-    cmp LEX_END
-    bne !not_eof+
-    lda LEX_PTR+1
-    cmp LEX_END+1
+    jsr _lex_at_end
     bne !not_eof+
     lda #0
     sta LEX_INDENT_TARGET
@@ -157,11 +153,7 @@ _ln_match:
     sta LEX_TOKEN_START+1
 
     // EOF check (LEX_PTR == LEX_END).
-    lda LEX_PTR
-    cmp LEX_END
-    bne _ln_dispatch
-    lda LEX_PTR+1
-    cmp LEX_END+1
+    jsr _lex_at_end
     bne _ln_dispatch
     lda #TK_EOF
     sta LEX_TOKEN_KIND
@@ -201,13 +193,8 @@ _lex_dispatch_char:
 // -----------------------------------------------------------------------------
 _lex_skip_spaces:
 !loop:
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go+
-    lda LEX_PTR+1
-    cmp LEX_END+1
+    jsr _lex_at_end
     beq !done+
-!go:
     ldy #0
     lda (LEX_PTR),y
     cmp #' '
@@ -225,6 +212,19 @@ _lex_advance_ptr:
     bne !+
     inc LEX_PTR+1
 !:
+    rts
+
+// -----------------------------------------------------------------------------
+// _lex_at_end — Z=1 iff LEX_PTR == LEX_END (i.e. cursor is past last byte).
+// Clobbers A.
+// -----------------------------------------------------------------------------
+_lex_at_end:
+    lda LEX_PTR
+    cmp LEX_END
+    bne !no+
+    lda LEX_PTR+1
+    cmp LEX_END+1
+!no:
     rts
 
 // -----------------------------------------------------------------------------
@@ -360,11 +360,7 @@ _lh_simple_augass:
     sta LEX_TOKEN_KIND
     jsr _lex_advance_ptr     // consume the operator char
     // EOF? then no augass.
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go+
-    lda LEX_PTR+1
-    cmp LEX_END+1
+    jsr _lex_at_end
     bne !go+
     jmp _lex_finish
 !go:
@@ -415,205 +411,75 @@ _lh_caret:
     jmp _lh_simple_augass
 
 // -----------------------------------------------------------------------------
-// _lh_star — '*', '*=', '**', '**='.
+// _lh_star / _lh_slash / _lh_less / _lh_greater — paired-operator handlers.
+// Each is a 4-way decision tree: bare op (e.g. `*`), op-with-equals (`*=`),
+// doubled (`**`), and doubled-with-equals (`**=`). Bodies are byte-identical
+// modulo five 1-byte parameters per op (the second-char to match + 4 token
+// IDs), so they share a single body and table-driven dispatch.
+//
+// Entry is via a 5-byte thunk that loads the table index into X.
 // -----------------------------------------------------------------------------
 _lh_star:
-    jsr _lex_advance_ptr     // consume '*'
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go+
-    lda LEX_PTR+1
-    cmp LEX_END+1
-    beq !plain+
-!go:
-    ldy #0
-    lda (LEX_PTR),y
-    cmp #'='
-    beq !star_eq+
-    cmp #'*'
-    beq !star_star+
-!plain:
-    lda #TK_STAR
-    sta LEX_TOKEN_KIND
-    jmp _lex_finish
-!star_eq:
-    lda #TK_STAREQ
-    sta LEX_TOKEN_KIND
-    jmp _lex_finish_advance
-!star_star:
-    jsr _lex_advance_ptr     // consume second '*'
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go2+
-    lda LEX_PTR+1
-    cmp LEX_END+1
-    beq !plain_pow+
-!go2:
-    ldy #0
-    lda (LEX_PTR),y
-    cmp #'='
-    bne !plain_pow+
-    lda #TK_POWEREQ
-    sta LEX_TOKEN_KIND
-    jmp _lex_finish_advance
-!plain_pow:
-    lda #TK_POWER
-    sta LEX_TOKEN_KIND
-    jmp _lex_finish
-
-// -----------------------------------------------------------------------------
-// _lh_slash — '/', '/=', '//', '//='.
-// -----------------------------------------------------------------------------
+    ldx #0
+    jmp _lh_paired
 _lh_slash:
-    jsr _lex_advance_ptr     // consume '/'
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go+
-    lda LEX_PTR+1
-    cmp LEX_END+1
-    beq !plain+
-!go:
-    ldy #0
-    lda (LEX_PTR),y
-    cmp #'='
-    beq !slash_eq+
-    cmp #'/'
-    beq !slash_slash+
-!plain:
-    lda #TK_SLASH
-    sta LEX_TOKEN_KIND
-    jmp _lex_finish
-!slash_eq:
-    lda #TK_SLASHEQ
-    sta LEX_TOKEN_KIND
-    jmp _lex_finish_advance
-!slash_slash:
-    jsr _lex_advance_ptr     // consume second '/'
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go2+
-    lda LEX_PTR+1
-    cmp LEX_END+1
-    beq !plain_dslash+
-!go2:
-    ldy #0
-    lda (LEX_PTR),y
-    cmp #'='
-    bne !plain_dslash+
-    lda #TK_DSLASHEQ
-    sta LEX_TOKEN_KIND
-    jmp _lex_finish_advance
-!plain_dslash:
-    lda #TK_DSLASH
-    sta LEX_TOKEN_KIND
-    jmp _lex_finish
-
-// -----------------------------------------------------------------------------
-// _lh_less — '<', '<=', '<<', '<<='.
-// -----------------------------------------------------------------------------
+    ldx #1
+    jmp _lh_paired
 _lh_less:
-    jsr _lex_advance_ptr     // consume '<'
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go+
-    lda LEX_PTR+1
-    cmp LEX_END+1
-    beq !plain+
-!go:
+    ldx #2
+    jmp _lh_paired
+_lh_greater:
+    ldx #3
+    // fall through
+
+_lh_paired:
+    jsr _lex_advance_ptr         // consume the leading op char
+    jsr _lex_at_end
+    beq _lhp_plain
     ldy #0
     lda (LEX_PTR),y
     cmp #'='
-    beq !lt_eq+
-    cmp #'<'
-    beq !lt_lt+
-!plain:
-    lda #TK_LT
+    beq _lhp_eq
+    cmp _paired_chars,x
+    beq _lhp_dbl
+_lhp_plain:
+    lda _paired_tk_plain,x
     sta LEX_TOKEN_KIND
     jmp _lex_finish
-!lt_eq:
-    lda #TK_LE
+_lhp_eq:
+    lda _paired_tk_eq,x
     sta LEX_TOKEN_KIND
     jmp _lex_finish_advance
-!lt_lt:
-    jsr _lex_advance_ptr     // consume second '<'
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go2+
-    lda LEX_PTR+1
-    cmp LEX_END+1
-    beq !plain_shl+
-!go2:
+_lhp_dbl:
+    jsr _lex_advance_ptr         // consume second op char
+    jsr _lex_at_end
+    beq _lhp_plain_dbl
     ldy #0
     lda (LEX_PTR),y
     cmp #'='
-    bne !plain_shl+
-    lda #TK_LSHIFTEQ
+    bne _lhp_plain_dbl
+    lda _paired_tk_dbleq,x
     sta LEX_TOKEN_KIND
     jmp _lex_finish_advance
-!plain_shl:
-    lda #TK_LSHIFT
+_lhp_plain_dbl:
+    lda _paired_tk_dbl,x
     sta LEX_TOKEN_KIND
     jmp _lex_finish
 
-// -----------------------------------------------------------------------------
-// _lh_greater — '>', '>=', '>>', '>>='.
-// -----------------------------------------------------------------------------
-_lh_greater:
-    jsr _lex_advance_ptr     // consume '>'
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go+
-    lda LEX_PTR+1
-    cmp LEX_END+1
-    beq !plain+
-!go:
-    ldy #0
-    lda (LEX_PTR),y
-    cmp #'='
-    beq !gt_eq+
-    cmp #'>'
-    beq !gt_gt+
-!plain:
-    lda #TK_GT
-    sta LEX_TOKEN_KIND
-    jmp _lex_finish
-!gt_eq:
-    lda #TK_GE
-    sta LEX_TOKEN_KIND
-    jmp _lex_finish_advance
-!gt_gt:
-    jsr _lex_advance_ptr     // consume second '>'
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go2+
-    lda LEX_PTR+1
-    cmp LEX_END+1
-    beq !plain_shr+
-!go2:
-    ldy #0
-    lda (LEX_PTR),y
-    cmp #'='
-    bne !plain_shr+
-    lda #TK_RSHIFTEQ
-    sta LEX_TOKEN_KIND
-    jmp _lex_finish_advance
-!plain_shr:
-    lda #TK_RSHIFT
-    sta LEX_TOKEN_KIND
-    jmp _lex_finish
+// Per-op parameter tables. Index x = 0 (*), 1 (/), 2 (<), 3 (>).
+_paired_chars:    .byte '*',         '/',          '<',         '>'
+_paired_tk_plain: .byte TK_STAR,     TK_SLASH,     TK_LT,       TK_GT
+_paired_tk_eq:    .byte TK_STAREQ,   TK_SLASHEQ,   TK_LE,       TK_GE
+_paired_tk_dbl:   .byte TK_POWER,    TK_DSLASH,    TK_LSHIFT,   TK_RSHIFT
+_paired_tk_dbleq: .byte TK_POWEREQ,  TK_DSLASHEQ,  TK_LSHIFTEQ, TK_RSHIFTEQ
 
 // -----------------------------------------------------------------------------
 // _lh_equal — '=' or '=='.
 // -----------------------------------------------------------------------------
 _lh_equal:
     jsr _lex_advance_ptr
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go+
-    lda LEX_PTR+1
-    cmp LEX_END+1
+    jsr _lex_at_end
     beq !plain+
-!go:
     ldy #0
     lda (LEX_PTR),y
     cmp #'='
@@ -631,11 +497,7 @@ _lh_equal:
 // -----------------------------------------------------------------------------
 _lh_bang:
     jsr _lex_advance_ptr
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go+
-    lda LEX_PTR+1
-    cmp LEX_END+1
+    jsr _lex_at_end
     bne !go+
     jmp _lh_recover
 !go:
@@ -657,13 +519,8 @@ _lh_bang:
 _lh_comment:
     jsr _lex_advance_ptr     // consume '#'
 !loop:
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go+
-    lda LEX_PTR+1
-    cmp LEX_END+1
+    jsr _lex_at_end
     beq !at_end+
-!go:
     ldy #0
     lda (LEX_PTR),y
     cmp #$0A
@@ -700,13 +557,8 @@ _lh_newline:
     // next byte is LF, drop it. If we'd just consumed LF and the next byte
     // is also LF that's a genuine blank line and we'll re-enter this handler
     // through the loop below.)
-    lda LEX_PTR
-    cmp LEX_END
-    bne !chk+
-    lda LEX_PTR+1
-    cmp LEX_END+1
+    jsr _lex_at_end
     beq !done_consume+
-!chk:
     ldy #0
     lda (LEX_PTR),y
     cmp #$0A
@@ -733,13 +585,8 @@ _ln_scan_indent:
     lda #0
     sta B1
 !count:
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go+
-    lda LEX_PTR+1
-    cmp LEX_END+1
+    jsr _lex_at_end
     beq !at_eof+
-!go:
     ldy #0
     lda (LEX_PTR),y
     cmp #' '
@@ -766,13 +613,8 @@ _ln_scan_indent:
     // Eat the LF/CR (and possibly its CRLF partner).
     jsr _lex_advance_ptr
     // CRLF detection identical to above.
-    lda LEX_PTR
-    cmp LEX_END
-    bne !chk2+
-    lda LEX_PTR+1
-    cmp LEX_END+1
+    jsr _lex_at_end
     beq _ln_scan_indent
-!chk2:
     ldy #0
     lda (LEX_PTR),y
     cmp #$0A
@@ -794,13 +636,8 @@ _ln_scan_indent:
     // Skip comment to LF/CR/EOF; then re-enter scan loop.
     jsr _lex_advance_ptr     // consume '#'
 !cloop:
-    lda LEX_PTR
-    cmp LEX_END
-    bne !cgo+
-    lda LEX_PTR+1
-    cmp LEX_END+1
+    jsr _lex_at_end
     beq !at_eof+
-!cgo:
     ldy #0
     lda (LEX_PTR),y
     cmp #$0A
@@ -849,13 +686,8 @@ _lh_digit:
 _ldig_dec_start:
 _ldig_dec_loop:
     jsr _lex_advance_ptr
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go+
-    lda LEX_PTR+1
-    cmp LEX_END+1
+    jsr _lex_at_end
     beq _ldig_dec_done
-!go:
     ldy #0
     lda (LEX_PTR),y
     cmp #'.'
@@ -880,13 +712,8 @@ _ldig_hex_pfx:
     jsr _lex_advance_ptr     // consume '0'
     jsr _lex_advance_ptr     // consume 'x'/'X'
 _ldig_hex_loop:
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go+
-    lda LEX_PTR+1
-    cmp LEX_END+1
+    jsr _lex_at_end
     beq _ldig_hex_done
-!go:
     ldy #0
     lda (LEX_PTR),y
     cmp #'0'
@@ -914,13 +741,8 @@ _ldig_bin_pfx:
     jsr _lex_advance_ptr     // consume '0'
     jsr _lex_advance_ptr     // consume 'b'/'B'
 _ldig_bin_loop:
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go+
-    lda LEX_PTR+1
-    cmp LEX_END+1
+    jsr _lex_at_end
     beq _ldig_bin_done
-!go:
     ldy #0
     lda (LEX_PTR),y
     cmp #'0'
@@ -962,13 +784,8 @@ _lh_float_from_dot:
 
 _lflt_loop:
     // EOF?
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go+
-    lda LEX_PTR+1
-    cmp LEX_END+1
+    jsr _lex_at_end
     beq _lflt_finish
-!go:
     ldy #0
     lda (LEX_PTR),y
 
@@ -1079,13 +896,8 @@ _lh_string:
     lda LEX_PTR+1
     sta LEX_TOKEN_START+1
 _lstr_loop:
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go+
-    lda LEX_PTR+1
-    cmp LEX_END+1
+    jsr _lex_at_end
     beq _lh_recover_far      // unterminated string
-!go:
     ldy #0
     lda (LEX_PTR),y
     cmp #$0A
@@ -1102,13 +914,8 @@ _lstr_loop:
 _lstr_escape:
     // Validate the escape char (decode is deferred).
     jsr _lex_advance_ptr     // past '\\'
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go+
-    lda LEX_PTR+1
-    cmp LEX_END+1
+    jsr _lex_at_end
     beq _lh_recover_far
-!go:
     ldy #0
     lda (LEX_PTR),y
     cmp #$6E                 // 'n'
@@ -1144,13 +951,8 @@ _lh_recover_far2:
     jmp _lh_recover
 
 _lstr_eat_hex:
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go+
-    lda LEX_PTR+1
-    cmp LEX_END+1
+    jsr _lex_at_end
     beq _lh_recover_far2
-!go:
     ldy #0
     lda (LEX_PTR),y
     cmp #'0'
@@ -1188,13 +990,8 @@ _lstr_close:
 _lh_letter:
 _llet_loop:
     jsr _lex_advance_ptr
-    lda LEX_PTR
-    cmp LEX_END
-    bne !go+
-    lda LEX_PTR+1
-    cmp LEX_END+1
+    jsr _lex_at_end
     beq _llet_done
-!go:
     ldy #0
     lda (LEX_PTR),y
     // Letter / digit / underscore?

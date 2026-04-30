@@ -3,22 +3,22 @@
 // names were inserted with characters in reversed order. Sentinel 0
 // = no child (root is at index 0; root is never anyone's child).
 
-// 48 nodes, 16 payloads
+// 90 nodes, 28 payloads
 
 tst_char:
-    .byte $6E, $65, $64, $72, $69, $6E, $72, $6F, $67, $6E, $61, $72, $70, $79, $74, $6C, $6F, $6F, $62, $65, $6C, $73, $72, $70, $6D, $63, $68, $63, $74, $70, $65, $72, $73, $62, $61, $74, $6E, $61, $6F, $6C, $66, $69, $72, $6F, $73, $78, $65, $68
+    .byte $72, $6C, $64, $63, $74, $65, $67, $72, $69, $6E, $72, $6F, $65, $70, $67, $6E, $61, $72, $79, $74, $6F, $6C, $6F, $72, $63, $73, $6F, $62, $6E, $6D, $65, $6D, $65, $6C, $70, $6D, $63, $74, $68, $63, $70, $6F, $73, $72, $75, $63, $65, $72, $73, $74, $73, $6C, $62, $61, $63, $61, $62, $6F, $6C, $67, $63, $6F, $6C, $65, $61, $6F, $6C, $66, $73, $67, $77, $77, $75, $6E, $69, $64, $65, $69, $72, $6F, $73, $70, $6E, $69, $79, $78, $65, $68, $65, $6B
 tst_lt:
-    .byte 1, 2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 22, 23, 0, 0, 0, 0, 0, 29, 0, 0, 0, 0, 0, 0, 0, 37, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .byte 1, 2, 3, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 21, 0, 0, 0, 0, 0, 0, 0, 29, 0, 0, 0, 0, 0, 0, 0, 0, 38, 0, 0, 41, 0, 0, 0, 0, 0, 0, 0, 0, 50, 0, 52, 0, 0, 55, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 69, 0, 0, 0, 73, 74, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 85, 0, 0, 0, 0, 0
 tst_eq:
-    .byte 19, 8, 3, 7, 0, 6, 0, 0, 9, 10, 11, 0, 13, 14, 0, 16, 17, 18, 0, 20, 0, 33, 26, 24, 25, 0, 27, 0, 32, 30, 31, 0, 0, 34, 0, 36, 41, 38, 39, 40, 0, 0, 43, 44, 0, 46, 47, 0
+    .byte 37, 20, 7, 4, 5, 6, 0, 11, 0, 10, 0, 0, 13, 18, 15, 16, 17, 0, 19, 0, 26, 22, 23, 24, 25, 0, 27, 0, 32, 30, 31, 0, 33, 0, 35, 36, 0, 48, 39, 0, 46, 42, 43, 44, 45, 0, 47, 0, 0, 63, 51, 54, 53, 0, 0, 56, 57, 58, 59, 0, 61, 62, 0, 68, 65, 66, 67, 0, 71, 70, 0, 0, 81, 77, 75, 76, 0, 0, 79, 80, 0, 82, 83, 0, 88, 86, 87, 0, 89, 0
 tst_gt:
-    .byte 21, 15, 0, 0, 5, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 35, 0, 0, 0, 0, 28, 0, 0, 0, 0, 0, 0, 0, 0, 45, 42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    .byte 49, 28, 12, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 34, 0, 0, 0, 0, 0, 0, 0, 0, 0, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 84, 0, 0, 0, 0, 0, 0, 60, 0, 0, 0, 0, 0, 0, 72, 0, 0, 0, 0, 0, 0, 0, 0, 0, 78, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 tst_payload:
-    .byte 0, 0, 0, 0, 11, 0, 16, 6, 0, 0, 0, 2, 0, 0, 7, 0, 0, 0, 3, 0, 1, 0, 0, 0, 0, 12, 0, 5, 0, 0, 0, 14, 10, 0, 4, 0, 0, 0, 0, 0, 9, 8, 0, 0, 15, 0, 0, 13
+    .byte 0, 0, 0, 0, 0, 0, 25, 0, 11, 0, 16, 6, 0, 0, 0, 0, 0, 2, 0, 7, 0, 0, 0, 0, 0, 23, 0, 3, 0, 0, 0, 17, 0, 1, 0, 0, 12, 0, 0, 5, 0, 0, 0, 0, 0, 22, 0, 14, 10, 0, 0, 0, 0, 4, 24, 0, 0, 0, 0, 18, 0, 0, 19, 0, 0, 0, 0, 9, 0, 0, 21, 20, 0, 0, 0, 0, 28, 8, 0, 0, 15, 0, 0, 27, 0, 0, 0, 13, 0, 26
 
 // payload index is 1-based (0 reserved for non-terminals); subtract 1
 // before reading these tables.
 tst_impl_lo:
-    .byte <builtin_len, <builtin_range, <builtin_bool, <builtin_abs, <builtin_chr, <builtin_ord, <builtin_type, <builtin_int, <builtin_float, <builtin_str, <builtin_id, <builtin_cmp, <builtin_hex, <builtin_repr, <builtin_sort, <builtin_rnd
+    .byte <builtin_len, <builtin_range, <builtin_bool, <builtin_abs, <builtin_chr, <builtin_ord, <builtin_type, <builtin_int, <builtin_float, <builtin_str, <builtin_id, <builtin_cmp, <builtin_hex, <builtin_repr, <builtin_sort, <builtin_rnd, <builtin_mem, <builtin_globals, <builtin_locals, <builtin_wset, <builtin_wget, <builtin_cursor, <builtin_scroll, <builtin_cls, <builtin_getc, <builtin_key, <builtin_input, <builtin_edit
 tst_impl_hi:
-    .byte >builtin_len, >builtin_range, >builtin_bool, >builtin_abs, >builtin_chr, >builtin_ord, >builtin_type, >builtin_int, >builtin_float, >builtin_str, >builtin_id, >builtin_cmp, >builtin_hex, >builtin_repr, >builtin_sort, >builtin_rnd
+    .byte >builtin_len, >builtin_range, >builtin_bool, >builtin_abs, >builtin_chr, >builtin_ord, >builtin_type, >builtin_int, >builtin_float, >builtin_str, >builtin_id, >builtin_cmp, >builtin_hex, >builtin_repr, >builtin_sort, >builtin_rnd, >builtin_mem, >builtin_globals, >builtin_locals, >builtin_wset, >builtin_wget, >builtin_cursor, >builtin_scroll, >builtin_cls, >builtin_getc, >builtin_key, >builtin_input, >builtin_edit

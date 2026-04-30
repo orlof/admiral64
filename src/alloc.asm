@@ -266,6 +266,27 @@ alloc_int:
     jmp alloc
 
 // -----------------------------------------------------------------------------
+// alloc_int_a_deref_w2 — combined "size in A → 1-byte ALLOC_SIZE; alloc_int;
+// deref RV → W2" tail helper. Replaces the 12-byte sequence
+//     sta ALLOC_SIZE
+//     lda #0
+//     sta ALLOC_SIZE+1
+//     jsr alloc_int
+//     jsr deref_RV_to_W2
+// at every builtin that allocates a small TYPE_INT and writes its payload via
+// W2 (builtin_ord, type, int-from-bool, hex, etc.).
+//   in:  A = payload size in bytes (1..255)
+//   out: RV = new TYPE_INT handle; W2 = payload pointer; A = length low byte.
+//   clobbers: A, X, Y. Allocates → may GC; W0/W1/W3/B regs preserved by V4'.
+// -----------------------------------------------------------------------------
+alloc_int_a_deref_w2:
+    sta ALLOC_SIZE
+    lda #0
+    sta ALLOC_SIZE+1
+    jsr alloc_int
+    jmp deref_RV_to_W2
+
+// -----------------------------------------------------------------------------
 // heap_carve_payload — bump NEXT_DATA by ALLOC_SIZE + O_HEADER without carving
 // a handle. Used by list growth to acquire a fresh payload area and rewire an
 // existing handle to point at it. The old payload bytes become orphaned and

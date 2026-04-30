@@ -38,23 +38,7 @@ int_bitwise_not:
     jsr deref_W0_to_W2          // W2 = src payload (current)
 
     // W3 = result payload base.
-    lda RV
-    sta W1
-    lda RV+1
-    sta W1+1
-    ldy #H_PTR
-    lda (W1),y
-    sta W3
-    iny
-    lda (W1),y
-    sta W3+1
-    clc
-    lda W3
-    adc #O_HEADER
-    sta W3
-    bcc !+
-    inc W3+1
-!:
+    jsr deref_RV_to_W3
 
     // Step 4: byte-wise invert.
     ldy B0
@@ -137,24 +121,7 @@ _ibw_use_a_len:
     // --- Pass 1: result[i] = (i < len_a) ? a[i] : sign_a. ---
     rs_peek_at(W0, 1)
     jsr deref_W0_to_W2          // W2 = a payload (post-alloc)
-
-    lda RV
-    sta W0
-    lda RV+1
-    sta W0+1
-    ldy #H_PTR
-    lda (W0),y
-    sta W3
-    iny
-    lda (W0),y
-    sta W3+1
-    clc
-    lda W3
-    adc #O_HEADER
-    sta W3
-    bcc !skip_carry+
-    inc W3+1
-!skip_carry:
+    jsr deref_RV_to_W3          // W3 = result payload
 
     ldy #0
 _ibw_p1_loop:
@@ -175,25 +142,7 @@ _ibw_pass2_init:
     // --- Pass 2: result[i] = result[i] OP byte_b. ---
     rs_peek_at(W1, 0)
     jsr deref_W1_to_W3          // W3 = b payload (post-alloc)
-
-    // Re-derive result payload into W2 (W2 was a's payload; we're done with it).
-    lda RV
-    sta W0
-    lda RV+1
-    sta W0+1
-    ldy #H_PTR
-    lda (W0),y
-    sta W2
-    iny
-    lda (W0),y
-    sta W2+1
-    clc
-    lda W2
-    adc #O_HEADER
-    sta W2
-    bcc !skip_carry+
-    inc W2+1
-!skip_carry:
+    jsr deref_RV_to_W2          // W2 = result payload
 
     ldy #0
 _ibw_p2_loop:

@@ -10,10 +10,7 @@ from __future__ import annotations
 from test_screen import SCREEN_BASE
 
 
-def petscii_to_screen_code(b: int) -> int:
-    if 0x40 <= b <= 0x5F:
-        return b - 0x40
-    return b
+from test_print import petscii_to_screen_code  # full PETSCII → screen-code lookup
 
 
 def _expected_screen_codes(text: str) -> list[int]:
@@ -28,37 +25,56 @@ def test_boot_prints_banner(h):
     # step cap, but we can also just run a fixed number of steps and
     # inspect memory.
     boot_addr = h.sym["boot"]
-    boot_hang_addr = h.sym["boot_hang"]
+    stop_addr = h.sym["repl_main"]      # boot now jumps into the REPL
 
     # Arm the MPU at boot.
     h.mpu.pc = boot_addr
     # Step until we land at boot_hang's jmp or hit a cap.
     for _ in range(1_000_000):
-        if h.mpu.pc == boot_hang_addr:
+        if h.mpu.pc == stop_addr:
             break
         h.mpu.step()
     else:
-        raise TimeoutError("boot did not reach boot_hang")
+        raise TimeoutError("boot did not reach repl_main")
 
-    expected = _expected_screen_codes("ADMIRAL C64")
+    expected = _expected_screen_codes("     **** COMMODORE 64 ADMIRAL ****")
     actual = [h.mpu.memory[SCREEN_BASE + i] for i in range(len(expected))]
     assert actual == expected, f"banner mismatch\nexpected: {expected}\nactual:   {actual}"
 
-    # Cursor should be at row 1, col 0 (println added newline).
-    assert h.mpu.memory[0x33] == 1, "cursor row after println_str should be 1"
-    assert h.mpu.memory[0x34] == 0, "cursor col after println_str should be 0"
+    # Line 2: "  64K RAM SYSTEM  " <heap-free-int> " HEAP BYTES FREE".
+    # The middle integer's width depends on the heap layout (test harness uses
+    # NEXT_HANDLE=$A000 → 4 digits; production uses $D000 → 5 digits), so we
+    # check the prefix at col 0 and the suffix immediately after a digit run.
+    line2 = bytes(h.mpu.memory[SCREEN_BASE + 40 : SCREEN_BASE + 80])
+    prefix = bytes(_expected_screen_codes(" 64K RAM SYSTEM  "))
+    suffix = bytes(_expected_screen_codes(" HEAP BYTES FREE"))
+    assert line2.startswith(prefix), f"banner line 2 prefix wrong: {line2!r}"
+    # After the prefix, scan past the digit screen-codes ($30..$39).
+    i = len(prefix)
+    digits = 0
+    while i < 40 and 0x30 <= line2[i] <= 0x39:
+        i += 1
+        digits += 1
+    assert digits >= 1, "banner line 2 has no heap-free digits"
+    assert line2[i : i + len(suffix)] == suffix, (
+        f"banner line 2 suffix wrong at col {i}: {line2!r}"
+    )
 
-    # And a static cursor block should now be painted at (1, 0).
-    cursor_addr = SCREEN_BASE + 1 * 40 + 0
+    # After the two-line banner + println, cursor is at row 2, col 0.
+    assert h.mpu.memory[0x33] == 2, "cursor row after banner should be 2"
+    assert h.mpu.memory[0x34] == 0, "cursor col after banner should be 0"
+
+    # Static cursor block painted at (2, 0).
+    cursor_addr = SCREEN_BASE + 2 * 40 + 0
     assert h.mpu.memory[cursor_addr] == 0xA0, "static cursor not painted"
 
 
 def test_boot_sets_border_and_bg_to_green_theme(h):
     boot_addr = h.sym["boot"]
-    boot_hang_addr = h.sym["boot_hang"]
+    stop_addr = h.sym["repl_main"]      # boot now jumps into the REPL
     h.mpu.pc = boot_addr
     for _ in range(1_000_000):
-        if h.mpu.pc == boot_hang_addr:
+        if h.mpu.pc == stop_addr:
             break
         h.mpu.step()
     assert h.mpu.memory[0xD020] == 0x0D, "border should be light green"

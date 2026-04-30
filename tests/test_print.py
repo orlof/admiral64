@@ -17,11 +17,23 @@ from test_str import place_str
 from test_int_add import place_int
 
 
+_PTSC_TABLE = [0x80, 0x00, 0xC0, 0xE0, 0x40, 0xC0, 0x80, 0x80]
+
+
 def petscii_to_screen_code(b: int) -> int:
-    """Apply screen.asm's translation rule: $40-$5F → subtract $40."""
-    if 0x40 <= b <= 0x5F:
-        return b - 0x40
-    return b
+    """Mirror screen.asm's full PETSCII → screen-code lookup. Top 3 bits of
+    the byte index a fixed offset table; result is `(table[b >> 5] + b) & 0xFF`.
+    Special cases:
+      - PETSCII $FF (π) → screen $5E (also π).
+      - PETSCII $61..$7A (lowercase ASCII letters) → screen-codes $01..$1A
+        (A..Z in the unshifted charset), so `print "hello"` displays as
+        `HELLO` rather than as a row of graphics.
+    """
+    if b == 0xFF:
+        return 0x5E
+    if 0x61 <= b <= 0x7A:
+        return b - 0x60
+    return (_PTSC_TABLE[b >> 5] + b) & 0xFF
 
 
 def _screen_codes(text: str) -> list[int]:

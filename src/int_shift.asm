@@ -55,23 +55,7 @@ int_lshift:
     jsr deref_W0_to_W2          // W2 = a payload
 
     // Result payload pointer in W3.
-    lda RV
-    sta W0
-    lda RV+1
-    sta W0+1
-    ldy #H_PTR
-    lda (W0),y
-    sta W3
-    iny
-    lda (W0),y
-    sta W3+1
-    clc
-    lda W3
-    adc #O_HEADER
-    sta W3
-    bcc !skip+
-    inc W3+1
-!skip:
+    jsr deref_RV_to_W3
 
     // Save result-payload base in W0 — we'll advance W3 segment-by-segment
     // so single-Y indexing works, then restore for the bit-shift pass.
@@ -199,11 +183,7 @@ int_rshift:
     cmp B1
     bcc _irs_normal
     lda #1
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int
-    jsr deref_RV_to_W2
+    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
     lda B2
     ldy #0
     sta (W2),y

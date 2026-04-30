@@ -53,22 +53,9 @@
 // =============================================================================
 builtin_len:
     jsr preamble_call_1_1_w0
-    jsr deref_W0_to_W2           // W2 = payload base, A = O_LEN low byte
-    sta B0                       // length (low byte)
-
-    // Allocate a 1-byte int for the length.
-    lda #1
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int                // RV = handle
-
-    jsr deref_RV_to_W2           // W2 = result payload
-    lda B0
-    ldy #0
-    sta (W2),y
-
-    jmp postamble
+    jsr deref_W0_to_W2           // A = O_LEN low byte
+    sta B0
+    jmp postamble_set_rv_int_b0
 
 // =============================================================================
 // builtin_range(n) — list of integers 0..n-1.
@@ -97,11 +84,7 @@ _brange_loop:
 
     // Allocate int(i) — 1 byte payload.
     lda #1
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int                // RV = handle
-    jsr deref_RV_to_W2           // W2 = payload
+    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
     lda B1
     ldy #0
     sta (W2),y
@@ -239,25 +222,12 @@ _bord_have:
     bmi _bord_2byte
 
     // 0..127: 1-byte int (fits as positive).
-    lda #1
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int
-    jsr deref_RV_to_W2
-    lda B0
-    ldy #0
-    sta (W2),y
-    jmp postamble
+    jmp postamble_set_rv_int_b0
 
 _bord_2byte:
     // 128..255: 2-byte int with high byte 0 keeps it positive.
     lda #2
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int
-    jsr deref_RV_to_W2
+    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
     lda B0
     ldy #0
     sta (W2),y
@@ -301,17 +271,7 @@ _bint_from_bool:
     ldy #0
     lda (W2),y
     sta B0
-
-    lda #1
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int
-    jsr deref_RV_to_W2
-    lda B0
-    ldy #0
-    sta (W2),y
-    jmp postamble
+    jmp postamble_set_rv_int_b0
 
 _bint_from_float:
     arg_get(0, W0)
@@ -769,25 +729,22 @@ _brd_close:
 // =============================================================================
 // builtin_rnd([start[, end]]) — random number, mirroring Admiral semantics.
 //
-//   rnd()              → FLOAT in [0, 1)              (delegates to float_random)
-//   rnd(end)           → INT in [0, end)              if end is INT/BOOL
+//   rnd()              → FLOAT in [0, 1)
+//   rnd(end)           → INT in [0, end)              if end is INT
 //                      → FLOAT in [0, end)            if end is FLOAT
-//   rnd(start, end)    → INT in [start, end)          if both INT/BOOL
-//                      → FLOAT in [start, end)        if both FLOAT
+//   rnd(start, end)    → INT or FLOAT in [start, end). Mixed INT+FLOAT auto-
+//                        casts to FLOAT (via cast_common_number_type), like
+//                        Admiral's `built_in_rnd_2`.
 //
-// Mixed INT+FLOAT in the 2-arg form panics ERR_TYPE — the C64 port does not
-// implement Admiral's `cast_common_number_type` (caller can `int(x)` /
-// `float(x)` explicitly).
+// BOOL is rejected with ERR_TYPE in any bounded form (matches Admiral's
+// `ifc c, TYPE_INT + TYPE_FLOAT` check). STR / containers also panic.
 //
-// Entropy: `rand8` provides one PRNG byte per call. INT bounded forms compute
-// `rand8 % range`, so distribution is uniform only for ranges ≤ 256; larger
-// ranges still produce values in the requested half-open interval but with
-// just 256 distinct outcomes. FLOAT forms use `float_random`'s 1/256
-// granularity. Multi-byte LFSR is future work; for game/UI use the current
-// resolution is adequate.
-//
-// W0/W1 hold the arg handles across sub-calls (V4' frames preserve W/B for
-// the body), so we don't need to re-deref the args tuple after each alloc.
+// Distribution: INT path allocates a random integer of `(diff_size + 1)`
+// bytes and computes `rand % diff`, mirroring Admiral's `int_random`. The
+// `+1` byte is held at zero so the random is always non-negative; full
+// `8 * diff_size` entropy bits cover the diff's range with at most ~1/256
+// modulo bias for any payload size. FLOAT path uses 31-bit mantissa
+// entropy via the new `float_random` (4× rand8 + FSUB by 1.0).
 // =============================================================================
 builtin_rnd:
     preamble_call(0, 2)
@@ -804,116 +761,153 @@ _brnd_panic_type:
     jmp error_handler
 
 _brnd_bounded:
-    arg_get(0, W0)                    // W0 = end (1-arg) or start (2-arg)
+    // Validate arg[0] type. INT or FLOAT only — BOOL / STR / etc. panic.
+    arg_get(0, W0)
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_INT
+    beq _brnd_arg0_ok
+    cmp #TYPE_FLOAT
+    beq _brnd_arg0_ok
+    jmp _brnd_panic_type
+_brnd_arg0_ok:
+
+    lda B7
+    cmp #2
+    beq _brnd_two_arg
+
+    // 1-arg path. Re-read arg[0] type to dispatch.
+    arg_get(0, W0)
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_FLOAT
-    bne !try_int+
-    jmp _brnd_float
-!try_int:
-    cmp #TYPE_INT
-    beq _brnd_int
-    cmp #TYPE_BOOL
-    bne _brnd_panic_type
-    // fall through into _brnd_int — BOOL is treated as INT for rnd.
+    beq _brnd_one_float
 
-_brnd_int:
-    lda B7
-    cmp #2
-    beq _brnd_int_two
-
-    // rnd(end) INT path: result = rand_int % end.
-    jsr _brnd_alloc_rand_int          // RV = 2-byte rand INT (0..255 unsigned)
+    // rnd(end) INT: random_of_size(end_payload_len + 1) % end.
+    arg_get(0, W0)
+    jsr deref_W0_to_W2
+    sta B0                            // B0 = end's payload byte length
+    clc
+    lda B0
+    adc #1
+    jsr _brnd_alloc_rand              // RV = rand INT, (B0+1) bytes
     rs_push(RV)                       // RS: [args, rand]
+    arg_get(0, W0)
     rs_push(W0)                       // RS: [args, rand, end]
     jsr int_mod                       // RV = rand % end
     jmp postamble
 
-_brnd_int_two:
-    // rnd(start, end) INT: arg[1] must be INT (BOOL/FLOAT for end → ERR_TYPE).
-    jsr _brnd_arg1_type
-    cmp #TYPE_INT
-    bne _brnd_panic_type
-    // Order matters for int_mod: dividend deeper, divisor on top. Allocate
-    // rand first and root it so it's the deeper element when we mod by diff.
-    jsr _brnd_alloc_rand_int          // RV = rand INT
-    rs_push(RV)                       // RS: [args, rand]
-    rs_push(W1)                       // RS: [args, rand, end]
-    rs_push(W0)                       // RS: [args, rand, end, start]
-    jsr int_sub                       // RV = end - start. RS: [args, rand]
-    rs_push(RV)                       // RS: [args, rand, diff]
-    jsr int_mod                       // RV = rand % diff
-
-    rs_push(W0)                       // RS: [args, start]
-    rs_push(RV)                       // RS: [args, start, rand_mod]
-    jsr int_add                       // RV = start + rand_mod
-    jmp postamble
-
-_brnd_float:
-    lda B7
-    cmp #2
-    beq _brnd_float_two
-
-    // rnd(end) FLOAT path: result = float_random() * end.
+_brnd_one_float:
+    // rnd(end) FLOAT: result = float_random() * end.
     jsr float_random
     rs_push(RV)                       // RS: [args, frnd]
+    arg_get(0, W0)
     rs_push(W0)                       // RS: [args, frnd, end]
     jsr float_mul
     jmp postamble
 
-_brnd_float_two:
-    // rnd(start, end) FLOAT: arg[1] must also be FLOAT (no auto-cast).
-    jsr _brnd_arg1_type
-    cmp #TYPE_FLOAT
-    beq !ok+
-    jmp _brnd_panic_type
-!ok:
-
-    rs_push(W1)                       // RS: [args, end]
-    rs_push(W0)                       // RS: [args, end, start]
-    jsr float_sub                     // RV = end - start
-    rs_push(RV)                       // RS: [args, diff]
-    jsr float_random
-    rs_push(RV)                       // RS: [args, diff, frnd]
-    jsr float_mul                     // RV = diff * frnd
-    rs_push(W0)
-    rs_push(RV)                       // RS: [args, start, scaled]
-    jsr float_add                     // RV = start + diff*frnd
-    jmp postamble
-
-// Leaf helper: load arg[1] handle into W1 and return its H_TYPE byte in A.
-// Used by both 2-arg paths to share the deref + type-fetch sequence.
-//   in:  W3 = args tuple payload pointer (must be fresh — set by preamble_call,
-//        and no allocation has happened since).
-//   out: W1 = arg[1] handle. A = H_TYPE byte.
-//   clobbers: A, Y, W1.
-_brnd_arg1_type:
+_brnd_two_arg:
+    // Validate arg[1] type.
     arg_get(1, W1)
     ldy #H_TYPE
     lda (W1),y
-    rts
+    cmp #TYPE_INT
+    beq _brnd_arg1_ok
+    cmp #TYPE_FLOAT
+    beq _brnd_arg1_ok
+    jmp _brnd_panic_type
+_brnd_arg1_ok:
 
-// Leaf helper: build a fresh 2-byte TYPE_INT holding the next `rand8` byte
-// in the low byte and 0 in the high byte. Two bytes (rather than one) keeps
-// values 128..255 from sign-extending to negative INTs — int_mod with a
-// negative dividend would push the result outside [0, end).
-//
-// Clobbers: A, X, Y, B0, W2. Preserves W0/W1/B7 (alloc_int is V4').
-_brnd_alloc_rand_int:
-    jsr rand8
+    // Push start, end onto RS and let cast_common_number_type promote.
+    arg_get(0, W0)
+    arg_get(1, W1)
+    rs_push(W0)                       // RS: [args, start]
+    rs_push(W1)                       // RS: [args, start, end]
+    jsr cast_common_number_type       // both promoted to common numeric
+
+    // Dispatch on the (now-common) type, peeking at the top.
+    rs_peek(W0)
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_FLOAT
+    beq _brnd_two_float
+
+    // -------- 2-arg INT path --------
+    // RS: [args, start, end]. diff = end - start (int_sub: minuend deeper).
+    rs_peek_at(W0, 1)                 // start
+    rs_peek_at(W1, 0)                 // end
+    rs_push(W1)                       // RS: [args, start, end, end]
+    rs_push(W0)                       // RS: [args, start, end, end, start]
+    jsr int_sub                       // RV = end - start
+    rs_push(RV)                       // RS: [args, start, end, diff]
+
+    // Allocate rand of (diff_size + 1) bytes.
+    rs_peek(W0)                       // diff
+    jsr deref_W0_to_W2
     sta B0
-    lda #2
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int
-    jsr deref_RV_to_W2
-    ldy #0
+    clc
     lda B0
-    sta (W2),y
-    iny
+    adc #1
+    jsr _brnd_alloc_rand              // RV = rand
+    rs_push(RV)                       // RS: [args, start, end, diff, rand]
+
+    // mod_result = rand % diff. int_mod: dividend deeper, divisor top.
+    rs_peek_at(W0, 1)                 // diff
+    rs_push(W0)                       // RS: [.., diff, rand, diff]
+    jsr int_mod                       // RV = rand % diff. RS: [args, start, end, diff]
+
+    // result = start + mod_result.
+    rs_peek_at(W0, 2)                 // start (depth 2 above end, diff)
+    rs_push(W0)                       // RS: [.., diff, start]
+    rs_push(RV)                       // RS: [.., diff, start, mod_result]
+    jsr int_add                       // RV = start + mod_result
+    jmp postamble
+
+_brnd_two_float:
+    // -------- 2-arg FLOAT path --------
+    // RS: [args, start, end]. diff = end - start.
+    rs_peek_at(W0, 1)                 // start
+    rs_peek_at(W1, 0)                 // end
+    rs_push(W1)                       // RS: [args, start, end, end]
+    rs_push(W0)                       // RS: [args, start, end, end, start]
+    jsr float_sub                     // RV = end - start
+    rs_push(RV)                       // RS: [args, start, end, diff]
+
+    // frnd = float_random()
+    jsr float_random
+    rs_push(RV)                       // RS: [args, start, end, diff, frnd]
+
+    // scaled = frnd * diff
+    rs_peek_at(W0, 1)                 // diff
+    rs_push(W0)                       // RS: [.., diff, frnd, diff]
+    jsr float_mul                     // RV = frnd * diff
+
+    // result = start + scaled
+    rs_peek_at(W0, 2)                 // start
+    rs_push(W0)
+    rs_push(RV)
+    jsr float_add                     // RV = start + scaled
+    jmp postamble
+
+// Leaf helper: allocate an INT of A bytes filled with rand8 entropy in
+// bytes 0..A-2, with byte A-1 = 0 (sign byte to ensure non-negative).
+//   in:  A = total byte count (A ≥ 2 expected).
+//   out: RV = new INT handle. Bytes 0..A-2 = rand8(); byte A-1 = 0.
+//   clobbers: A, X, Y, W2. Preserves W0/W1/B0..B7 — alloc_int is V4'.
+_brnd_alloc_rand:
+    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
+
+    ldy ALLOC_SIZE
+    dey
     lda #0
+    sta (W2),y                        // top byte = 0 (sign-extension byte)
+_brnd_fill_loop:
+    dey
+    bmi _brnd_fill_done
+    jsr rand8
     sta (W2),y
+    jmp _brnd_fill_loop
+_brnd_fill_done:
     rts
 
 // =============================================================================
@@ -1154,17 +1148,7 @@ builtin_type:
     ldy #H_TYPE
     lda (W0),y
     sta B0
-
-    lda #1
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int
-    jsr deref_RV_to_W2
-    lda B0
-    ldy #0
-    sta (W2),y
-    jmp postamble
+    jmp postamble_set_rv_int_b0
 
 // =============================================================================
 // builtin_id(x) — return the handle address of x as a non-negative INT.
@@ -1175,11 +1159,7 @@ builtin_id:
     jsr preamble_call_1_1_w0
 
     lda #3
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int
-    jsr deref_RV_to_W2
+    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
     ldy #0
     lda W0
     sta (W2),y
@@ -1189,6 +1169,71 @@ builtin_id:
     iny
     lda #0
     sta (W2),y
+    jmp postamble
+
+// =============================================================================
+// builtin_globals() / builtin_locals() — return a scope dict.
+//   globals() = ROOT_SCOPE (program-level, set once at parser_eval start)
+//   locals()  = GLOBAL_SCOPE (current; differs from ROOT_SCOPE only inside a
+//              string-call lambda where led_lparen swaps to a per-call scope)
+//
+// Mirrors Admiral's `built_in_globals` / `built_in_locals`
+// (builtin.dasm16:260, 251).
+//
+// Body shared via the classic `.byte $2C` BIT-abs trick: globals's `ldx #0`
+// falls into the BIT prefix, which then eats locals's `ldx #$FE` (= -2) as
+// its operand. Both entry points end up at the shared `lda ROOT_SCOPE,x`
+// where the indexed ZP read targets either ROOT_SCOPE ($44) when X=0 or
+// GLOBAL_SCOPE ($42) when X=$FE (lda zp,x wraps within $00-$FF). RV and
+// B0..B6 are preserved across preamble_call, so we stash the result before
+// the call instead of after — saving the dance through B0/B1.
+//
+// The dummy BIT read targets $FEA2 (KERNAL ROM with $01=$36 steady state) —
+// pure read, no side effects. Flags clobber is harmless here.
+// =============================================================================
+builtin_globals:
+    ldx #0
+    .byte $2C                    // BIT abs — eats next 2 bytes
+builtin_locals:
+    ldx #$FE                     // -2: shifts ZP base from ROOT_SCOPE to GLOBAL_SCOPE
+    lda ROOT_SCOPE,x
+    sta RV
+    lda ROOT_SCOPE+1,x
+    sta RV+1
+    preamble_call(0, 0)
+    jmp postamble
+
+// =============================================================================
+// builtin_mem() — full GC cycle, then return the contiguous free heap byte
+// count as INT. Free = NEXT_HANDLE - NEXT_DATA. The gap is bounded by
+// HEAP_HANDLE_START - HEAP_DATA_START (~$4800 < $8000), so it always fits in
+// a non-negative 2-byte signed int; int_normalize strips the high byte if
+// the value happens to be < 256.
+// Mirrors Admiral's `built_in_mem` (builtin.dasm16:232).
+// =============================================================================
+builtin_mem:
+    preamble_call(0, 0)
+    jsr gc_collect
+
+    sec
+    lda NEXT_HANDLE
+    sbc NEXT_DATA
+    sta B0
+    lda NEXT_HANDLE+1
+    sbc NEXT_DATA+1
+    sta B1
+
+    lda #2
+    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
+    lda B0
+    ldy #0
+    sta (W2),y
+    iny
+    lda B1
+    sta (W2),y
+
+    rs_push(RV)
+    jsr int_normalize
     jmp postamble
 
 // =============================================================================
@@ -1203,11 +1248,7 @@ builtin_cmp:
     sta B0
 
     lda #1
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int
-    jsr deref_RV_to_W2
+    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
     lda B0
     ldy #0
     sta (W2),y
@@ -1279,20 +1320,7 @@ _bhex_have_mag:
     rs_peek(W0)
     jsr deref_W0_to_W2                  // W2 = magnitude payload
 
-    // dst = RV.payload base.
-    ldy #H_PTR
-    lda (RV),y
-    sta W3
-    iny
-    lda (RV),y
-    sta W3+1
-    clc
-    lda W3
-    adc #O_HEADER
-    sta W3
-    bcc !+
-    inc W3+1
-!:
+    jsr deref_RV_to_W3                  // dst = RV's payload base
 
     ldy #0
     lda B6
@@ -1348,6 +1376,735 @@ _bhex_emit_digit:
     rts
 
 // =============================================================================
+// builtin_wset(col, row, ch) — direct screen poke at (col, row).
+//   col, row : INTs in [0, SCREEN_COLS) / [0, SCREEN_ROWS).
+//   ch       : 1-char TYPE_STR (PETSCII).
+// PETSCII is translated to a screen code via the same rule as
+// screen_put_char. Color RAM at the same position is set to COLOR_FG.
+// Returns None. Out-of-range / wrong types → return None silently (Admiral
+// `built_in_win_set` parity, builtin.dasm16:831).
+// =============================================================================
+builtin_wset:
+    preamble_call(3, 3)
+
+    arg_get(0, W0)
+    jsr int_to_unsigned_byte_W0
+    bcc _bws_done
+    cmp #SCREEN_COLS
+    bcs _bws_done
+    sta B0                       // B0 = col
+
+    arg_get(1, W0)
+    jsr int_to_unsigned_byte_W0
+    bcc _bws_done
+    cmp #SCREEN_ROWS
+    bcs _bws_done
+    sta B1                       // B1 = row
+
+    arg_get(2, W0)
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_STR
+    bne _bws_done
+    jsr deref_W0_to_W2
+    cmp #1
+    bne _bws_done
+    ldy #0
+    lda (W2),y                   // PETSCII byte
+    jsr petscii_to_screen_code
+    sta B2                       // B2 = screen code
+
+    lda B1
+    jsr scr_row_offset_to_w2_a   // W2 = SCREEN_BASE + row*40
+    ldy B0
+    lda B2
+    sta (W2),y
+
+    // Color cell at COLOR_BASE + row*40 + col (same low byte as W2).
+    lda W2
+    sta W3
+    lda W2+1
+    clc
+    adc #>(COLOR_BASE - SCREEN_BASE)   // $D4 — see screen.asm for parens note
+    sta W3+1
+    lda #COLOR_FG
+    sta (W3),y
+
+_bws_done:
+    jmp postamble_return_none
+
+
+// =============================================================================
+// builtin_wget(col, row) — read screen at (col, row), return 1-char TYPE_STR.
+// Out-of-range → return None.
+//
+// Reverses screen_put_char's translation: screen codes $00..$1F → PETSCII
+// $40..$5F. Anything else passes through unchanged.
+// =============================================================================
+builtin_wget:
+    preamble_call(2, 2)
+
+    arg_get(0, W0)
+    jsr int_to_unsigned_byte_W0
+    bcc _bwg_oob
+    cmp #SCREEN_COLS
+    bcs _bwg_oob
+    sta B0
+
+    arg_get(1, W0)
+    jsr int_to_unsigned_byte_W0
+    bcc _bwg_oob
+    cmp #SCREEN_ROWS
+    bcs _bwg_oob
+    sta B1
+
+    lda B1
+    jsr scr_row_offset_to_w2_a
+    ldy B0
+    lda (W2),y                   // screen code
+    cmp #$20
+    bcs _bwg_no_inv
+    clc
+    adc #$40                     // $00..$1F → $40..$5F PETSCII
+_bwg_no_inv:
+    sta B0                       // PETSCII byte
+    jsr str_alloc_1_b0
+    jmp postamble
+
+_bwg_oob:
+    jmp postamble_return_none
+
+
+// =============================================================================
+// builtin_cursor([col, row]) — get/set cursor.
+//   0 args : returns (col, row) tuple of two 1-byte INTs.
+//   2 args : sets cursor (clamped to screen bounds), returns None.
+//   1 arg  : ERR_ARITY.
+// Mirrors Admiral's `built_in_cursor` (builtin.dasm16:753).
+// =============================================================================
+builtin_cursor:
+    preamble_call(0, 2)
+    lda B7
+    beq _bcur_get
+    cmp #2
+    beq _bcur_set
+    lda #ERR_ARITY
+    sta ERROR_CODE
+    jmp error_handler
+
+_bcur_set:
+    arg_get(0, W0)
+    jsr int_to_unsigned_byte_W0
+    bcc _bcur_clamp_col_max
+    cmp #SCREEN_COLS
+    bcc _bcur_set_col
+_bcur_clamp_col_max:
+    lda #SCREEN_COLS - 1
+_bcur_set_col:
+    sta SCREEN_COL
+
+    arg_get(1, W0)
+    jsr int_to_unsigned_byte_W0
+    bcc _bcur_clamp_row_max
+    cmp #SCREEN_ROWS
+    bcc _bcur_set_row
+_bcur_clamp_row_max:
+    lda #SCREEN_ROWS - 1
+_bcur_set_row:
+    sta SCREEN_ROW
+    jmp postamble_return_none
+
+_bcur_get:
+    lda SCREEN_COL
+    sta B0
+    jsr _bcur_alloc_int_b0
+    rs_push(RV)                  // RS: [args, col]
+
+    lda SCREEN_ROW
+    sta B0
+    jsr _bcur_alloc_int_b0
+    rs_push(RV)                  // RS: [args, col, row]
+
+    lda #2
+    jsr tuple_alloc              // RV = new 2-tuple
+    rs_push(RV)                  // RS: [args, col, row, tuple]
+
+    rs_peek(W0)                  // tuple
+    rs_peek_at(W1, 2)            // col
+    lda #0
+    jsr tuple_set_leaf           // tuple[0] = col
+
+    rs_peek_at(W1, 1)            // row (W0 still tuple — preserved by tuple_set_leaf)
+    lda #1
+    jsr tuple_set_leaf           // tuple[1] = row
+
+    rs_peek(RV)                  // RV = tuple
+    jmp postamble
+
+
+// _bcur_alloc_int_b0 — allocate a 1-byte INT containing B0.
+//   in:  B0 = value (0..255)
+//   out: RV = new TYPE_INT handle.
+//   clobbers: A, X, Y, W2.
+_bcur_alloc_int_b0:
+    lda #1
+    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
+    lda B0
+    ldy #0
+    sta (W2),y
+    rts
+
+
+// =============================================================================
+// builtin_scroll([n]) — scroll the screen up by `n` lines (default 1).
+// `n` is clamped to [0, SCREEN_ROWS]: 0 is a no-op; SCREEN_ROWS or more
+// blanks the entire screen. Other types / bad values pass through as 1.
+// Returns None.
+// =============================================================================
+builtin_scroll:
+    preamble_call(0, 1)
+    ldx #1                       // default n
+    lda B7
+    beq _bsc_have_n
+    arg_get(0, W0)
+    jsr int_to_unsigned_byte_W0
+    bcc _bsc_have_n              // bad arg → keep default
+    cmp #SCREEN_ROWS
+    bcc _bsc_n_in_range
+    lda #SCREEN_ROWS
+_bsc_n_in_range:
+    tax
+_bsc_have_n:
+    cpx #0
+    beq _bsc_done
+_bsc_loop:
+    txa
+    pha                          // save counter — screen_scroll_up clobbers X
+    jsr screen_scroll_up
+    pla
+    tax
+    dex
+    bne _bsc_loop
+_bsc_done:
+    jmp postamble_return_none
+
+
+// =============================================================================
+// builtin_cls() — clear screen, cursor → (0,0). Returns None.
+// =============================================================================
+builtin_cls:
+    preamble_call(0, 0)
+    jsr screen_clear
+    jmp postamble_return_none
+
+
+// =============================================================================
+// builtin_getc() — block until KERNAL GETIN returns a non-zero byte; return
+// it as a 1-char TYPE_STR. Mirrors Admiral's `built_in_getchar`
+// (builtin.dasm16:661).
+// =============================================================================
+builtin_getc:
+    preamble_call(0, 0)
+_bgc_spin:
+    inc $01                            // $34 → $35 → $36 (KERNAL+I/O in)
+    inc $01
+    jsr KERNAL_GETIN
+    pha
+    dec $01
+    dec $01
+    pla
+    beq _bgc_spin
+    sta B0
+    jsr str_alloc_1_b0
+    jmp postamble
+
+
+// =============================================================================
+// builtin_key() — non-blocking GETIN poll. Returns a 1-char TYPE_STR if a
+// key was buffered, else None. Mirrors Admiral's `built_in_key`.
+// =============================================================================
+builtin_key:
+    preamble_call(0, 0)
+    inc $01                            // $34 → $36 (KERNAL+I/O in)
+    inc $01
+    jsr KERNAL_GETIN
+    pha
+    dec $01
+    dec $01
+    pla
+    beq _bky_empty
+    sta B0
+    jsr str_alloc_1_b0
+    jmp postamble
+_bky_empty:
+    jmp postamble_return_none
+
+
+// =============================================================================
+// builtin_input([prompt]) — read a line of PETSCII from the keyboard and
+// return it as a TYPE_STR (without the trailing newline).
+//
+// If `prompt` (a TYPE_STR) is supplied, it is printed first via print_str.
+// The buffer is capped at INPUT_CAP bytes (extra keystrokes are dropped).
+//
+// Editing keys:
+//   $0D (RETURN)  — finish input; echo a newline, return the buffer.
+//   $14 (DEL)     — if buffer is non-empty, drop the last char and erase it
+//                   from the screen (cursor walks back, blank cell painted).
+//   else          — append to the buffer (if room) and echo via screen_put_char.
+//
+// Mirrors Admiral's `built_in_input` (builtin.dasm16:135).
+// =============================================================================
+.const INPUT_CAP = 80
+
+builtin_input:
+    preamble_call(0, 1)
+
+    lda B7
+    beq _bin_alloc_buf
+
+    // Validate prompt is TYPE_STR; print it.
+    arg_get(0, W0)
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_STR
+    beq _bin_print_prompt
+    lda #ERR_TYPE
+    sta ERROR_CODE
+    jmp error_handler
+_bin_print_prompt:
+    arg_get(0, W0)
+    rs_push(W0)
+    jsr print_str
+
+_bin_alloc_buf:
+    // Allocate INPUT_CAP-byte STR. We write actual content as we go and trim
+    // O_LEN at the end. Root the handle on RS so GC during the loop (none
+    // expected, but defense in depth) keeps the payload alive.
+    lda #INPUT_CAP
+    sta ALLOC_SIZE
+    lda #0
+    sta ALLOC_SIZE+1
+    jsr str_alloc
+    rs_push(RV)                    // RS: [..., buf]
+
+    lda #0
+    sta B0                         // B0 = current length
+
+_bin_loop:
+    inc $01                            // $34 → $36 (KERNAL+I/O in)
+    inc $01
+    jsr KERNAL_GETIN
+    pha
+    dec $01
+    dec $01
+    pla
+    beq _bin_loop
+
+    cmp #$0D
+    beq _bin_return
+    cmp #$14
+    beq _bin_del
+
+    // Append (if room).
+    sta B1                         // save char
+    lda B0
+    cmp #INPUT_CAP
+    bcs _bin_loop                  // full — drop the keypress
+
+    rs_peek(W0)
+    jsr deref_W0_to_W2             // W2 = buf payload
+    ldy B0
+    lda B1
+    sta (W2),y
+    inc B0
+
+    lda B1
+    jsr screen_put_char
+    jmp _bin_loop
+
+_bin_del:
+    lda B0
+    beq _bin_loop                  // empty buffer → ignore DEL
+    dec B0
+
+    // Walk cursor back one cell. At col 0, wrap to previous row's last col.
+    // If already at top-left we just stop walking (rare; the user is wiping
+    // out a multi-line entry from the start).
+    lda SCREEN_COL
+    bne _bin_del_dec_col
+    lda SCREEN_ROW
+    beq _bin_del_blank             // at (0,0) — leave cursor; still blank cell
+    dec SCREEN_ROW
+    lda #SCREEN_COLS - 1
+    sta SCREEN_COL
+    jmp _bin_del_blank
+_bin_del_dec_col:
+    dec SCREEN_COL
+_bin_del_blank:
+    jsr scr_row_offset_to_w2
+    ldy SCREEN_COL
+    lda #$20
+    sta (W2),y
+    jmp _bin_loop
+
+_bin_return:
+    // Trim the buffer's O_LEN to the actual length.
+    rs_peek(W0)
+    ldy #H_PTR
+    lda (W0),y
+    sta W2
+    iny
+    lda (W0),y
+    sta W2+1
+    ldy #O_LEN
+    lda B0
+    sta (W2),y
+    iny
+    lda #0
+    sta (W2),y
+
+    // Echo the closing newline so subsequent print starts on a fresh row.
+    lda #$0D
+    jsr screen_put_char
+
+    rs_peek(RV)
+    jmp postamble
+
+
+// =============================================================================
+// builtin_edit([text]) — full-screen gap-buffer text editor.
+//
+//   edit()           → empty STR after the editor session.
+//   edit(text)       → STR with the edited content; buffer pre-loaded with
+//                     `text`.
+//
+// F1 saves and returns the buffer; F3 cancels and returns the original arg
+// (or "" if no arg). Cursor keys / BS / RETURN edit the buffer in place.
+// Mirrors Admiral's `built_in_input → edit_main`.
+//
+// Called via the V4' convention. The main editor buffer (EDIT_BUF_SIZE bytes)
+// is rooted on RS for the lifetime of the call so GC during the post-finish
+// result alloc doesn't reclaim it. No alloc happens inside the main loop —
+// pointers stay stable.
+// =============================================================================
+builtin_edit:
+    preamble_call(0, 1)
+
+    // Allocate the editor buffer.
+    lda #<EDIT_BUF_SIZE
+    sta ALLOC_SIZE
+    lda #>EDIT_BUF_SIZE
+    sta ALLOC_SIZE+1
+    jsr str_alloc
+    rs_push(RV)                       // RS: [args, buf]
+
+    // Init editor state.
+    rs_peek(W0)
+    jsr deref_W0_to_W2                // W2 = buf payload
+    lda W2
+    sta W0
+    lda W2+1
+    sta W0+1
+    lda #<EDIT_BUF_SIZE
+    sta W2
+    lda #>EDIT_BUF_SIZE
+    sta W2+1
+    jsr edit_init
+
+    // If 1 arg given, copy text into buffer via edit_insert_char.
+    lda B7
+    beq _bedit_render_initial
+    arg_get(0, W0)
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_STR
+    beq _bedit_arg_str_ok
+    jmp _bedit_panic_type
+_bedit_arg_str_ok:
+    arg_get(0, W0)
+    jsr deref_W0_to_W2                // W2 = arg payload, A = O_LEN
+    sta B4                             // B4 = length
+    lda W2
+    sta B2
+    lda W2+1
+    sta B3
+    lda #0
+    sta B5                             // B5 = index
+_bedit_copy:
+    lda B5
+    cmp B4
+    bcs _bedit_render_initial
+    lda B2
+    sta W0
+    lda B3
+    sta W0+1
+    ldy B5
+    lda (W0),y
+    jsr edit_insert_char
+    inc B5
+    jmp _bedit_copy
+
+_bedit_render_initial:
+    jsr screen_clear
+    jsr edit_view_focus
+    jsr edit_draw_screen
+    lda edit_scr_x
+    sta SCREEN_COL
+    lda edit_scr_y
+    sta SCREEN_ROW
+
+_bedit_loop:
+    // Show cursor (reverse-video the cell at SCREEN_COL/ROW) before polling.
+    // _bedit_after_key updates SCREEN_COL/ROW so the cursor reappears at the
+    // post-edit position each time round.
+    jsr screen_show_cursor
+
+_bedit_poll:
+    // KERNAL is normally banked OUT ($01 = MEM_NORMAL = $34). Flip it back
+    // in for the GETIN call only, then bank back out so the rest of the
+    // editor body runs in the steady-state config.
+    inc $01                            // $34 → $36 (KERNAL+I/O in)
+    inc $01
+    jsr KERNAL_GETIN
+    pha
+    dec $01
+    dec $01
+    pla
+    bne _bedit_got_key
+    jmp _bedit_poll
+
+_bedit_got_key:
+    // Hide the cursor before any redraw — key handlers that mutate the
+    // buffer call edit_draw_line / edit_draw_screen, which overwrite cells
+    // unconditionally; if the cursor's bit-7 is still set on a cell those
+    // routines don't touch, it would linger as a stale highlight. Hiding
+    // here keeps cell state in sync with the model.
+    pha
+    jsr screen_hide_cursor
+    pla
+
+_bedit_dispatch:
+    // Branch range to handlers is too far for relative beq; trampoline
+    // through near JMPs.
+    cmp #$85                           // F1 → save & exit
+    bne !+
+    jmp _bedit_save
+!:
+    cmp #$86                           // F3 → cancel
+    bne !+
+    jmp _bedit_cancel
+!:
+    // F5 (kill) is the only key that does NOT clear edit_clip_cut, so the
+    // accumulating-cut behavior works. Handle it before the reset.
+    cmp #$87                           // F5 → kill line
+    bne !+
+    jsr edit_key_kill
+    jmp _bedit_after_key
+!:
+    // Any other key resets clip_cut so the next F5 starts a fresh kill.
+    pha
+    lda #0
+    sta edit_clip_cut
+    pla
+    cmp #$88                           // F7 → yank
+    bne !+
+    jsr edit_key_yank
+    jmp _bedit_after_key
+!:
+    cmp #$0D                           // RETURN
+    beq _bedit_newline
+    cmp #$14                           // INST/DEL → backspace
+    beq _bedit_bs
+    cmp #$11                           // CRSR-DOWN
+    beq _bedit_down
+    cmp #$91                           // SHIFT+CRSR-DOWN = up
+    beq _bedit_up
+    cmp #$1D                           // CRSR-RIGHT
+    beq _bedit_right
+    cmp #$9D                           // SHIFT+CRSR-RIGHT = left
+    beq _bedit_left
+    // Printable PETSCII: $20-$7E (ASCII) or $A0-$FE (graphics).
+    cmp #$20
+    bcs _bedit_check_printable
+    jmp _bedit_loop
+_bedit_check_printable:
+    cmp #$7F
+    bcc _bedit_insert
+    cmp #$A0
+    bcs _bedit_check_high_printable
+    jmp _bedit_loop
+_bedit_check_high_printable:
+    cmp #$FF
+    bcc _bedit_insert
+    jmp _bedit_loop
+
+_bedit_insert:
+    // Lowercase-fold ASCII A-Z so the lexer recognizes keywords (its keyword
+    // table is lowercase-only). The REPL's read_line does the same fold;
+    // edit() needs to match so a buffer typed in the editor and exec'd as
+    // a string call (`a = edit()` then `a()`) parses identically to a line
+    // typed at the prompt.
+    cmp #$41                           // 'A'
+    bcc _bedit_insert_do
+    cmp #$5B                           // 'Z'+1
+    bcs _bedit_insert_do
+    clc
+    adc #$20                           // A-Z → a-z
+_bedit_insert_do:
+    jsr edit_insert_char
+    jmp _bedit_after_key
+_bedit_newline:
+    jsr edit_key_newline
+    jmp _bedit_after_key
+_bedit_bs:
+    jsr edit_key_bs
+    jmp _bedit_after_key
+_bedit_left:
+    jsr edit_key_left
+    jmp _bedit_after_key
+_bedit_right:
+    jsr edit_key_right
+    jmp _bedit_after_key
+_bedit_up:
+    jsr edit_key_up
+    jmp _bedit_after_key
+_bedit_down:
+    jsr edit_key_down
+    jmp _bedit_after_key
+
+_bedit_after_key:
+    jsr edit_view_focus
+    lda edit_dirty
+    and #$02
+    beq _bedit_check_line_dirty
+    jsr edit_draw_screen
+    jmp _bedit_update_cursor
+_bedit_check_line_dirty:
+    lda edit_dirty
+    and #$01
+    beq _bedit_update_cursor
+    jsr edit_draw_current_line
+_bedit_update_cursor:
+    lda edit_scr_x
+    sta SCREEN_COL
+    lda edit_scr_y
+    sta SCREEN_ROW
+    jmp _bedit_loop
+
+_bedit_save:
+    jsr screen_clear
+    // logical_size = (gap_start - buf_start) + (buf_end - gap_end)
+    sec
+    lda edit_gap_start
+    sbc edit_buf_start
+    sta B0
+    lda edit_gap_start+1
+    sbc edit_buf_start+1
+    sta B1
+    sec
+    lda edit_buf_end
+    sbc edit_gap_end
+    sta B2
+    lda edit_buf_end+1
+    sbc edit_gap_end+1
+    sta B3
+    clc
+    lda B0
+    adc B2
+    sta ALLOC_SIZE
+    lda B1
+    adc B3
+    sta ALLOC_SIZE+1
+    jsr str_alloc                      // RV = result handle
+    rs_push(RV)                        // RS: [args, buf, result]
+
+    // Copy logical content into result. RS-rooted source pointers (gap
+    // pointers) survive — and the buffer alloc happened before the loop
+    // (no further allocations from here), so static pointers are stable.
+    rs_peek(W0)
+    jsr deref_W0_to_W2                 // W2 = result payload
+    lda W2
+    sta W3
+    lda W2+1
+    sta W3+1
+
+    // pre-gap [buf_start..gap_start)
+    lda edit_buf_start
+    sta W0
+    lda edit_buf_start+1
+    sta W0+1
+_bedit_save_pre:
+    lda W0
+    cmp edit_gap_start
+    bne _bedit_save_pre_step
+    lda W0+1
+    cmp edit_gap_start+1
+    beq _bedit_save_post
+_bedit_save_pre_step:
+    ldy #0
+    lda (W0),y
+    sta (W3),y
+    inc W0
+    bne !+
+    inc W0+1
+!:
+    inc W3
+    bne !+
+    inc W3+1
+!:
+    jmp _bedit_save_pre
+
+_bedit_save_post:
+    lda edit_gap_end
+    sta W0
+    lda edit_gap_end+1
+    sta W0+1
+_bedit_save_post_loop:
+    lda W0
+    cmp edit_buf_end
+    bne _bedit_save_post_step
+    lda W0+1
+    cmp edit_buf_end+1
+    beq _bedit_finish
+_bedit_save_post_step:
+    ldy #0
+    lda (W0),y
+    sta (W3),y
+    inc W0
+    bne !+
+    inc W0+1
+!:
+    inc W3
+    bne !+
+    inc W3+1
+!:
+    jmp _bedit_save_post_loop
+
+_bedit_finish:
+    rs_peek(RV)                        // RV = result (top of RS)
+    jmp postamble
+
+_bedit_cancel:
+    jsr screen_clear
+    lda B7
+    beq _bedit_cancel_empty
+    arg_get(0, RV)
+    jmp postamble
+_bedit_cancel_empty:
+    lda #0
+    sta ALLOC_SIZE
+    sta ALLOC_SIZE+1
+    jsr str_alloc
+    jmp postamble
+
+_bedit_panic_type:
+    lda #ERR_TYPE
+    sta ERROR_CODE
+    jmp error_handler
+
+
+// =============================================================================
 // Method-style builtins. Receiver is tuple slot 0 — `led_dot` stages
 // METHOD_RECEIVER which `led_lparen` prepends to the args tuple as element 0
 // before calling. For an N-arg method like obj.m(a, b), the args tuple is
@@ -1371,28 +2128,10 @@ builtin_str_upper:
     sta ALLOC_TYPE
     jsr alloc                         // RV = new STR
 
-    // src = me.payload (re-deref post-GC; me is on RS top).
+    // src = me.payload (re-deref post-GC); dst = RV.payload.
     rs_peek(W0)
-    jsr deref_W0_to_W2
-    lda W2
-    sta W3
-    lda W2+1
-    sta W3+1
-
-    // dst = RV.payload.
-    ldy #H_PTR
-    lda (RV),y
-    sta W2
-    iny
-    lda (RV),y
-    sta W2+1
-    clc
-    lda W2
-    adc #O_HEADER
-    sta W2
-    bcc !+
-    inc W2+1
-!:
+    jsr deref_W0_to_W3
+    jsr deref_RV_to_W2
 
     ldy B0
     beq _bsu_done
@@ -1429,26 +2168,10 @@ builtin_str_lower:
     sta ALLOC_TYPE
     jsr alloc
 
+    // src = me.payload; dst = RV.payload.
     rs_peek(W0)
-    jsr deref_W0_to_W2
-    lda W2
-    sta W3
-    lda W2+1
-    sta W3+1
-
-    ldy #H_PTR
-    lda (RV),y
-    sta W2
-    iny
-    lda (RV),y
-    sta W2+1
-    clc
-    lda W2
-    adc #O_HEADER
-    sta W2
-    bcc !+
-    inc W2+1
-!:
+    jsr deref_W0_to_W3
+    jsr deref_RV_to_W2
 
     ldy B0
     beq _bsl_done
@@ -1468,26 +2191,77 @@ _bsl_store:
 _bsl_done:
     jmp postamble
 
-// --- str.find(sub) — return first position or -1 ----------------------------
-//   in:  args = (me, sub)   both TYPE_STR
+// --- str.find(sub[, start[, end]]) — return first position or -1 ----------
+//   in:  args = (me, sub)               full-range search
+//        args = (me, sub, start)         search from `start`
+//        args = (me, sub, start, end)    search in `[start, end)`
+//      All ints are taken as 8-bit signed; negatives are normalized via
+//      `me_len + idx` and then clamped to `[0, me_len]`. Larger-magnitude
+//      negatives clamp to 0.
 //
-// str_find_pos expects RS = [needle (deeper), haystack (top)], so we push
-// sub then me before delegating.
+// str_find_pos expects RS = [needle (deeper), haystack (top)] and reads
+// B5 (start) / B6 (end_excl, $FF=sentinel for "haystack_len") as inputs.
 // =============================================================================
 builtin_str_find:
-    jsr preamble_call_2_2_w0_w1
+    preamble_call(2, 4)
+
+    // Cache me's length first — needed for negative-index normalization.
+    arg_get(0, W0)
+    jsr deref_W0_to_W2
+    sta B0                            // B0 = me_len
+
+    // Default range: full string.
+    lda #0
+    sta B5                            // start
+    lda #$FF
+    sta B6                            // end (sentinel → haystack_len)
+
+    lda B7
+    cmp #3
+    bcc _bfind_args_done
+
+    // Read start (arg index 2) — low byte of int payload, signed.
+    arg_get(2, W0)
+    jsr deref_W0_to_W2
+    ldy #0
+    lda (W2),y
+    bpl _bfind_start_set
+    clc
+    adc B0
+    bpl _bfind_start_set              // raw + len ≥ 0 → use that
+    lda #0                            // far-negative → 0
+_bfind_start_set:
+    sta B5
+
+    lda B7
+    cmp #4
+    bcc _bfind_args_done
+
+    // Read end (arg index 3) — same sign-handling.
+    arg_get(3, W0)
+    jsr deref_W0_to_W2
+    ldy #0
+    lda (W2),y
+    bpl _bfind_end_set
+    clc
+    adc B0
+    bpl _bfind_end_set
+    lda #0
+_bfind_end_set:
+    sta B6
+
+_bfind_args_done:
+    // Push needle, haystack on RS for str_find_pos.
+    arg_get(0, W0)
+    arg_get(1, W1)
     rs_push(W1)                       // sub deeper
-    rs_push(W0)                       // me top — str_find_pos wants [needle, haystack]
+    rs_push(W0)                       // me top
     jsr str_find_pos                  // A = pos or $FF
     sta B0
 
     // Allocate 2-byte signed INT (so positions ≥ 128 stay positive).
     lda #2
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int
-    jsr deref_RV_to_W2
+    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
 
     ldy #0
     lda B0
@@ -1574,23 +2348,43 @@ _bew_true:
 _bew_false:
     jmp postamble_return_false
 
-// --- str.split(sep) — list of substrings split on sep ----------------------
-//   in:  args = (me, sep)
+// --- str.split(sep=None) — list of substrings -----------------------------
+//   in:  args = (me)         — whitespace mode
+//        args = (me, sep)    — explicit-separator mode
 //   out: RV = TYPE_LIST of TYPE_STR. Args consumed.
 //
-// Sep-required form (no whitespace mode for now). Empty sep → ERR_TYPE.
-// Empty me with any sep → list with one empty string. Consecutive seps
-// produce empty strings (Python `"a,,b".split(",")` → ["a","","b"]).
+// Whitespace mode (no sep): split on runs of $20/$0D, drop empty segments,
+// strip leading/trailing whitespace. `"".split()` → [].
+//
+// Sep mode: empty sep → ERR_TYPE. Empty me → [""]. Consecutive seps produce
+// empty strings (Python `"a,,b".split(",")` → ["a","","b"]).
 // =============================================================================
 builtin_str_split:
-    preamble_call(2, 2)
+    preamble_call(1, 2)
 
-    // Push me, sep as RS roots so the rest of the body can read them via
-    // constant depth offsets (depth 2 = me, depth 1 = sep) — same scheme as v1.
     arg_get(0, W0)
-    rs_push(W0)
+    rs_push(W0)                       // RS: [tuple, me]
+
+    lda B7
+    cmp #1
+    beq _bsp_ws_setup                  // 1-arg form → whitespace mode
+
+    // Sep mode: push sep too. Rest of body reads me at depth 2, sep at
+    // depth 1, list at depth 0 (after the alloc).
     arg_get(1, W0)
-    rs_push(W0)
+    rs_push(W0)                       // RS: [tuple, me, sep]
+    jmp _bsp_sep_body
+
+_bsp_ws_setup:
+    // Whitespace mode reuses the same emit_segment helper as sep mode, which
+    // expects me at depth 3 of [tuple, me, sep, list, seg]. Push me a second
+    // time as a "sep slot" decoy — its bytes are never inspected by the
+    // helper, but it preserves layout and is GC-safe (it's a real handle).
+    rs_peek(W0)
+    rs_push(W0)                       // RS: [tuple, me, me_decoy]
+    jmp _bsp_ws_body
+
+_bsp_sep_body:
 
     rs_peek_at(W0, 1)
     rs_peek_at(W1, 0)
@@ -1729,6 +2523,68 @@ _bsp_cpd:
 
     rs_pop(W0)                        // drop the seg root; RS: [args_tuple, me, sep, list]
     rts
+
+// --- whitespace-mode body for builtin_str_split ----------------------------
+// RS at entry: [tuple, me, me_decoy]. Allocates the result list, then
+// alternates between skipping a run of whitespace and scanning a non-empty
+// segment. The decoy slot keeps RS layout aligned with sep mode so we can
+// share `_bsp_emit_segment` (which reads `me` at depth 3 during emission).
+//
+// Whitespace = $20 (space) or $0D (return) — same set the lexer recognizes.
+_bsp_ws_body:
+    lda #0
+    ldx #TYPE_LIST
+    jsr _array_alloc_init             // RV = empty list
+    rs_push(RV)                       // RS: [tuple, me, me_decoy, list]
+
+    rs_peek_at(W0, 2)                 // me
+    jsr deref_W0_to_W2                // W2 = me payload, A = me_len
+    sta B0
+
+    lda #0
+    sta B3                            // pos
+
+_bsp_ws_skip:
+    // Walk past whitespace until either end-of-string or first segment char.
+    lda B3
+    cmp B0
+    bcs _bsp_ws_done
+    ldy B3
+    lda (W2),y
+    cmp #$20
+    beq _bsp_ws_skip_inc
+    cmp #$0D
+    bne _bsp_ws_seg_start
+_bsp_ws_skip_inc:
+    inc B3
+    jmp _bsp_ws_skip
+
+_bsp_ws_seg_start:
+    lda B3
+    sta B4                            // segment start = current pos
+
+_bsp_ws_scan:
+    lda B3
+    cmp B0
+    bcs _bsp_ws_emit
+    ldy B3
+    lda (W2),y
+    cmp #$20
+    beq _bsp_ws_emit
+    cmp #$0D
+    beq _bsp_ws_emit
+    inc B3
+    jmp _bsp_ws_scan
+
+_bsp_ws_emit:
+    jsr _bsp_emit_segment             // appends me[B4..B3] to list
+    rs_peek_at(W0, 2)                 // re-deref me — emit may have GC'd
+    jsr deref_W0_to_W2
+    jmp _bsp_ws_skip
+
+_bsp_ws_done:
+    rs_peek(RV)                       // RV = list (TOS)
+    jmp postamble
 
 // --- str.replace(old, new) — replace all occurrences. ----------------------
 //   in:  args = (me, old, new)   all TYPE_STR

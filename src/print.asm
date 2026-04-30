@@ -110,7 +110,10 @@ println_int:
 //   TYPE_BOOL  → "True" / "False"  (handle-identity disambiguates)
 //   TYPE_NONE  → "None"
 //   TYPE_FLOAT → float_to_str → print_str  (requires BASIC ROM)
-//   other      → "?"  (defer rich rendering for list/tuple/dict)
+//   LIST / TUPLE / DICT (and any other forced value) → builtin_str rendering,
+//     i.e. "[1, 2, 3]" / "(1, 2, 3)" / "{k: v}". Goes via _str_w0 which wraps
+//     the value in a 1-tuple as builtin_str's v2-convention arg, then prints
+//     the resulting STR.
 // -----------------------------------------------------------------------------
 print_value:
     preamble_args(1, 0)
@@ -166,7 +169,11 @@ print_value:
     jsr print_str
     jmp postamble
 !not_float:
-    // Unsupported — print '?' for now.
-    lda #'?'
-    jsr screen_put_char
+    // Anything else (LIST, TUPLE, DICT) — render via builtin_str then print
+    // the resulting STR. _str_w0 (in builtins.asm) handles the v2-convention
+    // tuple wrapping and leaves RS unchanged net; RV = the rendered STR.
+    rs_peek(W0)
+    jsr _str_w0
+    rs_push(RV)
+    jsr print_str                    // consumes the rendered STR
     jmp postamble

@@ -25,6 +25,7 @@
 #import "stacks.asm"
 #import "preamble.asm"
 #import "handle.asm"
+#import "float.asm"          // _basic_zp_save / _basic_zp_restore
 
 .const STR2FLOAT_BUF_LEN = 24      // any reasonable float fits (1.79e308 = 10 chars)
 
@@ -68,31 +69,23 @@ _s2f_done_copy:
     lda #>(str2float_buf - 1)
     sta $7B
 
-    // Step 3: save allocator state, call BASIC FIN, restore.
+    // Step 3: bracket CHRGET + FIN with `_basic_zp_save`/`_basic_zp_restore`
+    // so neither can scribble on our pseudo-register file or allocator state.
     //
-    // BASIC FIN uses ZP $22-$2F as scratch (INDEX1/INDEX2 for the
-    // multiply-by-10 accumulator, etc.). Our allocator's NEXT_DATA /
-    // ALLOC_SIZE / RESERVED_HEAD / GC_DEST live in that exact range, so
-    // we must save/restore around the call. (BASIC's FADDT/FMULTT/FDIVT
-    // happen NOT to touch this range, which is why Stage 6 didn't catch it.)
-    ldy #13
-_s2f_save:
-    lda $22,y
-    sta _s2f_zp_save,y
-    dey
-    bpl _s2f_save
-
+    // Steady-state $01 = MEM_NORMAL ($34, all ROMs + I/O out). Three INCs
+    // → $37 (BASIC + KERNAL + I/O all in) for the FIN call; FIN reads BASIC
+    // ROM at $BCF3 and may call into KERNAL helpers (POLY1/POLYX), so HIRAM
+    // must be set too.
+    jsr _basic_zp_save
+    inc $01
+    inc $01
     inc $01
     jsr $0073                   // CHRGET: ++TXTPTR; A = first char (skips spaces)
     jsr $BCF3                   // FIN: ASCII → FAC1
     dec $01
-
-    ldy #13
-_s2f_restore:
-    lda _s2f_zp_save,y
-    sta $22,y
-    dey
-    bpl _s2f_restore
+    dec $01
+    dec $01
+    jsr _basic_zp_restore
 
     // Step 4: allocate a TYPE_FLOAT (5-byte payload) and pack FAC1.
     lda #5
@@ -113,7 +106,3 @@ _s2f_restore:
 // doesn't recurse through str_to_float.
 str2float_buf:
     .fill STR2FLOAT_BUF_LEN + 1, 0
-
-// 14-byte scratch for save/restore of $22-$2F across the FIN call.
-_s2f_zp_save:
-    .fill 14, 0

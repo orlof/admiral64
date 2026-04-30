@@ -121,6 +121,57 @@ _pe_done:
     jmp postamble
 
 // -----------------------------------------------------------------------------
+// parser_exec — like parser_eval, but reuses an already-set-up scope owned
+// by the caller. Used by the REPL so user-defined names persist across
+// successive `print x` / `x = …` turns.
+//
+// Caller contract (REPL):
+//   1. Has allocated a TYPE_DICT and rs_push'd it as a permanent root.
+//   2. Has set GLOBAL_SCOPE / ROOT_SCOPE to that handle.
+//   3. rs_push'd the source TYPE_STR for this turn.
+//   4. jsr parser_exec.
+//
+// On return, the source has been consumed; the scope handle is still on RS
+// (rooted by the REPL across turns). RV holds the last statement's value or
+// NONE.
+// V4' wrapper.
+// -----------------------------------------------------------------------------
+parser_exec:
+    preamble_args(1, 0)
+
+    jsr lexer_init                  // reads RS top = source
+
+    lda #0
+    sta METHOD_RECEIVER
+    sta METHOD_RECEIVER+1
+
+    lda #<NONE
+    sta RV
+    lda #>NONE
+    sta RV+1
+
+_pex_loop:
+    lda LEX_TOKEN_KIND
+    cmp #TK_NEWLINE
+    beq _pex_advance
+    cmp #TK_INDENT
+    beq _pex_advance
+    cmp #TK_DEDENT
+    beq _pex_advance
+    cmp #TK_EOF
+    beq _pex_done
+
+    jsr parser_stmt
+    jmp _pex_loop
+
+_pex_advance:
+    jsr lexer_next
+    jmp _pex_loop
+
+_pex_done:
+    jmp postamble
+
+// -----------------------------------------------------------------------------
 // parser_stmt — parse one statement. Pure trampoline: indexes the std_lo /
 // std_hi tables by the current token kind and tail-jumps via the rts trick
 // to the matching `stmt_*` routine. Mirrors the lexer's char dispatch
@@ -1345,21 +1396,46 @@ nud_bin:
 // `/` and `//` both currently map to integer division; when TYPE_FLOAT
 // participates, `/` will switch to float division.
 // -----------------------------------------------------------------------------
-// led_plus dispatches by LHS type. Numeric operands (INT/BOOL/FLOAT) take
-// the cast-and-arith path. Container operands (STR/LIST/TUPLE) take
-// array_merge, which validates the RHS type matches.
+// led_plus dispatches by operand types:
+//   - If EITHER side is STR, the result is STR concatenation. The non-STR
+//     side (if any) is auto-coerced via builtin_str — this is the "anything
+//     + str → str(anything) ++ str" rule, deliberately Option B (BASIC-style)
+//     to keep user code short on a 64K box. Symmetric: STR + INT, INT + STR,
+//     STR + LIST, LIST + STR all work.
+//   - LIST + LIST and TUPLE + TUPLE go straight to array_merge.
+//   - Numeric operands (INT/BOOL/FLOAT, any combination) take the
+//     cast-and-arith path.
+//   - Anything else surfaces as ERR_TYPE via array_merge or
+//     cast_common_number_type.
 led_plus:
     preamble_args(1, 0)
     jsr infix_eval                    // RS: [LHS, RHS]
+
     rs_peek_at(W0, 1)
     ldy #H_TYPE
     lda (W0),y
+    sta B0                            // B0 = LHS type tag
+    rs_peek(W0)
+    ldy #H_TYPE                       // rs_peek clobbered Y — restore.
+    lda (W0),y
+    sta B1                            // B1 = RHS type tag
+
+    // STR involved on either side?
+    lda B0
     cmp #TYPE_STR
-    beq _lp_merge
+    beq _lp_lhs_str
+    lda B1
+    cmp #TYPE_STR
+    beq _lp_rhs_str_only
+
+    // Neither side is STR. LIST/TUPLE go straight to merge.
+    lda B0
     cmp #TYPE_LIST
     beq _lp_merge
     cmp #TYPE_TUPLE
     beq _lp_merge
+
+    // Numeric.
     jsr cast_common_number_type
     rs_peek(W0)
     ldy #H_TYPE
@@ -1371,9 +1447,48 @@ led_plus:
 _lp_float:
     jsr float_add
     jmp postamble
+
+_lp_lhs_str:
+    // LHS is STR. If RHS is too, fall through to byte-concat. Otherwise
+    // coerce RHS in place via str(), then merge.
+    lda B1
+    cmp #TYPE_STR
+    beq _lp_merge
+    jsr _lp_coerce_rhs
+    jmp _lp_merge
+_lp_rhs_str_only:
+    // RHS is STR but LHS isn't (we'd have taken _lp_lhs_str otherwise).
+    jsr _lp_coerce_lhs
+    jmp _lp_merge
+
 _lp_merge:
     jsr array_merge
     jmp postamble
+
+
+// _lp_coerce_rhs — RS [LHS, RHS_nonstr] → RS [LHS, str(RHS)].
+// _lp_coerce_lhs — RS [LHS_nonstr, RHS] → RS [str(LHS), RHS].
+//
+// Both helpers leave RS net-shape unchanged (one slot replaced) and produce
+// no return value of their own — caller falls through to array_merge.
+//
+// Leaf helpers, NOT V4'-wrapped — _str_w0 (in builtins.asm) IS V4'-wrapped
+// and saves W/B around the recursive builtin_str. The few register reads
+// here happen before that call so we don't depend on register survival.
+_lp_coerce_rhs:
+    rs_peek(W0)                       // W0 = RHS
+    jsr _str_w0                       // RV = str(RHS); RS unchanged net
+    rs_pop(W1)                        // discard old RHS handle
+    rs_push(RV)                       // push coerced; RS: [LHS, str(RHS)]
+    rts
+_lp_coerce_lhs:
+    rs_peek_at(W0, 1)                 // W0 = LHS
+    jsr _str_w0                       // RV = str(LHS); RS unchanged net
+    rs_pop(W1)                        // RHS off the top, hold in W1
+    rs_pop(W0)                        // discard old LHS
+    rs_push(RV)                       // push coerced LHS
+    rs_push(W1)                       // restore RHS on top
+    rts
 
 led_minus:
     led_arith(int_sub, float_sub)
@@ -1938,6 +2053,11 @@ _lin_str:
     sta ERROR_CODE
     jmp error_handler
 !ok:
+    // Full-range search: start=0, end=$FF (sentinel → haystack_len).
+    lda #0
+    sta B5
+    lda #$FF
+    sta B6
     jsr str_find_pos                  // A = position or $FF (not found)
     cmp #$FF
     beq _lin_false
@@ -2590,21 +2710,9 @@ _slh_lt_after_type:
     asl B6                              // B6 = byte count       = 2*new_len
 
 _slh_copy_bytes:
-    // src = container.H_PTR + O_HEADER + B4 (in W3).
+    // src = container.payload + B4 (in W3).
     rs_peek_at(W0, 2)
-    ldy #H_PTR
-    lda (W0),y
-    sta W3
-    iny
-    lda (W0),y
-    sta W3+1
-    clc
-    lda W3
-    adc #O_HEADER
-    sta W3
-    bcc !+
-    inc W3+1
-!:
+    jsr deref_W0_to_W3
     clc
     lda W3
     adc B4
@@ -2612,21 +2720,8 @@ _slh_copy_bytes:
     bcc !+
     inc W3+1
 !:
-
-    // dst = RV.H_PTR + O_HEADER (in W2).
-    ldy #H_PTR
-    lda (RV),y
-    sta W2
-    iny
-    lda (RV),y
-    sta W2+1
-    clc
-    lda W2
-    adc #O_HEADER
-    sta W2
-    bcc !+
-    inc W2+1
-!:
+    // dst = RV.payload (in W2).
+    jsr deref_RV_to_W2
 
     // Copy B6 bytes from (W3) to (W2). Backward loop ends when Y wraps below 0.
     ldy B6

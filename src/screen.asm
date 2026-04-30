@@ -27,10 +27,22 @@
 //   clobbers: A, X, Y.
 // -----------------------------------------------------------------------------
 screen_init:
+    // VIC registers and color RAM live in I/O space at $D000-$DFFF, which is
+    // RAM under MEM_NORMAL ($34). Bank I/O in for the writes; bank out before
+    // the screen_clear fall-through (SCREEN_BASE at $0400 is plain RAM and
+    // doesn't need I/O on).
+    inc $01                          // $34 → $35 (I/O in)
     lda #COLOR_BORDER
     sta VIC_BORDER
     lda #COLOR_BG
     sta VIC_BG
+    // Select unshifted charset (uppercase + graphics) — same as C64 BASIC v2
+    // boots into. This makes uppercase PETSCII render as proper uppercase
+    // glyphs, which our banner and most user-typed source rely on. Switching
+    // to $17 (shifted) would give lowercase a-z glyphs at the cost of having
+    // uppercase PETSCII render as lowercase, which doesn't match BASIC.
+    lda #$15
+    sta VIC_MEMPTR
 
     // Fill color RAM ($D800-$DBE7, 1000 bytes) with COLOR_FG.
     // Use $D800..$DBFF (1024 bytes) — the extra 24 slots past row 24 are
@@ -45,6 +57,7 @@ screen_init:
     inx
     bne !loop-
 
+    dec $01                          // $35 → $34 (I/O out)
     // Fall into screen_clear (which fills SCREEN_BASE with $20 + resets cursor).
     // No JSR — screen_clear ends with rts.
 
@@ -70,21 +83,39 @@ screen_clear:
     rts
 
 // -----------------------------------------------------------------------------
-// screen_show_cursor — paint a static cursor at (SCREEN_ROW, SCREEN_COL).
+// screen_show_cursor — mark the cell at (SCREEN_ROW, SCREEN_COL) as the
+// cursor by setting its screen-code's reverse-video bit (bit 7).
 //
-// We write screen code $A0 (reverse-video space → solid block in default
-// charset) directly to the cell. This is non-blinking; a 60 Hz IRQ-driven
-// blink can be hooked at $0314 (CINV) later. The cursor mark is destroyed by
-// the next `screen_put_char` at that position — callers refresh it after
-// any output that should leave a visible "I'm waiting" indicator.
+// Read-modify-write: we OR $80 into whatever glyph is already there. Over an
+// empty cell ($20 space) that produces $A0 (reversed space = solid block);
+// over a letter it inverts the letter's foreground/background. Either way
+// the cell's underlying character is preserved, so screen_hide_cursor can
+// strip the bit to restore the original glyph — important during line edit
+// when the cursor sits over a typed character that must remain visible.
 //
 //   in:  (uses SCREEN_ROW / SCREEN_COL)
-//   clobbers: A. W0/W1/W3/B preserved. W2 written.
+//   clobbers: A, Y. W0/W1/W3/B preserved. W2 written.
 // -----------------------------------------------------------------------------
 screen_show_cursor:
     jsr scr_row_offset_to_w2         // W2 = SCREEN_BASE + row*40
     ldy SCREEN_COL
-    lda #$A0                         // reverse-video space (solid block)
+    lda (W2),y
+    ora #$80
+    sta (W2),y
+    rts
+
+// -----------------------------------------------------------------------------
+// screen_hide_cursor — counterpart of screen_show_cursor: clears bit 7 on the
+// cell at (SCREEN_ROW, SCREEN_COL) so any glyph beneath the cursor returns to
+// its non-reversed appearance. Cells that weren't reversed in the first place
+// are unchanged.
+//   clobbers: A, Y. (W2 written.)
+// -----------------------------------------------------------------------------
+screen_hide_cursor:
+    jsr scr_row_offset_to_w2
+    ldy SCREEN_COL
+    lda (W2),y
+    and #$7F
     sta (W2),y
     rts
 
@@ -93,22 +124,22 @@ screen_show_cursor:
 // advance cursor, scroll if we fall off the bottom.
 //   in:  A = PETSCII byte
 //   clobbers: A, X, Y. (W2, W3, GC_DEST clobbered if a scroll happens.)
+//
+// Brackets its body with `inc $01` / `dec $01` (MEM_NORMAL → MEM_IO and
+// back) so the color-RAM write at COLOR_BASE lands in I/O. SCREEN_BASE
+// at $0400 is plain RAM regardless of $01, so the screen-RAM write doesn't
+// strictly need the bracket — but it's cheaper to bracket the whole body
+// once than to flip mid-routine. Every exit path funnels through scr_done.
 // -----------------------------------------------------------------------------
 screen_put_char:
+    inc $01                          // $34 → $35 (I/O in)
     // Handle control chars first. $0D (carriage return) is the only one now.
     cmp #$0D
     bne scr_not_nl
     jmp scr_newline
 scr_not_nl:
 
-    // PETSCII → screen code translation.
-    cmp #$40
-    bcc scr_trans_done               // < $40: pass through
-    cmp #$60
-    bcs scr_trans_done               // >= $60: pass through (for now)
-    sec
-    sbc #$40                         // $40-$5F → $00-$1F (uppercase + @[\]^_)
-scr_trans_done:
+    jsr petscii_to_screen_code
 
     // Compute screen RAM offset: (row * 40) + col. Row 0..24, col 0..39.
     // Stash the screen code on HW stack while we compute the pointer.
@@ -127,7 +158,9 @@ scr_trans_done:
     sta W3
     lda W2+1
     clc
-    adc #>COLOR_BASE - >SCREEN_BASE  // $D4
+    adc #>(COLOR_BASE - SCREEN_BASE)  // $D4 — note parens: KickAss's `>`
+                                      // binds looser than `-`, so the
+                                      // unparenthesized form yields $D7.
     sta W3+1
     lda #COLOR_FG
     sta (W3),y
@@ -150,6 +183,7 @@ scr_newline:
     lda #SCREEN_ROWS - 1
     sta SCREEN_ROW
 scr_done:
+    dec $01                          // $35 → $34 (I/O out)
     rts
 
 // -----------------------------------------------------------------------------
@@ -160,43 +194,79 @@ scr_done:
 //   clobbers: A. W2 written.
 // -----------------------------------------------------------------------------
 scr_row_offset_to_w2:
-    // 40 = 32 + 8. Strategy: shift (W2) left 3 times → row*8, stash on HW
-    // stack, shift 2 more → row*32, add back → row*40, then + SCREEN_BASE.
     lda SCREEN_ROW
+    // fall through — wset/wget call _a with an arbitrary row in A instead.
+scr_row_offset_to_w2_a:
+    tax
+    lda screen_row_lo,x
     sta W2
-    lda #0
-    sta W2+1
-    asl W2
-    rol W2+1                         // * 2
-    asl W2
-    rol W2+1                         // * 4
-    asl W2
-    rol W2+1                         // * 8 — save this on HW stack
-    lda W2+1
-    pha
-    lda W2
-    pha
-    asl W2
-    rol W2+1                         // * 16
-    asl W2
-    rol W2+1                         // * 32
-    // W2 += saved row*8.
-    pla                              // row*8 low
-    clc
-    adc W2
-    sta W2
-    pla                              // row*8 high
-    adc W2+1
-    sta W2+1
-    // W2 += SCREEN_BASE.
-    clc
-    lda W2
-    adc #<SCREEN_BASE
-    sta W2
-    lda W2+1
-    adc #>SCREEN_BASE
+    lda screen_row_hi,x
     sta W2+1
     rts
+
+// -----------------------------------------------------------------------------
+// screen_row_lo / screen_row_hi — 25-byte tables holding the low/high bytes of
+// `SCREEN_BASE + row * SCREEN_COLS` for each row 0..24. KickAss `.fill`
+// computes them at assembly time from the ZP-friendly `row * 40` step.
+//
+// Replaces the previous shift-and-add; cuts ~95 cycles off every row-address
+// calc (full-screen redraws save ~2.4 ms at 1 MHz). Net storage cost over the
+// old shift code is ~+3 bytes; the speed win is worth the table.
+// -----------------------------------------------------------------------------
+screen_row_lo:
+    .fill SCREEN_ROWS, <(SCREEN_BASE + i * SCREEN_COLS)
+screen_row_hi:
+    .fill SCREEN_ROWS, >(SCREEN_BASE + i * SCREEN_COLS)
+
+// -----------------------------------------------------------------------------
+// petscii_to_screen_code — full PETSCII → C64 screen-code translation.
+//
+//   in:  A = PETSCII byte (0..255)
+//   out: A = screen code
+//   clobbers: Y. (X preserved.)
+//
+// Strategy: use the top 3 bits of the PETSCII byte (P >> 5, range 0..7) to
+// index an 8-byte offset table; the screen code is `table[P >> 5] + P`
+// (mod 256). Two special cases short-circuit the table lookup:
+//   - PETSCII $FF is the π glyph; the formula would map to $7F (✓ check),
+//     so we route it to $5E (π in screen codes).
+//   - PETSCII $61..$7A (lowercase ASCII letters) → screen-codes $01..$1A,
+//     which render as A..Z in the unshifted charset. Without this, printing
+//     a lowercase string like "hello" in unshifted mode would emit the
+//     graphic block at screen-code $48..$4F. Since admiral source is
+//     internally lowercase ASCII (lexer/keyword convention) but the C64
+//     boots in unshifted mode for the BASIC look, this remap is what makes
+//     `print "hello"` display as HELLO.
+// Mirrors common C64 BASIC editor practice.
+// -----------------------------------------------------------------------------
+petscii_to_screen_code:
+    cmp #$FF
+    bne _ptsc_not_pi
+    lda #$5E                     // π → π
+    rts
+_ptsc_not_pi:
+    cmp #$61
+    bcc _ptsc_convert
+    cmp #$7B
+    bcs _ptsc_convert
+    sec
+    sbc #$60                     // $61..$7A → $01..$1A
+    rts
+_ptsc_convert:
+    pha
+    lsr
+    lsr
+    lsr
+    lsr
+    lsr
+    tay
+    pla
+    clc
+    adc _ptsc_table,y
+    rts
+
+_ptsc_table:
+    .byte $80, $00, $C0, $E0, $40, $C0, $80, $80
 
 // -----------------------------------------------------------------------------
 // screen_scroll_up — slide rows 1-24 up one position; blank row 24.

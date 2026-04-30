@@ -15,12 +15,25 @@
 #import "defs.asm"
 
 // -----------------------------------------------------------------------------
-// deref_W0_to_W2 — resolve handle in W0 to its payload pointer in W2.
-//   in:  W0 = handle address
-//   out: W2 = address of first payload byte (past the length header)
-//        A  = length low byte (high byte unused for now; < 256-byte objects)
-//   clobbers: A, X, Y. W2 written (intentional output).
+// deref_{W0,W1,RV}_to_{W2,W3} — resolve a handle to its payload pointer.
+//   in:  source ZP register (W0/W1/RV) = handle address
+//   out: destination ZP register (W2/W3) = first payload byte
+//        A = length low byte
+//   clobbers: A, X, Y. Destination ZP is the only ZP written.
+//
+// The two destinations share a tail (`_deref_finish_W{2,3}`) that does the
+// O_LEN read + O_HEADER advance. Each entry thunk loads the handle into the
+// destination ZP and then jmp's (or falls through) to the matching tail.
+// Same idiom as fs_push_w0/w2/w3 just below.
 // -----------------------------------------------------------------------------
+deref_RV_to_W2:
+    ldy #H_PTR
+    lda (RV),y
+    sta W2
+    iny
+    lda (RV),y
+    sta W2+1
+    jmp _deref_finish_W2
 deref_W0_to_W2:
     ldy #H_PTR
     lda (W0),y
@@ -28,9 +41,10 @@ deref_W0_to_W2:
     iny
     lda (W0),y
     sta W2+1
+_deref_finish_W2:
     ldy #O_LEN
     lda (W2),y
-    tax                    // stash length while advancing W2
+    tax
     lda W2
     clc
     adc #O_HEADER
@@ -38,12 +52,9 @@ deref_W0_to_W2:
     bcc !+
     inc W2+1
 !:
-    txa                    // return length in A
+    txa
     rts
 
-// -----------------------------------------------------------------------------
-// deref_W1_to_W3 — same but for second-operand handles.
-// -----------------------------------------------------------------------------
 deref_W1_to_W3:
     ldy #H_PTR
     lda (W1),y
@@ -51,6 +62,23 @@ deref_W1_to_W3:
     iny
     lda (W1),y
     sta W3+1
+    jmp _deref_finish_W3
+deref_RV_to_W3:
+    ldy #H_PTR
+    lda (RV),y
+    sta W3
+    iny
+    lda (RV),y
+    sta W3+1
+    jmp _deref_finish_W3
+deref_W0_to_W3:
+    ldy #H_PTR
+    lda (W0),y
+    sta W3
+    iny
+    lda (W0),y
+    sta W3+1
+_deref_finish_W3:
     ldy #O_LEN
     lda (W3),y
     tax
@@ -92,30 +120,51 @@ sign_byte_W3:
 !:  rts
 
 // -----------------------------------------------------------------------------
-// deref_RV_to_W2 — resolve the handle in RV to its payload pointer in W2.
-// Companion to deref_W0_to_W2 for the common "just got handle from alloc_int
-// returned in RV" pattern.
-//   in:  RV = handle address
-//   out: W2 = first payload byte (past the length header)
-//        A  = length low byte
-//   clobbers: A, X, Y. W2 written (intentional output). RV preserved.
+// int_to_unsigned_byte_W0 — read a TYPE_INT/TYPE_BOOL handle as an unsigned
+// 0..255 byte. Used by builtins that take small bounded ints (screen
+// coordinates, char codes, ...) and want to reject negatives + values >= 256
+// uniformly without each writing the same length-walk.
+//
+//   in:  W0 = handle
+//   out: C = 1, A = value (0..255)        — non-negative int that fits in a byte
+//        C = 0                            — wrong type / negative / value > 255
+//   clobbers: A, X, Y, W2.
 // -----------------------------------------------------------------------------
-deref_RV_to_W2:
-    ldy #H_PTR
-    lda (RV),y
-    sta W2
-    iny
-    lda (RV),y
-    sta W2+1
-    ldy #O_LEN
-    lda (W2),y
+int_to_unsigned_byte_W0:
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_INT
+    beq _itub_ok
+    cmp #TYPE_BOOL
+    bne _itub_fail
+_itub_ok:
+    jsr deref_W0_to_W2           // A = length
+    pha
+    ldy #0
+    lda (W2),y                   // candidate value
     tax
-    lda W2
-    clc
-    adc #O_HEADER
-    sta W2
-    bcc !+
-    inc W2+1
-!:
+    pla
+    cmp #1
+    bne _itub_multi
     txa
+    bmi _itub_fail               // 1-byte int with bit 7 set is negative
+    sec
     rts
+_itub_multi:
+    // length >= 2: every byte above byte 0 must be zero (else the value is
+    // negative or > 255). Walk from MSB down to (but not including) byte 0.
+    sec
+    sbc #1
+    tay
+_itub_loop:
+    lda (W2),y
+    bne _itub_fail
+    dey
+    bne _itub_loop
+    txa
+    sec
+    rts
+_itub_fail:
+    clc
+    rts
+
