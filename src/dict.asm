@@ -77,42 +77,78 @@ _dict_bin_search:
     lda W1+1
     sta B7
 
-    jsr deref_W0_to_W2           // W2 = dict payload (post-header), A = O_LEN
-    sta B0                       // B0 = O_LEN
+    jsr deref_W0_to_W2           // W2 = dict payload (post-header), A:X = O_LEN word
 
+    // 16-bit search bounds:
+    //   lo  = B1:B3   (init 0)
+    //   hi  = B2:B4   (init O_LEN word)
+    //   mid = B5:B0   (computed each iter)
+    sta B2                       // hi.lo = O_LEN.lo
+    stx B4                       // hi.hi = O_LEN.hi
     lda #0
-    sta B1                       // lo
-    lda B0
-    sta B2                       // hi (exclusive)
+    sta B1                       // lo.lo
+    sta B3                       // lo.hi
 
 _dbs_loop:
+    // Compare lo (B1:B3) vs hi (B2:B4): if lo >= hi → miss.
+    lda B3
+    cmp B4
+    bcc _dbs_have_range
+    bne _dbs_miss
     lda B1
     cmp B2
     bcc _dbs_have_range
-    // No match: insertion at lo (= B1).
+_dbs_miss:
+    // No match: insertion at lo.
     lda B1
     sta RV
-    lda #0
+    lda B3
     sta RV+1
     lda #0                       // miss
     jmp postamble
 
 _dbs_have_range:
-    lda B2
+    // mid = lo + (hi - lo) / 2 (16-bit).
     sec
+    lda B2
     sbc B1
-    lsr
+    sta B5                       // mid lo = (hi - lo) lo
+    lda B4
+    sbc B3
+    sta B0                       // mid hi
+    // Right-shift (B0:B5) by 1.
+    lsr B0
+    ror B5
+    // Add lo back.
     clc
+    lda B5
     adc B1
-    sta B5                       // mid
+    sta B5
+    lda B0
+    adc B3
+    sta B0
+
+    // W3 = W2 + 2*mid (handle slot pointer).
+    lda B5
+    asl
+    sta W3
+    lda B0
+    rol
+    sta W3+1
+    clc
+    lda W3
+    adc W2
+    sta W3
+    lda W3+1
+    adc W2+1
+    sta W3+1
 
     // W1 = payload[mid] = pair-tuple handle
-    asl
-    tay
-    lda (W2),y
+    ldy #0
+    lda (W3),y
     sta W1
     iny
-    lda (W2),y
+    lda (W3),y
     sta W1+1
 
     // W3 = pair-tuple object header
@@ -144,17 +180,22 @@ _dbs_have_range:
     beq _dbs_match
     bmi _dbs_lower
 
-    // search > stored → search the upper half: lo = mid + 1
-    lda B5
+    // search > stored → search the upper half: lo = mid + 1 (16-bit).
     clc
+    lda B5
     adc #1
     sta B1
+    lda B0
+    adc #0
+    sta B3
     jmp _dbs_resume
 
 _dbs_lower:
     // search < stored → search the lower half: hi = mid
     lda B5
     sta B2
+    lda B0
+    sta B4
 
 _dbs_resume:
     // val_cmp's postamble restored W2 to its preamble-saved value (= dict
@@ -164,7 +205,7 @@ _dbs_resume:
 _dbs_match:
     lda B5
     sta RV
-    lda #0
+    lda B0
     sta RV+1
     lda #1                       // hit
     jmp postamble
@@ -188,18 +229,32 @@ dict_get:
     jmp postamble_return_none
 
 _dg_match:
-    // RV holds the matched index; save before we overwrite RV with the value.
+    // RV holds the 16-bit matched index; save before we overwrite RV.
     lda RV
-    sta B0                       // B0 = matched index
+    sta B0                       // B0:B1 = matched index (word)
+    lda RV+1
+    sta B1
     rs_peek_at(W0, 1)            // dict
     jsr deref_W0_to_W2           // W2 = dict payload
+    // W3 = W2 + 2*index (16-bit handle slot pointer).
     lda B0
     asl
-    tay
-    lda (W2),y
+    sta W3
+    lda B1
+    rol
+    sta W3+1
+    clc
+    lda W3
+    adc W2
+    sta W3
+    lda W3+1
+    adc W2+1
+    sta W3+1
+    ldy #0
+    lda (W3),y
     sta W1
     iny
-    lda (W2),y
+    lda (W3),y
     sta W1+1                     // W1 = matched pair handle
 
     ldy #H_PTR
@@ -316,19 +371,22 @@ dict_set:
     // Step 2: binary-search.
     rs_peek_at(W0, 3)            // dict
     rs_peek_at(W1, 2)            // key
-    jsr _dict_bin_search          // A = match flag; RV = index
+    jsr _dict_bin_search          // A = match flag; RV = index (word)
 
-    // Stash the index in B0 — we'll overwrite RV during the array call paths.
+    // Stash the word index in B0:B1 — we'll overwrite RV during the array
+    // call paths.
     pha                           // save match flag (A) across the RV save
     lda RV
     sta B0
+    lda RV+1
+    sta B1
     pla
 
     cmp #0
     bne _ds_hit
 
-    // Step 4: miss → array_insert at B0.
-    // Stage RS: rs_push(dict), rs_push(pair). FS: rs_push(index).
+    // Step 4: miss → array_insert at B0:B1.
+    // Stage RS: rs_push(dict), rs_push(pair). FS: rs_push(index_word).
     rs_peek_at(W0, 3)            // dict
     rs_push(W0)                   // RS off 0
     rs_peek_at(W0, 1)            // pair (was off 0; now off 1 after the push)
@@ -336,7 +394,7 @@ dict_set:
 
     lda B0
     sta W0
-    lda #0
+    lda B1
     sta W0+1
     fs_push(W0)
 
@@ -346,11 +404,12 @@ dict_set:
     jmp postamble
 
 _ds_hit:
-    // Step 3: hit → overwrite matched slot at index B0.
+    // Step 3: hit → overwrite matched slot at index B0:B1.
     rs_peek_at(W0, 3)            // dict
     rs_peek_at(W1, 0)            // pair
     lda B0
-    jsr array_set_leaf
+    ldx B1
+    jsr array_set_leaf_w
     // postamble pops pair + caller's 3 args.
     jmp postamble
 
@@ -365,20 +424,22 @@ dict_del:
 
     rs_peek_at(W0, 1)            // dict
     rs_peek_at(W1, 0)            // key
-    jsr _dict_bin_search          // A = match flag; RV = index
+    jsr _dict_bin_search          // A = match flag; RV = index (word)
 
     cmp #0
     beq _dd_done                 // miss → no-op
 
-    // Stash index, then stage RS + FS for array_del.
+    // Stash word index, then stage RS + FS for array_del.
     lda RV
     sta B0
+    lda RV+1
+    sta B1
 
     rs_peek_at(W0, 1)            // dict
     rs_push(W0)
     lda B0
     sta W0
-    lda #0
+    lda B1
     sta W0+1
     fs_push(W0)
     jsr array_del

@@ -55,7 +55,7 @@ def test_int_ne_str_same_bytes(h):
     # Int payload [$41] and str payload [$41] are bytewise identical but
     # different types — must not compare equal.
     a = place_int(h, 0x8500, [0x41])
-    b = place_str(h, 0x6100, [0x41])
+    b = place_str(h, 0x9100, [0x41])
     assert run_val_eq(h, a, b) == 0
 
 
@@ -84,14 +84,14 @@ def test_empty_str_ne_none(h):
 
 def test_short_int_ne_long_int(h):
     a = place_int(h, 0x8500, [0x01])
-    b = place_int(h, 0x6100, [0x01, 0x00])  # not a normalized form, but val_eq
+    b = place_int(h, 0x9100, [0x01, 0x00])  # not a normalized form, but val_eq
                                             # treats representations literally
     assert run_val_eq(h, a, b) == 0
 
 
 def test_short_str_ne_long_str(h):
     a = place_str(h, 0x8500, [0x41, 0x42])
-    b = place_str(h, 0x6100, [0x41, 0x42, 0x43])
+    b = place_str(h, 0x9100, [0x41, 0x42, 0x43])
     assert run_val_eq(h, a, b) == 0
 
 
@@ -101,44 +101,44 @@ def test_short_str_ne_long_str(h):
 def test_int_eq_via_payload_compare(h):
     # Two distinct handles, identical type and payload — must compare equal.
     a = place_int(h, 0x8500, [0xE8, 0x03])
-    b = place_int(h, 0x6100, [0xE8, 0x03])
+    b = place_int(h, 0x9100, [0xE8, 0x03])
     assert run_val_eq(h, a, b) == 1
 
 
 def test_int_ne_at_msb(h):
     a = place_int(h, 0x8500, [0xE8, 0x03])
-    b = place_int(h, 0x6100, [0xE8, 0x04])
+    b = place_int(h, 0x9100, [0xE8, 0x04])
     assert run_val_eq(h, a, b) == 0
 
 
 def test_int_ne_at_lsb(h):
     a = place_int(h, 0x8500, [0xE8, 0x03])
-    b = place_int(h, 0x6100, [0xE9, 0x03])
+    b = place_int(h, 0x9100, [0xE9, 0x03])
     assert run_val_eq(h, a, b) == 0
 
 
 def test_str_eq_payload(h):
     a = place_str(h, 0x8500, [0x48, 0x49])
-    b = place_str(h, 0x6100, [0x48, 0x49])
+    b = place_str(h, 0x9100, [0x48, 0x49])
     assert run_val_eq(h, a, b) == 1
 
 
 def test_str_ne_payload_first_byte(h):
     a = place_str(h, 0x8500, [0x48, 0x49])
-    b = place_str(h, 0x6100, [0x4A, 0x49])
+    b = place_str(h, 0x9100, [0x4A, 0x49])
     assert run_val_eq(h, a, b) == 0
 
 
 def test_str_ne_payload_last_byte(h):
     a = place_str(h, 0x8500, [0x48, 0x49])
-    b = place_str(h, 0x6100, [0x48, 0x4A])
+    b = place_str(h, 0x9100, [0x48, 0x4A])
     assert run_val_eq(h, a, b) == 0
 
 
 def test_empty_strings_are_equal(h):
     # Length=0 path: byte loop must not run, must return equal.
     a = place_str(h, 0x8500, [])
-    b = place_str(h, 0x6100, [])
+    b = place_str(h, 0x9100, [])
     assert run_val_eq(h, a, b) == 1
 
 

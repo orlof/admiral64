@@ -12,7 +12,7 @@ from conftest import (
 )
 
 FLAG_MARKED = 0x80
-FLAG_PINNED = 0x20
+FLAG_RENDERING = 0x10
 
 H_PTR = 0
 H_SIZE = 2
@@ -86,11 +86,13 @@ def test_sweep_mixed_marked_and_unmarked(h):
 
 # --- gc_sweep: flag preservation --------------------------------------------
 
-def test_sweep_preserves_flag_pinned_on_survivors(h):
+def test_sweep_preserves_other_flag_bits_on_survivors(h):
+    """gc_sweep clears FLAG_MARKED on survivors but must leave unrelated bits
+    alone — e.g. FLAG_RENDERING set by an in-progress print."""
     handle = h.alloc_int(4)
-    h.mpu.memory[handle + H_FLAGS] = FLAG_MARKED | FLAG_PINNED
+    h.mpu.memory[handle + H_FLAGS] = FLAG_MARKED | FLAG_RENDERING
     h.call("gc_sweep")
-    assert _flags(h, handle) == FLAG_PINNED   # MARKED cleared, PINNED kept
+    assert _flags(h, handle) == FLAG_RENDERING   # MARKED cleared, RENDERING kept
 
 
 # --- gc_sweep: idempotence / stability --------------------------------------

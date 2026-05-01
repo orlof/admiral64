@@ -760,12 +760,14 @@ disk_morph_w0:
     jmp _dmw_relink
 
 _dmw_container:
+    // O_LEN = (B2:B3) >> 1 — full 16-bit shift right.
     ldy #O_LEN
+    lsr B3
     lda B2
-    lsr                                // /2 (assumes high byte = 0; cap 510B)
+    ror
     sta (RV),y
     iny
-    lda #0
+    lda B3
     sta (RV),y
 
 _dmw_relink:

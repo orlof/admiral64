@@ -103,8 +103,8 @@ def _call_tuple_get(h, tuple_handle: int, index: int) -> int:
 
 def test_tuple_get_reads_slot(h):
     child0 = place_int(h, 0x8500, [0x42])
-    child1 = place_int(h, 0x6100, [0x43])
-    t = place_tuple(h, 0x6200, [child0, child1])
+    child1 = place_int(h, 0x9100, [0x43])
+    t = place_tuple(h, 0x9200, [child0, child1])
     assert _call_tuple_get(h, t, 0) == child0
     assert _call_tuple_get(h, t, 1) == child1
 
@@ -128,7 +128,7 @@ def _call_tuple_len(h, tuple_handle: int) -> int:
 
 def test_tuple_len_basic(h):
     child = place_int(h, 0x8500, [0x01])
-    t = place_tuple(h, 0x6100, [child, child, child])
+    t = place_tuple(h, 0x9100, [child, child, child])
     assert _call_tuple_len(h, t) == 3
 
 
@@ -290,85 +290,85 @@ def _call_val_eq(h, a: int, b: int) -> int:
 
 def test_val_eq_same_tuple_handle(h):
     a = place_int(h, 0x8500, [0x01])
-    b = place_int(h, 0x6100, [0x02])
-    t = place_tuple(h, 0x6200, [a, b])
+    b = place_int(h, 0x9100, [0x02])
+    t = place_tuple(h, 0x9200, [a, b])
     assert _call_val_eq(h, t, t) == 1
 
 
 def test_val_eq_tuples_with_equal_int_children(h):
     a1 = place_int(h, 0x8500, [0x01])
-    b1 = place_int(h, 0x6100, [0x02])
-    t1 = place_tuple(h, 0x6200, [a1, b1])
+    b1 = place_int(h, 0x9100, [0x02])
+    t1 = place_tuple(h, 0x9200, [a1, b1])
 
-    a2 = place_int(h, 0x6300, [0x01])
-    b2 = place_int(h, 0x6400, [0x02])
-    t2 = place_tuple(h, 0x6500, [a2, b2])
+    a2 = place_int(h, 0x9300, [0x01])
+    b2 = place_int(h, 0x9400, [0x02])
+    t2 = place_tuple(h, 0x9500, [a2, b2])
 
     assert _call_val_eq(h, t1, t2) == 1
 
 
 def test_val_eq_tuples_differ_at_first_child(h):
     a1 = place_int(h, 0x8500, [0x01])
-    b1 = place_int(h, 0x6100, [0x02])
-    t1 = place_tuple(h, 0x6200, [a1, b1])
+    b1 = place_int(h, 0x9100, [0x02])
+    t1 = place_tuple(h, 0x9200, [a1, b1])
 
-    a2 = place_int(h, 0x6300, [0x99])  # different
-    b2 = place_int(h, 0x6400, [0x02])
-    t2 = place_tuple(h, 0x6500, [a2, b2])
+    a2 = place_int(h, 0x9300, [0x99])  # different
+    b2 = place_int(h, 0x9400, [0x02])
+    t2 = place_tuple(h, 0x9500, [a2, b2])
 
     assert _call_val_eq(h, t1, t2) == 0
 
 
 def test_val_eq_tuples_differ_at_last_child(h):
     a1 = place_int(h, 0x8500, [0x01])
-    b1 = place_int(h, 0x6100, [0x02])
-    t1 = place_tuple(h, 0x6200, [a1, b1])
+    b1 = place_int(h, 0x9100, [0x02])
+    t1 = place_tuple(h, 0x9200, [a1, b1])
 
-    a2 = place_int(h, 0x6300, [0x01])
-    b2 = place_int(h, 0x6400, [0x99])  # different
-    t2 = place_tuple(h, 0x6500, [a2, b2])
+    a2 = place_int(h, 0x9300, [0x01])
+    b2 = place_int(h, 0x9400, [0x99])  # different
+    t2 = place_tuple(h, 0x9500, [a2, b2])
 
     assert _call_val_eq(h, t1, t2) == 0
 
 
 def test_val_eq_tuples_different_lengths(h):
     a = place_int(h, 0x8500, [0x01])
-    t1 = place_tuple(h, 0x6100, [a])
-    t2 = place_tuple(h, 0x6200, [a, a])
+    t1 = place_tuple(h, 0x9100, [a])
+    t2 = place_tuple(h, 0x9200, [a, a])
     assert _call_val_eq(h, t1, t2) == 0
 
 
 def test_val_eq_empty_tuples(h):
     t1 = place_tuple(h, 0x8500, [])
-    t2 = place_tuple(h, 0x6100, [])
+    t2 = place_tuple(h, 0x9100, [])
     assert _call_val_eq(h, t1, t2) == 1
 
 
 def test_val_eq_nested_tuples(h):
     # ((1,), (2,))  ==  ((1,), (2,))  via two layers of recursion.
     one_a = place_int(h, 0x8500, [0x01])
-    two_a = place_int(h, 0x6100, [0x02])
-    inner_a1 = place_tuple(h, 0x6200, [one_a])
-    inner_a2 = place_tuple(h, 0x6300, [two_a])
-    outer_a = place_tuple(h, 0x6400, [inner_a1, inner_a2])
+    two_a = place_int(h, 0x9100, [0x02])
+    inner_a1 = place_tuple(h, 0x9200, [one_a])
+    inner_a2 = place_tuple(h, 0x9300, [two_a])
+    outer_a = place_tuple(h, 0x9400, [inner_a1, inner_a2])
 
-    one_b = place_int(h, 0x6500, [0x01])
-    two_b = place_int(h, 0x6600, [0x02])
-    inner_b1 = place_tuple(h, 0x6700, [one_b])
-    inner_b2 = place_tuple(h, 0x6800, [two_b])
-    outer_b = place_tuple(h, 0x6900, [inner_b1, inner_b2])
+    one_b = place_int(h, 0x9500, [0x01])
+    two_b = place_int(h, 0x9600, [0x02])
+    inner_b1 = place_tuple(h, 0x9700, [one_b])
+    inner_b2 = place_tuple(h, 0x9800, [two_b])
+    outer_b = place_tuple(h, 0x9900, [inner_b1, inner_b2])
 
     assert _call_val_eq(h, outer_a, outer_b) == 1
 
 
 def test_val_eq_tuple_of_strs(h):
     a1 = place_str(h, 0x8500, [0x48, 0x49])  # "HI"
-    b1 = place_str(h, 0x6100, [0x21])         # "!"
-    t1 = place_tuple(h, 0x6200, [a1, b1])
+    b1 = place_str(h, 0x9100, [0x21])         # "!"
+    t1 = place_tuple(h, 0x9200, [a1, b1])
 
-    a2 = place_str(h, 0x6300, [0x48, 0x49])
-    b2 = place_str(h, 0x6400, [0x21])
-    t2 = place_tuple(h, 0x6500, [a2, b2])
+    a2 = place_str(h, 0x9300, [0x48, 0x49])
+    b2 = place_str(h, 0x9400, [0x21])
+    t2 = place_tuple(h, 0x9500, [a2, b2])
 
     assert _call_val_eq(h, t1, t2) == 1
 
@@ -377,7 +377,7 @@ def test_val_eq_tuple_ne_int_with_same_payload_bytes(h):
     """A tuple with one slot pointing at $XXXX has the same 2 payload bytes as
     an int [$XX, $XX], but their type tags differ — must not compare equal."""
     a = place_int(h, 0x8500, [0x01])
-    t = place_tuple(h, 0x6100, [a])
+    t = place_tuple(h, 0x9100, [a])
     # An int whose payload is the byte representation of `a`'s handle.
-    spoof = place_int(h, 0x6200, [a & 0xFF, (a >> 8) & 0xFF])
+    spoof = place_int(h, 0x9200, [a & 0xFF, (a >> 8) & 0xFF])
     assert _call_val_eq(h, t, spoof) == 0

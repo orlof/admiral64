@@ -13,12 +13,12 @@ from test_int_parse import _read_int
 from test_str import place_str
 
 
-def _eval(h, source: str) -> int:
+def _eval(h, source: str, max_steps: int = 2_000_000) -> int:
     """Place source on heap, push handle on RS, call parser_eval, read int."""
     payload = list(source.encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
-    h.call("parser_eval", max_steps=2_000_000)
+    h.call("parser_eval", max_steps=max_steps)
     return _read_int(h, h.read_word(RV))
 
 
@@ -501,26 +501,129 @@ def test_tuple_indexing(h):
 
 def test_empty_dict(h):
     from conftest import TYPE_DICT
-    assert _eval_container_type_and_len(h, "{}") == (TYPE_DICT, 0)
+    assert _eval_container_type_and_len(h, "<>") == (TYPE_DICT, 0)
 
 
 def test_one_entry_dict(h):
     from conftest import TYPE_DICT
-    assert _eval_container_type_and_len(h, "{1: 10}") == (TYPE_DICT, 1)
+    assert _eval_container_type_and_len(h, "<1: 10>") == (TYPE_DICT, 1)
 
 
 def test_three_entry_dict(h):
     from conftest import TYPE_DICT
-    assert _eval_container_type_and_len(h, "{1: 10, 2: 20, 3: 30}") == (TYPE_DICT, 3)
+    assert _eval_container_type_and_len(h, "<1: 10, 2: 20, 3: 30>") == (TYPE_DICT, 3)
 
 
 def test_dict_indexing_int_key(h):
-    assert _eval(h, "{1: 10, 2: 20, 3: 30}[2]") == 20
+    assert _eval(h, "<1: 10, 2: 20, 3: 30>[2]") == 20
 
 
 def test_dict_with_trailing_comma(h):
     from conftest import TYPE_DICT
-    assert _eval_container_type_and_len(h, "{1: 10,}") == (TYPE_DICT, 1)
+    assert _eval_container_type_and_len(h, "<1: 10,>") == (TYPE_DICT, 1)
+
+
+def test_dict_lt_dict_value(h):
+    """`<"A":1> < <"B":2>` — LT comparison between two dicts.
+    Verifies the angle-bracket dict syntax parses correctly when surrounded
+    by an actual `<` comparison operator."""
+    assert _eval_bool(h, '<"A": 1> < <"B": 2>') is True
+
+
+def test_dict_lt_dict_value_false(h):
+    """Reverse case: `<"B":2> < <"A":1>` is False."""
+    assert _eval_bool(h, '<"B": 2> < <"A": 1>') is False
+
+
+# --- globals() / locals() ---------------------------------------------------
+
+def test_globals_returns_dict(h):
+    from conftest import TYPE_DICT
+    assert _eval_container_type_and_len(h, 'globals()')[0] == TYPE_DICT
+
+
+def test_locals_returns_dict(h):
+    from conftest import TYPE_DICT
+    assert _eval_container_type_and_len(h, 'locals()')[0] == TYPE_DICT
+
+
+def test_print_globals_with_assigned_var(h):
+    """`a = 1; print globals()` — scope dict's TYPE_NAME keys must render."""
+    _eval(h, 'a = 1\nprint globals()')
+
+
+def test_print_globals_with_dict_var(h):
+    """REPL idiom: assign a dict, then print globals()."""
+    _eval(h, 'd = <"ADMIRAL": 114>\nprint globals()')
+
+
+def test_print_self_referential_dict(h):
+    """`g = globals(); print g` — cycle in dict; recursion guard emits `<...>`
+    instead of looping forever."""
+    _eval(h, 'g = globals()\nprint g')
+
+
+def test_print_self_referential_list(h):
+    """List that contains itself — guard emits `[...]`."""
+    src = (
+        'a = []\n'
+        'a.append(a)\n'
+        'print a'
+    )
+    _eval(h, src)
+
+
+# --- del NAME ---------------------------------------------------------------
+
+def test_del_name_removes_binding(h):
+    """`del a` should remove `a` from the current scope dict."""
+    src = (
+        'a = 7\n'
+        'b = 1\n'
+        'del a\n'
+        'b'
+    )
+    assert _eval(h, src) == 1
+
+
+def test_del_name_then_lookup_panics(h):
+    """After `del a`, looking up `a` panics (no fallback to parent here)."""
+    src = 'a = 7\ndel a\na'
+    payload = list(src.encode("ascii"))
+    handle = place_str(h, 0x8500, payload)
+    h.rs_push(handle)
+    h.call("parser_eval", max_steps=2_000_000, expect_panic=True)
+
+
+def test_del_name_missing_panics(h):
+    """`del a` when `a` is unbound is an error."""
+    payload = list(b'del a')
+    handle = place_str(h, 0x8500, payload)
+    h.rs_push(handle)
+    h.call("parser_eval", max_steps=2_000_000, expect_panic=True)
+
+
+def test_del_name_then_reassign(h):
+    """After `del a`, `a = ...` re-introduces the binding cleanly."""
+    src = (
+        'a = 1\n'
+        'del a\n'
+        'a = 99\n'
+        'a'
+    )
+    assert _eval(h, src) == 99
+
+
+def test_del_name_does_not_affect_other_bindings(h):
+    """`del b` removes only `b`, not `a` or `c`."""
+    src = (
+        'a = 10\n'
+        'b = 20\n'
+        'c = 30\n'
+        'del b\n'
+        'a + c'
+    )
+    assert _eval(h, src) == 40
 
 
 # --- power ** --------------------------------------------------------------
@@ -1483,6 +1586,32 @@ def test_print_arithmetic(h):
     assert screen[0] == 0x37  # '7'
 
 
+def test_print_two_args_space_separated(h):
+    """`print a, b` — space-separated, like Python 2 / DCPU std_print."""
+    screen = _eval_with_screen(h, "print 1, 2")
+    # '1', ' ', '2', then space fill.
+    assert screen[:3] == bytes([0x31, 0x20, 0x32])
+    assert screen[3] == 0x20
+
+
+def test_print_three_args(h):
+    screen = _eval_with_screen(h, "print 1, 2, 3")
+    assert screen[:5] == bytes([0x31, 0x20, 0x32, 0x20, 0x33])
+
+
+def test_print_paren_tuple_renders_as_tuple(h):
+    """`print (1, 2)` — explicit parens → single tuple value, repr-rendered."""
+    screen = _eval_with_screen(h, "print (1, 2)")
+    # Renders as "(1,2)" — uses STR_LPAREN, STR_COMMA_SPACE, STR_RPAREN; the
+    # comma renderer omits the trailing space (statics.asm note).
+    assert screen[:5] == bytes([0x28, 0x31, 0x2C, 0x32, 0x29])
+
+
+def test_print_no_args(h):
+    """Bare `print` — just emits a newline (cursor advances)."""
+    _eval_with_screen(h, "print")
+
+
 def test_print_string(h):
     screen = _eval_with_screen(h, 'print "Hi"')
     # 'H' (0x48) → screen code 0x08; 'i' (0x69) → 0x69 (lowercase outside the
@@ -1559,8 +1688,8 @@ def test_program_compute_and_print(h):
     ("len([1, 2, 3])", 3),
     ("len([1, 2, 3, 4, 5, 6, 7])", 7),
     ("len((1, 2))", 2),
-    ("len({})", 0),
-    ("len({1: 10, 2: 20})", 2),
+    ("len(<>)", 0),
+    ("len(<1: 10, 2: 20>)", 2),
 ])
 def test_len_builtin(h, text, expected):
     assert _eval(h, text) == expected
@@ -1715,7 +1844,7 @@ def test_multi_line_function_body(h):
     r"""Function bodies can span multiple statements via `\n` escapes
     in the string literal."""
     src = (
-        r'compute = "a = x + 1\nb = a * 2\nreturn b"' '\n'
+        r'compute = "a = x + 1\nb = a * 2\nreturn b"'  '\n'
         'compute(x=10)'
     )
     # x=10, a = 11, b = 22.
@@ -1725,7 +1854,7 @@ def test_multi_line_function_body(h):
 def test_function_with_loop(h):
     r"""Function body can contain a loop."""
     src = (
-        r'sum_to = "s = 0\ni = 1\nwhile i <= n:\n    s = s + i\n    i = i + 1\nreturn s"' '\n'
+        r'sum_to = "s = 0\ni = 1\nwhile i <= n:\n    s = s + i\n    i = i + 1\nreturn s"'  '\n'
         'sum_to(n=10)'
     )
     # 1+2+...+10 = 55
@@ -1734,7 +1863,7 @@ def test_function_with_loop(h):
 
 def test_function_with_if(h):
     src = (
-        r'sign = "if x > 0:\n    return 1\nif x < 0:\n    return -1\nreturn 0"' '\n'
+        r'sign = "if x > 0:\n    return 1\nif x < 0:\n    return -1\nreturn 0"'  '\n'
         'sign(x=42)'
     )
     assert _eval(h, src) == 1
@@ -1742,7 +1871,7 @@ def test_function_with_if(h):
 
 def test_function_with_if_else(h):
     src = (
-        r'absval = "if x < 0:\n    return -x\nelse:\n    return x"' '\n'
+        r'absval = "if x < 0:\n    return -x\nelse:\n    return x"'  '\n'
         'absval(x=-5)'
     )
     assert _eval(h, src) == 5
@@ -1776,7 +1905,7 @@ def test_function_assignment_is_local(h):
 def test_recursive_factorial(h):
     """The defining test: a recursive function calling itself by name."""
     src = (
-        r'fact = "if n <= 1:\n    return 1\nreturn n * fact(n=n-1)"' '\n'
+        r'fact = "if n <= 1:\n    return 1\nreturn n * fact(n=n-1)"'  '\n'
         'fact(n=6)'
     )
     # 6! = 720
@@ -1827,7 +1956,7 @@ def test_nested_function_access_grandparent(h):
 def test_attribute_read_int(h):
     """`d.x` reads the value at key 'x' in dict d."""
     src = (
-        'd = {"x": 42}\n'
+        'd = <"x": 42>\n'
         'd.x'
     )
     assert _eval(h, src) == 42
@@ -1836,7 +1965,7 @@ def test_attribute_read_int(h):
 def test_attribute_read_chained(h):
     """`a.b.c` chains attribute access through nested dicts."""
     src = (
-        'a = {"b": {"c": 7}}\n'
+        'a = <"b": <"c": 7>>\n'
         'a.b.c'
     )
     assert _eval(h, src) == 7
@@ -1845,7 +1974,7 @@ def test_attribute_read_chained(h):
 def test_method_call_me_binding(h):
     """The receiver dict is bound as `me` in the method's scope."""
     src = (
-        'obj = {"value": 99, "get": "return me.value"}\n'
+        'obj = <"value": 99, "get": "return me.value">\n'
         'obj.get()'
     )
     assert _eval(h, src) == 99
@@ -1853,7 +1982,7 @@ def test_method_call_me_binding(h):
 
 def test_method_call_with_kwarg(h):
     src = (
-        'obj = {"base": 10, "add": "return me.base + n"}\n'
+        'obj = <"base": 10, "add": "return me.base + n">\n'
         'obj.add(n=5)'
     )
     assert _eval(h, src) == 15
@@ -1861,7 +1990,7 @@ def test_method_call_with_kwarg(h):
 
 def test_method_with_arithmetic(h):
     src = (
-        'rect = {"w": 4, "h": 5, "area": "return me.w * me.h"}\n'
+        'rect = <"w": 4, "h": 5, "area": "return me.w * me.h">\n'
         'rect.area()'
     )
     assert _eval(h, src) == 20
@@ -1870,7 +1999,7 @@ def test_method_with_arithmetic(h):
 def test_method_does_not_pollute_other_calls(h):
     """After `obj.method()`, plain calls don't see `me`."""
     src = (
-        'obj = {"f": "return 0"}\n'
+        'obj = <"f": "return 0">\n'
         'plain = "return 42"\n'
         'obj.f()\n'
         'plain()'
@@ -1884,7 +2013,7 @@ def test_method_does_not_pollute_other_calls(h):
 def test_method_followed_by_arithmetic_then_plain_call(h):
     """`obj.f() + plain()` — plain() must NOT inherit me."""
     src = (
-        'obj = {"f": "return me.x", "x": 100}\n'
+        'obj = <"f": "return me.x", "x": 100>\n'
         'plain = "return 1"\n'
         'obj.f() + plain()'
     )
@@ -1897,7 +2026,7 @@ def test_method_followed_by_arithmetic_then_plain_call(h):
 def test_property_read_doesnt_set_me_for_later_call(h):
     """`a.b` (no parens) followed by another `f()` later — f must not get me=a."""
     src = (
-        'd = {"x": 5}\n'
+        'd = <"x": 5>\n'
         'fn = "return me"\n'
         'd.x\n'                 # property read, no call follows
         'fn()'                  # plain call. me should be 0 (NONE-equivalent).
@@ -1915,7 +2044,7 @@ def test_method_inside_method(h):
     """A method calls another method on the same receiver. Inner method
     needs its own me binding (= the receiver of the inner call)."""
     src = (
-        'obj = {"x": 7, "helper": "return me.x * 2", "outer": "return me.helper() + 1"}\n'
+        'obj = <"x": 7, "helper": "return me.x * 2", "outer": "return me.helper() + 1">\n'
         'obj.outer()'
     )
     # outer.me = obj. helper called via me.helper() → helper.me = obj.
@@ -1926,7 +2055,7 @@ def test_method_inside_method(h):
 def test_state_mutation_via_me(h):
     """A method mutates the receiver via `me.key = ...`."""
     src = (
-        'counter = {"value": 0, "tick": "me.value = me.value + 1\\nreturn me.value"}\n'
+        'counter = <"value": 0, "tick": "me.value = me.value + 1\\nreturn me.value">\n'
         'counter.tick()\n'
         'counter.tick()\n'
         'counter.tick()\n'
@@ -1938,7 +2067,7 @@ def test_state_mutation_via_me(h):
 def test_attribute_assignment_simple(h):
     """`obj.x = value` writes into the dict."""
     src = (
-        'd = {"x": 1}\n'
+        'd = <"x": 1>\n'
         'd.x = 99\n'
         'd.x'
     )
@@ -1948,7 +2077,7 @@ def test_attribute_assignment_simple(h):
 def test_attribute_assignment_creates_key(h):
     """Assigning to a missing key creates it (dict_set's normal behavior)."""
     src = (
-        'd = {}\n'
+        'd = <>\n'
         'd.fresh = 42\n'
         'd.fresh'
     )
@@ -1958,7 +2087,7 @@ def test_attribute_assignment_creates_key(h):
 def test_attribute_assignment_returns_none(h):
     """`d.x = v` evaluates to NONE (statement-as-expression convention)."""
     from conftest import TYPE_NONE
-    payload = list('d = {"x": 1}\nd.x = 99'.encode("ascii"))
+    payload = list('d = <"x": 1>\nd.x = 99'.encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
@@ -1969,7 +2098,7 @@ def test_attribute_assignment_returns_none(h):
 def test_method_can_mutate_unrelated_global(h):
     """A method can also do regular scope_set on its own locals."""
     src = (
-        'obj = {"x": 5, "double": "n = me.x * 2\\nreturn n"}\n'
+        'obj = <"x": 5, "double": "n = me.x * 2\\nreturn n">\n'
         'obj.double()'
     )
     assert _eval(h, src) == 10
@@ -1978,11 +2107,11 @@ def test_method_can_mutate_unrelated_global(h):
 def test_full_object_pattern(h):
     """A more complete object: bank account with deposit + balance."""
     src = (
-        'account = {'
+        'account = <'
         '  "balance": 100, '
         '  "deposit": "me.balance = me.balance + amount\\nreturn me.balance", '
         '  "withdraw": "me.balance = me.balance - amount\\nreturn me.balance"'
-        '}\n'
+        '>\n'
         'account.deposit(amount=50)\n'
         'account.deposit(amount=25)\n'
         'account.withdraw(amount=10)\n'
@@ -2138,7 +2267,7 @@ def test_slice_does_not_mutate_source_list(h):
 def test_deep_dot_chain_4(h):
     """`a.b.c.d` — 4-level attribute chain."""
     src = (
-        'a = {"b": {"c": {"d": 99}}}\n'
+        'a = <"b": <"c": <"d": 99>>>\n'
         'a.b.c.d'
     )
     assert _eval(h, src) == 99
@@ -2146,7 +2275,7 @@ def test_deep_dot_chain_4(h):
 
 def test_deep_dot_chain_5(h):
     src = (
-        'r = {"a": {"b": {"c": {"d": {"e": 7}}}}}\n'
+        'r = <"a": <"b": <"c": <"d": <"e": 7>>>>>\n'
         'r.a.b.c.d.e'
     )
     assert _eval(h, src) == 7
@@ -2155,7 +2284,7 @@ def test_deep_dot_chain_5(h):
 def test_dot_then_subscript(h):
     """`a.lst[0]` — dot then list subscript."""
     src = (
-        'a = {"lst": [10, 20, 30]}\n'
+        'a = <"lst": [10, 20, 30]>\n'
         'a.lst[1]'
     )
     assert _eval(h, src) == 20
@@ -2164,7 +2293,7 @@ def test_dot_then_subscript(h):
 def test_subscript_then_dot(h):
     """`xs[0].name` — subscript then dot. xs is list-of-dicts."""
     src = (
-        'xs = [{"name": 100}, {"name": 200}]\n'
+        'xs = [<"name": 100>, <"name": 200>]\n'
         'xs[1].name'
     )
     assert _eval(h, src) == 200
@@ -2173,7 +2302,7 @@ def test_subscript_then_dot(h):
 def test_dict_subscript_then_dot(h):
     """`d[k].name` — dict-of-dicts subscript then dot."""
     src = (
-        'd = {1: {"x": 10}, 2: {"x": 20}}\n'
+        'd = <1: <"x": 10>, 2: <"x": 20>>\n'
         'd[2].x'
     )
     assert _eval(h, src) == 20
@@ -2182,7 +2311,7 @@ def test_dict_subscript_then_dot(h):
 def test_dot_subscript_dot(h):
     """`a.lst[0].name`."""
     src = (
-        'a = {"lst": [{"name": 5}, {"name": 6}]}\n'
+        'a = <"lst": [<"name": 5>, <"name": 6>]>\n'
         'a.lst[1].name'
     )
     assert _eval(h, src) == 6
@@ -2191,7 +2320,7 @@ def test_dot_subscript_dot(h):
 def test_subscript_dot_subscript(h):
     """`xs[0].field[1]` — list-of-dicts-of-lists."""
     src = (
-        'xs = [{"v": [10, 20, 30]}]\n'
+        'xs = [<"v": [10, 20, 30]>]\n'
         'xs[0].v[2]'
     )
     assert _eval(h, src) == 30
@@ -2200,7 +2329,7 @@ def test_subscript_dot_subscript(h):
 def test_long_mixed_path(h):
     """`a.b.c[0].d` — long mixed dot/subscript chain."""
     src = (
-        'a = {"b": {"c": [{"d": 42}]}}\n'
+        'a = <"b": <"c": [<"d": 42>]>>\n'
         'a.b.c[0].d'
     )
     assert _eval(h, src) == 42
@@ -2218,7 +2347,7 @@ def test_nested_list_subscript(h):
 def test_dict_of_lists_of_dicts(h):
     """Mix of all container types with depth 4."""
     src = (
-        'data = {"items": [{"price": 100}, {"price": 200}]}\n'
+        'data = <"items": [<"price": 100>, <"price": 200>]>\n'
         'data.items[1].price'
     )
     assert _eval(h, src) == 200
@@ -2229,7 +2358,7 @@ def test_dict_of_lists_of_dicts(h):
 def test_chained_dot_assign(h):
     """`a.b.c = v` writes into the intermediate dict."""
     src = (
-        'a = {"b": {"c": 0}}\n'
+        'a = <"b": <"c": 0>>\n'
         'a.b.c = 99\n'
         'a.b.c'
     )
@@ -2239,7 +2368,7 @@ def test_chained_dot_assign(h):
 def test_chained_dot_assign_creates_key(h):
     """`a.b.fresh = v` creates a new key on the intermediate dict."""
     src = (
-        'a = {"b": {}}\n'
+        'a = <"b": <>>\n'
         'a.b.fresh = 42\n'
         'a.b.fresh'
     )
@@ -2249,7 +2378,7 @@ def test_chained_dot_assign_creates_key(h):
 def test_dot_then_subscript_assign(h):
     """`a.lst[0] = v` — write to a list element via attribute."""
     src = (
-        'a = {"lst": [10, 20, 30]}\n'
+        'a = <"lst": [10, 20, 30]>\n'
         'a.lst[0] = 99\n'
         'a.lst[0]'
     )
@@ -2259,7 +2388,7 @@ def test_dot_then_subscript_assign(h):
 def test_subscript_then_dot_assign(h):
     """`xs[0].name = v` — write to attribute through subscript."""
     src = (
-        'xs = [{"name": 1}, {"name": 2}]\n'
+        'xs = [<"name": 1>, <"name": 2>]\n'
         'xs[0].name = 99\n'
         'xs[0].name'
     )
@@ -2279,7 +2408,7 @@ def test_nested_subscript_assign(h):
 def test_dict_of_dicts_subscript_assign(h):
     """`d[k1][k2] = v` — dict-of-dicts subscript chain assign."""
     src = (
-        'd = {1: {"x": 0}, 2: {"x": 0}}\n'
+        'd = <1: <"x": 0>, 2: <"x": 0>>\n'
         'd[2]["x"] = 88\n'
         'd[2]["x"]'
     )
@@ -2289,7 +2418,7 @@ def test_dict_of_dicts_subscript_assign(h):
 def test_long_path_assign(h):
     """`a.b.c[0].d = v` — long mixed assign."""
     src = (
-        'a = {"b": {"c": [{"d": 0}]}}\n'
+        'a = <"b": <"c": [<"d": 0>]>>\n'
         'a.b.c[0].d = 77\n'
         'a.b.c[0].d'
     )
@@ -2301,7 +2430,7 @@ def test_long_path_assign(h):
 def test_method_call_on_dot_chain(h):
     """`a.b.method()` — receiver is the dict reached via chain."""
     src = (
-        'a = {"b": {"v": 7, "get": "return me.v"}}\n'
+        'a = <"b": <"v": 7, "get": "return me.v">>\n'
         'a.b.get()'
     )
     assert _eval(h, src) == 7
@@ -2310,7 +2439,7 @@ def test_method_call_on_dot_chain(h):
 def test_method_call_on_subscript(h):
     """`xs[0].method()` — receiver is a list element."""
     src = (
-        'xs = [{"v": 11, "get": "return me.v"}]\n'
+        'xs = [<"v": 11, "get": "return me.v">]\n'
         'xs[0].get()'
     )
     assert _eval(h, src) == 11
@@ -2319,7 +2448,7 @@ def test_method_call_on_subscript(h):
 def test_method_call_on_long_path(h):
     """`a.b.lst[0].method()` — long-path method invocation."""
     src = (
-        'a = {"b": {"lst": [{"v": 9, "get": "return me.v"}]}}\n'
+        'a = <"b": <"lst": [<"v": 9, "get": "return me.v">]>>\n'
         'a.b.lst[0].get()'
     )
     assert _eval(h, src) == 9
@@ -2328,7 +2457,7 @@ def test_method_call_on_long_path(h):
 def test_method_mutates_deep_receiver(h):
     """Method on a deep receiver mutates that receiver, not the outer."""
     src = (
-        'a = {"b": {"v": 0, "set": "me.v = n\\nreturn me.v"}}\n'
+        'a = <"b": <"v": 0, "set": "me.v = n\\nreturn me.v">>\n'
         'a.b.set(n=5)\n'
         'a.b.v'
     )
@@ -2340,7 +2469,7 @@ def test_method_mutates_deep_receiver(h):
 def test_slice_on_attribute(h):
     """`a.lst[1:3]` — slice on attribute-accessed list."""
     src = (
-        'a = {"lst": [10, 20, 30, 40, 50]}\n'
+        'a = <"lst": [10, 20, 30, 40, 50]>\n'
         'a.lst[1:3]'
     )
     assert _eval_list_ints(h, src) == [20, 30]
@@ -2358,7 +2487,7 @@ def test_slice_on_nested_subscript(h):
 def test_slice_str_on_attribute(h):
     """`a.s[1:4]` — string slice via attribute."""
     src = (
-        'a = {"s": "abcdef"}\n'
+        'a = <"s": "abcdef">\n'
         'a.s[1:4]'
     )
     assert _eval_str(h, src) == b"bcd"
@@ -2378,7 +2507,7 @@ def test_list_subscript_assign_simple(h):
 
 def test_dict_string_key_then_list_index(h):
     """`d[\"a\"][1]` — string-keyed dict, value is a list."""
-    src = 'd = {"a": [1, 2, 3]}\nd["a"][1]'
+    src = 'd = <"a": [1, 2, 3]>\nd["a"][1]'
     assert _eval(h, src) == 2
 
 
@@ -2389,7 +2518,7 @@ def test_dict_string_key_then_list_index(h):
 def test_and_short_circuits_rhs_call(h):
     """`0 and bump()` must not call bump."""
     src = (
-        'tracker = {"n": 0}\n'
+        'tracker = <"n": 0>\n'
         'bump = "tracker.n = tracker.n + 1\\nreturn 1"\n'
         'r = 0 and bump()\n'           # LHS falsy → bump skipped
         'tracker.n'
@@ -2400,7 +2529,7 @@ def test_and_short_circuits_rhs_call(h):
 def test_and_evaluates_rhs_when_lhs_truthy(h):
     """`1 and bump()` must call bump."""
     src = (
-        'tracker = {"n": 0}\n'
+        'tracker = <"n": 0>\n'
         'bump = "tracker.n = tracker.n + 1\\nreturn 1"\n'
         'r = 1 and bump()\n'
         'tracker.n'
@@ -2411,7 +2540,7 @@ def test_and_evaluates_rhs_when_lhs_truthy(h):
 def test_or_short_circuits_rhs_call(h):
     """`1 or bump()` must not call bump."""
     src = (
-        'tracker = {"n": 0}\n'
+        'tracker = <"n": 0>\n'
         'bump = "tracker.n = tracker.n + 1\\nreturn 1"\n'
         'r = 1 or bump()\n'
         'tracker.n'
@@ -2422,7 +2551,7 @@ def test_or_short_circuits_rhs_call(h):
 def test_or_evaluates_rhs_when_lhs_falsy(h):
     """`0 or bump()` must call bump."""
     src = (
-        'tracker = {"n": 0}\n'
+        'tracker = <"n": 0>\n'
         'bump = "tracker.n = tracker.n + 1\\nreturn 1"\n'
         'r = 0 or bump()\n'
         'tracker.n'
@@ -2433,7 +2562,7 @@ def test_or_evaluates_rhs_when_lhs_falsy(h):
 def test_and_chain_stops_at_first_falsy(h):
     """`1 and 0 and bump()` — short-circuits at the 0; bump never called."""
     src = (
-        'tracker = {"n": 0}\n'
+        'tracker = <"n": 0>\n'
         'bump = "tracker.n = tracker.n + 1\\nreturn 1"\n'
         'r = 1 and 0 and bump()\n'
         'tracker.n'
@@ -2444,7 +2573,7 @@ def test_and_chain_stops_at_first_falsy(h):
 def test_or_chain_stops_at_first_truthy(h):
     """`0 or 1 or bump()` — short-circuits at the 1; bump never called."""
     src = (
-        'tracker = {"n": 0}\n'
+        'tracker = <"n": 0>\n'
         'bump = "tracker.n = tracker.n + 1\\nreturn 1"\n'
         'r = 0 or 1 or bump()\n'
         'tracker.n'
@@ -2456,7 +2585,7 @@ def test_short_circuit_with_subscript_rhs(h):
     """RHS containing a subscript must skip cleanly through `[ ]`."""
     src = (
         'xs = [10, 20, 30]\n'
-        'tracker = {"n": 0}\n'
+        'tracker = <"n": 0>\n'
         'mark = "tracker.n = 1\\nreturn 0"\n'
         'r = 0 and xs[mark()]\n'        # falsy short-circuit, mark not called
         'tracker.n'
@@ -2467,7 +2596,7 @@ def test_short_circuit_with_subscript_rhs(h):
 def test_short_circuit_with_dot_chain_rhs(h):
     """RHS like `a.b.c` must skip cleanly through dot chain."""
     src = (
-        'a = {"b": {"c": 0}}\n'
+        'a = <"b": <"c": 0>>\n'
         'r = 1 or a.b.c\n'              # truthy short-circuit; access skipped
         'r'
     )
@@ -2477,7 +2606,7 @@ def test_short_circuit_with_dot_chain_rhs(h):
 def test_short_circuit_with_arithmetic_rhs(h):
     """RHS with + and * must skip through ordinary infix ops."""
     src = (
-        'tracker = {"n": 0}\n'
+        'tracker = <"n": 0>\n'
         'side = "tracker.n = 1\\nreturn 5"\n'
         'r = 0 and 2 + 3 * side()\n'
         'tracker.n'
@@ -2496,7 +2625,7 @@ def test_short_circuit_preserves_lhs_value(h):
 def test_short_circuit_with_paren_grouped_rhs(h):
     """RHS inside parens — depth tracker must consume the whole group."""
     src = (
-        'tracker = {"n": 0}\n'
+        'tracker = <"n": 0>\n'
         'side = "tracker.n = 1\\nreturn 1"\n'
         'r = 0 and (1 + side())\n'
         'tracker.n'
@@ -2507,7 +2636,7 @@ def test_short_circuit_with_paren_grouped_rhs(h):
 def test_short_circuit_with_unary_rhs(h):
     """RHS starts with prefix unary — skip must consume it."""
     src = (
-        'tracker = {"n": 0}\n'
+        'tracker = <"n": 0>\n'
         'side = "tracker.n = 1\\nreturn 1"\n'
         'r = 1 or -side()\n'            # truthy → skip; side not called
         'tracker.n'
@@ -2518,7 +2647,7 @@ def test_short_circuit_with_unary_rhs(h):
 def test_mixed_and_or_short_circuit(h):
     """`0 or 1 and side()` — `1 and side()` evaluates (1 truthy), side called."""
     src = (
-        'tracker = {"n": 0}\n'
+        'tracker = <"n": 0>\n'
         'side = "tracker.n = 7\\nreturn 1"\n'
         'r = 0 or 1 and side()\n'
         'tracker.n'
@@ -2529,7 +2658,7 @@ def test_mixed_and_or_short_circuit(h):
 def test_short_circuit_in_if_condition(h):
     """`if 0 and side(): ...` — side not called even though `if` evaluates."""
     src = (
-        'tracker = {"n": 0}\n'
+        'tracker = <"n": 0>\n'
         'side = "tracker.n = 1\\nreturn True"\n'
         'if 0 and side():\n'
         '    pass\n'
@@ -2573,11 +2702,11 @@ def test_multiline_list_empty(h):
 
 def test_multiline_dict_basic(h):
     src = (
-        'd = {\n'
+        'd = <\n'
         '    "a": 1,\n'
         '    "b": 2,\n'
         '    "c": 3\n'
-        '}\n'
+        '>\n'
         'd["b"]'
     )
     assert _eval(h, src) == 2
@@ -2586,10 +2715,10 @@ def test_multiline_dict_basic(h):
 def test_multiline_dict_value_on_next_line(h):
     """Newline after `:` allowed."""
     src = (
-        'd = {\n'
+        'd = <\n'
         '    "key":\n'
         '        99\n'
-        '}\n'
+        '>\n'
         'd["key"]'
     )
     assert _eval(h, src) == 99
@@ -2611,14 +2740,14 @@ def test_multiline_nested_literals(h):
     """List of dicts spanning many lines."""
     src = (
         'objs = [\n'
-        '    {\n'
+        '    <\n'
         '        "name": 1,\n'
         '        "value": 10\n'
-        '    },\n'
-        '    {\n'
+        '    >,\n'
+        '    <\n'
         '        "name": 2,\n'
         '        "value": 20\n'
-        '    }\n'
+        '    >\n'
         ']\n'
         'objs[1]["value"]'
     )
@@ -2628,7 +2757,7 @@ def test_multiline_nested_literals(h):
 def test_for_over_dict_iterates_entries(h):
     """`for k, v in d:` unpacks each entry tuple (admiral semantics)."""
     src = (
-        'd = {1: 10, 2: 20, 3: 30}\n'
+        'd = <1: 10, 2: 20, 3: 30>\n'
         'k_total = 0\n'
         'v_total = 0\n'
         'for k, v in d:\n'
@@ -2640,10 +2769,61 @@ def test_for_over_dict_iterates_entries(h):
     assert _eval(h, src) == 6006
 
 
+def test_inline_for_body(h):
+    """`for x in [1,2,3]: r = x` — inline simple-statement body."""
+    src = (
+        'r = 0\n'
+        'for x in [1,2,3]: r = x\n'
+        'r'
+    )
+    assert _eval(h, src) == 3
+
+
+def test_inline_for_dict_tuple_target(h):
+    """REPL idiom: `for name, size in dir(): print name`."""
+    src = (
+        'd = <"ADMIRAL": 114>\n'
+        'r = 0\n'
+        'for name, size in d: r = size\n'
+        'r'
+    )
+    assert _eval(h, src) == 114
+
+
+def test_inline_if_body(h):
+    """`if x: r = 1` — inline simple-statement body."""
+    src = (
+        'r = 0\n'
+        'if 1: r = 1\n'
+        'r'
+    )
+    assert _eval(h, src) == 1
+
+
+def test_inline_if_skipped(h):
+    """Inline if-body is skipped when condition is false."""
+    src = (
+        'r = 7\n'
+        'if 0: r = 1\n'
+        'r'
+    )
+    assert _eval(h, src) == 7
+
+
+def test_inline_while_body(h):
+    """`while x: ...` with inline body."""
+    src = (
+        'i = 0\n'
+        'while i < 3: i = i + 1\n'
+        'i'
+    )
+    assert _eval(h, src) == 3
+
+
 def test_for_over_dict_keys_only(h):
     """`for k, _ in d:` — Python-style "keys only" via underscore unpack."""
     src = (
-        'd = {"a": 1, "b": 2, "c": 3}\n'
+        'd = <"a": 1, "b": 2, "c": 3>\n'
         'count = 0\n'
         'for k, _ in d:\n'
         '    count = count + d[k]\n'
@@ -2655,7 +2835,7 @@ def test_for_over_dict_keys_only(h):
 def test_for_over_dict_entry_via_index(h):
     """`for entry in d:` binds the whole (key, value) tuple — index it."""
     src = (
-        'd = {1: 100, 2: 200}\n'
+        'd = <1: 100, 2: 200>\n'
         'total = 0\n'
         'for entry in d:\n'
         '    total = total + entry[0] + entry[1]\n'
@@ -2667,7 +2847,7 @@ def test_for_over_dict_entry_via_index(h):
 def test_for_over_empty_dict_zero_iterations(h):
     src = (
         'count = 0\n'
-        'for k, v in {}:\n'
+        'for k, v in <>:\n'
         '    count = count + 1\n'
         'count'
     )
@@ -2677,7 +2857,7 @@ def test_for_over_empty_dict_zero_iterations(h):
 def test_for_over_dict_with_break(h):
     """`break` inside a dict-iter loop exits cleanly."""
     src = (
-        'd = {1: 10, 2: 20, 3: 30}\n'
+        'd = <1: 10, 2: 20, 3: 30>\n'
         'last_v = 0\n'
         'for k, v in d:\n'
         '    last_v = v\n'
@@ -2702,7 +2882,7 @@ def test_short_circuit_in_while_condition(h):
     """`while False or side():` — side called, but result is `False or 0`
     on the second iteration (assuming side returns 0). Loop exits."""
     src = (
-        'tracker = {"n": 0}\n'
+        'tracker = <"n": 0>\n'
         'side = "tracker.n = tracker.n + 1\\nreturn tracker.n < 3"\n'
         'while False or side():\n'
         '    pass\n'
@@ -2874,21 +3054,21 @@ def test_list_pop_until_one(h):
 
 
 def test_dict_subscript_present(h):
-    assert _eval(h, '{1: 10, 2: 20}[2]') == 20
+    assert _eval(h, '<1: 10, 2: 20>[2]') == 20
 
 
 def test_dict_in_membership(h):
-    assert _eval_bool(h, '99 in {1: 10}') is False
-    assert _eval_bool(h, '1 in {1: 10}') is True
+    assert _eval_bool(h, '99 in <1: 10>') is False
+    assert _eval_bool(h, '1 in <1: 10>') is True
 
 
 def test_dict_keys_length(h):
-    assert _eval(h, 'len({1: 10, 2: 20, 3: 30}.keys())') == 3
+    assert _eval(h, 'len(<1: 10, 2: 20, 3: 30>.keys())') == 3
 
 
 def test_dict_keys_iteration_via_subscript(h):
     src = (
-        'd = {1: 10, 2: 20, 3: 30}\n'
+        'd = <1: 10, 2: 20, 3: 30>\n'
         'd.keys()[1]'
     )
     assert _eval(h, src) == 2
@@ -2896,7 +3076,7 @@ def test_dict_keys_iteration_via_subscript(h):
 
 def test_dict_values_extracts_values(h):
     src = (
-        'd = {1: 10, 2: 20, 3: 30}\n'
+        'd = <1: 10, 2: 20, 3: 30>\n'
         'd.values()[1]'
     )
     assert _eval(h, src) == 20
@@ -2905,7 +3085,7 @@ def test_dict_values_extracts_values(h):
 def test_dict_iterate_via_values(h):
     src = (
         'total = 0\n'
-        'for v in {1: 10, 2: 20, 3: 30}.values():\n'
+        'for v in <1: 10, 2: 20, 3: 30>.values():\n'
         '    total = total + v\n'
         'total'
     )
@@ -2914,7 +3094,7 @@ def test_dict_iterate_via_values(h):
 
 def test_user_dict_method_shadows_builtin_keys(h):
     src = (
-        'obj = {"keys": "return 42"}\n'
+        'obj = <"keys": "return 42">\n'
         'obj.keys()'
     )
     assert _eval(h, src) == 42
@@ -2940,7 +3120,7 @@ def test_del_list_shrinks(h):
 
 def test_del_dict_key(h):
     src = (
-        'd = {1: 10, 2: 20, 3: 30}\n'
+        'd = <1: 10, 2: 20, 3: 30>\n'
         'del d[2]\n'
         'len(d)'
     )
@@ -2949,7 +3129,7 @@ def test_del_dict_key(h):
 
 def test_del_dict_then_in(h):
     src = (
-        'd = {1: 10, 2: 20}\n'
+        'd = <1: 10, 2: 20>\n'
         'del d[1]\n'
         '1 in d'
     )
@@ -3182,7 +3362,7 @@ def test_augass_list_extend(h):
 def test_dict_create_returns_new_dict(h):
     """create() returns a fresh dict; modifying it doesn't touch the proto."""
     src = (
-        'p = {"x": 1}\n'
+        'p = <"x": 1>\n'
         'c = p.create()\n'
         'c["x"] = 2\n'
         'p["x"]'
@@ -3192,7 +3372,7 @@ def test_dict_create_returns_new_dict(h):
 
 def test_dict_create_child_holds_own_writes(h):
     src = (
-        'p = {"x": 1}\n'
+        'p = <"x": 1>\n'
         'c = p.create()\n'
         'c["x"] = 2\n'
         'c["x"]'
@@ -3203,7 +3383,7 @@ def test_dict_create_child_holds_own_writes(h):
 def test_dict_create_child_inherits_field(h):
     """Field defined on prototype is visible on child by attribute access."""
     src = (
-        'p = {"x": 7}\n'
+        'p = <"x": 7>\n'
         'c = p.create()\n'
         'c.x'
     )
@@ -3213,7 +3393,7 @@ def test_dict_create_child_inherits_field(h):
 def test_dict_create_method_inherits_from_prototype(h):
     """Method defined on prototype runs on child via me-binding."""
     src = (
-        'ship = {"spd": 0, "go": "me.spd = 8"}\n'
+        'ship = <"spd": 0, "go": "me.spd = 8">\n'
         'shuttle = ship.create()\n'
         'shuttle.go()\n'
         'shuttle.spd'
@@ -3223,7 +3403,7 @@ def test_dict_create_method_inherits_from_prototype(h):
 
 def test_dict_create_method_does_not_pollute_prototype(h):
     src = (
-        'ship = {"spd": 0, "go": "me.spd = 8"}\n'
+        'ship = <"spd": 0, "go": "me.spd = 8">\n'
         'shuttle = ship.create()\n'
         'shuttle.go()\n'
         'ship.spd'
@@ -3234,7 +3414,7 @@ def test_dict_create_method_does_not_pollute_prototype(h):
 def test_dict_create_prototype_changes_propagate(h):
     """Updating the prototype is reflected in children that don't shadow."""
     src = (
-        'p = {"x": 1}\n'
+        'p = <"x": 1>\n'
         'c = p.create()\n'
         'p["x"] = 99\n'
         'c.x'
@@ -3245,7 +3425,7 @@ def test_dict_create_prototype_changes_propagate(h):
 def test_dict_create_three_level_chain(h):
     """create() can chain — grandchild reads through grandparent."""
     src = (
-        'a = {"v": 5}\n'
+        'a = <"v": 5>\n'
         'b = a.create()\n'
         'c = b.create()\n'
         'c.v'
@@ -3256,7 +3436,7 @@ def test_dict_create_three_level_chain(h):
 def test_dict_create_subscript_inherits(h):
     """Subscript reads (`obj["key"]`) walk prototype too."""
     src = (
-        'p = {"x": 11}\n'
+        'p = <"x": 11>\n'
         'c = p.create()\n'
         'c["x"]'
     )
@@ -3330,9 +3510,10 @@ def test_str_int_in_list_unchanged(h):
 
 
 def test_str_dict_quotes_string_keys_and_values(h):
-    """str({'a': 'b'}) → "{'a':'b'}" — both key and value quoted, key/value
-    separator is a bare colon."""
-    assert _eval_str(h, 'str({"a": "b"})') == b"{'a':'b'}"
+    """str(<'a': 'b'>) → "<'a':'b'>" — both key and value quoted, key/value
+    separator is a bare colon. Brackets are angle, not curly: the C64
+    character ROM has no `<` `>` glyphs."""
+    assert _eval_str(h, 'str(<"a": "b">)') == b"<'a':'b'>"
 
 
 def test_str_tuple_quotes_inner(h):
@@ -3820,7 +4001,7 @@ def test_tuple_assign_with_subscript_target(h):
 def test_tuple_assign_with_attr_target(h):
     """`a, obj.x = (1, 99)` — mixed name + attribute LHS."""
     src = (
-        'obj = {"x": 0}\n'
+        'obj = <"x": 0>\n'
         'a, obj.x = (1, 99)\n'
         'a + obj.x * 10'
     )
@@ -3830,7 +4011,7 @@ def test_tuple_assign_with_attr_target(h):
 def test_tuple_assign_chain_target(h):
     """`a, obj.inner.v = (1, 99)` — chain attribute LHS."""
     src = (
-        'obj = {"inner": {"v": 0}}\n'
+        'obj = <"inner": <"v": 0>>\n'
         'a, obj.inner.v = (1, 99)\n'
         'a + obj.inner.v * 10'
     )
@@ -3922,7 +4103,7 @@ def test_no_regression_subscript_assign(h):
 
 def test_no_regression_attr_assign(h):
     src = (
-        'o = {}\n'
+        'o = <>\n'
         'o.x = 7\n'
         'o.x'
     )
@@ -3986,7 +4167,7 @@ def test_for_tuple_unpack_over_list_of_lists(h):
 def test_for_dict_iteration_uses_keys_for_lookup(h):
     """Common idiom: `for k, v in d` to iterate entries directly."""
     src = (
-        'd = {"a": 1, "b": 2, "c": 3}\n'
+        'd = <"a": 1, "b": 2, "c": 3>\n'
         'total = 0\n'
         'for k, v in d:\n'
         '    total = total + v\n'
@@ -3998,7 +4179,7 @@ def test_for_dict_iteration_uses_keys_for_lookup(h):
 def test_for_single_name_over_dict_binds_entry(h):
     """`for entry in d` binds the whole (key, value) tuple."""
     src = (
-        'd = {10: 1, 20: 2}\n'
+        'd = <10: 1, 20: 2>\n'
         'k0 = 0\n'
         'v0 = 0\n'
         'for entry in d:\n'
@@ -4322,19 +4503,21 @@ def test_scroll_full_blanks_screen(h):
 # --- cls -------------------------------------------------------------------
 
 def test_cls_blanks_screen(h):
-    """cls() fills every cell with screen-code space."""
+    """`cls` keyword fills every cell with screen-code space."""
     for row in range(25):
         _fill_screen_row(h, row, 0x42)
-    _eval_no_result(h, 'cls()')
+    _eval_no_result(h, 'cls')
     for i in range(25 * SCREEN_COLS):
         assert h.mpu.memory[SCREEN_BASE + i] == 0x20, f"cell {i} not blanked"
 
 
 def test_cls_resets_cursor(h):
-    """cls() moves cursor to (0, 0)."""
-    _eval_no_result(h, 'cursor(13, 7)\ncls()')
+    """`cls` moves cursor to (0, 0)."""
+    _eval_no_result(h, 'cursor(13, 7)\ncls')
     assert _eval(h, 'cursor()[0]') == 0
     assert _eval(h, 'cursor()[1]') == 0
+
+
 
 
 # --- getc / key (KERNAL GETIN-backed builtins) -----------------------------
@@ -4356,12 +4539,12 @@ def _stub_getin_always(h, return_val: int) -> None:
     h.mpu.memory[KERNAL_GETIN + 2] = 0x60      # RTS
 
 
-def _eval_to_str(h, source: str) -> bytes:
+def _eval_to_str(h, source: str, max_steps: int = 2_000_000) -> bytes:
     """Evaluate source, return RV's TYPE_STR payload as bytes."""
     payload = list(source.encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
-    h.call("parser_eval", max_steps=2_000_000)
+    h.call("parser_eval", max_steps=max_steps)
     rv = h.read_word(RV)
     obj = h.read_word(rv)
     o_len = h.read_word(obj)
@@ -4527,6 +4710,13 @@ def test_edit_with_text_save_unchanged(h):
     assert _eval_to_str(h, 'edit("hello")') == b'hello'
 
 
+def test_edit_with_long_text_preload(h):
+    """edit(long_str) preserves the full string (was byte-truncated at 256)."""
+    _stub_getin_queue(h, bytes([F1_SAVE]))
+    src = 's = "k" * 400\nedit(s)'
+    assert _eval_to_str(h, src, max_steps=20_000_000) == b'k' * 400
+
+
 def test_edit_type_chars_then_save(h):
     """edit() + 'A' 'B' + F1 → 'ab' (typed uppercase A-Z fold to lowercase
     so the lexer's keyword table — which is lowercase-only — recognizes
@@ -4611,47 +4801,53 @@ def test_edit_yank_with_no_clip_is_noop(h):
 
 # --- parser_exec — REPL-flavored variant that reuses caller's scope ---------
 
-def test_error_handler_recovers_to_repl_loop(h):
+def test_error_handler_recovers_to_repl_loop(hd):
     """A panic during parser_exec must not wedge the system: error_handler
     restores the snapshot, prints `?ERROR XX`, and jumps to repl_loop. We
     verify by setting up a fake REPL state, triggering a panic, and asserting
-    PC eventually reaches repl_loop (i.e., the prompt is about to redraw)."""
+    PC eventually reaches repl_loop (i.e., the prompt is about to redraw).
+
+    Uses `hd` because error_handler now closes any leaked disk channels via
+    KERNAL CLOSE — the kernal_mock traps those calls (which would otherwise
+    branch into uninitialized RAM at $FFC3)."""
     GLOBAL_SCOPE = 0x42
     ROOT_SCOPE = 0x44
-    h.call("screen_init")
-    h.call("dict_alloc")
-    scope = h.read_word(RV)
-    h.write_word(GLOBAL_SCOPE, scope)
-    h.write_word(ROOT_SCOPE, scope)
-    h.rs_push(scope)
+    hd.call("screen_init")
+    hd.call("dict_alloc")
+    scope = hd.read_word(RV)
+    hd.write_word(GLOBAL_SCOPE, scope)
+    hd.write_word(ROOT_SCOPE, scope)
+    hd.rs_push(scope)
 
-    repl_rec_s = h.sym["repl_rec_s"]
-    repl_rec_rsp = h.sym["repl_rec_rsp"]
-    repl_rec_fsp = h.sym["repl_rec_fsp"]
-    repl_rec_fp = h.sym["repl_rec_fp"]
-    h.mpu.memory[repl_rec_s] = h.mpu.sp
-    h.write_word(repl_rec_rsp, h.read_word(0x04))
-    h.write_word(repl_rec_fsp, h.read_word(0x02))
-    h.write_word(repl_rec_fp,  h.read_word(0x06))
+    repl_rec_s = hd.sym["repl_rec_s"]
+    repl_rec_rsp = hd.sym["repl_rec_rsp"]
+    repl_rec_fsp = hd.sym["repl_rec_fsp"]
+    repl_rec_fp = hd.sym["repl_rec_fp"]
+    hd.mpu.memory[repl_rec_s] = hd.mpu.sp
+    hd.write_word(repl_rec_rsp, hd.read_word(0x04))
+    hd.write_word(repl_rec_fsp, hd.read_word(0x02))
+    hd.write_word(repl_rec_fp,  hd.read_word(0x06))
 
     # `mem` is a builtin, but bare-name lookup raises ERR_LEX because the
     # scope chain doesn't contain builtins. Drives the panic-and-recover
     # path the user hits when they type any unbound name.
-    src = place_str(h, 0x8500, list(b"mem"))
-    h.rs_push(src)
-    repl_loop = h.sym["repl_loop"]
-    h.mpu.pc = h.sym["parser_exec"]
+    src = place_str(hd, 0x8500, list(b"mem"))
+    hd.rs_push(src)
+    repl_loop = hd.sym["repl_loop"]
+    hd.mpu.pc = hd.sym["parser_exec"]
     for _ in range(2_000_000):
-        if h.mpu.pc == repl_loop:
+        if hd.mpu.pc == repl_loop:
             break
-        h.mpu.step()
+        if hd.kernal_mock.step_hook():
+            continue
+        hd.mpu.step()
     else:
         raise TimeoutError("error_handler did not jmp repl_loop")
 
     # ERROR_CODE should be cleared by error_handler before reprompt.
-    assert h.mpu.memory[0x27] == 0
+    assert hd.mpu.memory[0x27] == 0
     # The "?ERR" prefix should have been printed somewhere on screen.
-    screen_chunk = bytes(h.mpu.memory[0x0400:0x0500])
+    screen_chunk = bytes(hd.mpu.memory[0x0400:0x0500])
     # Screen-codes for '?ERR': '?'=$3F, 'E'→$05, 'R'→$12.
     # Look for the sequence anywhere in the row band.
     needle = bytes([0x3F, 0x05, 0x12, 0x12])

@@ -477,7 +477,7 @@ def test_float_to_int_round_trip_small(hfp):
 def run_binop(hfp, op_label: str, left: float, right: float) -> float:
     rsp_initial = hfp.rsp
     a = place_python_float(hfp, 0x8500, left)
-    b = place_python_float(hfp, 0x6100, right)
+    b = place_python_float(hfp, 0x9100, right)
     hfp.rs_push(a)
     hfp.rs_push(b)
     hfp.call(op_label)
@@ -578,7 +578,7 @@ def test_div_two_negatives(hfp):
 def test_div_by_zero_panics(hfp):
     rsp_initial = hfp.rsp
     a = place_python_float(hfp, 0x8500, 1.0)
-    b = place_python_float(hfp, 0x6100, 0.0)
+    b = place_python_float(hfp, 0x9100, 0.0)
     hfp.rs_push(a)
     hfp.rs_push(b)
     hfp.call("float_div", expect_panic=True)
@@ -628,7 +628,7 @@ def test_neg_pi(hfp):
 def run_cmp(hfp, left: float, right: float) -> int:
     rsp_initial = hfp.rsp
     a = place_python_float(hfp, 0x8500, left)
-    b = place_python_float(hfp, 0x6100, right)
+    b = place_python_float(hfp, 0x9100, right)
     hfp.rs_push(a)
     hfp.rs_push(b)
     hfp.call("float_cmp")
@@ -671,7 +671,7 @@ def test_cmp_neg_two_lt_neg_one(hfp):
 def test_cmp_close_values(hfp):
     """Bit-exact compare — two slightly different values are not equal."""
     a = place_python_float(hfp, 0x8500, 1.0)
-    b = place_python_float(hfp, 0x6100, 1.0 + 1e-7)
+    b = place_python_float(hfp, 0x9100, 1.0 + 1e-7)
     hfp.rs_push(a)
     hfp.rs_push(b)
     hfp.call("float_cmp")
@@ -748,20 +748,20 @@ def test_val_eq_same_handle(hfp):
 
 def test_val_eq_distinct_handles_same_value(hfp):
     a = place_python_float(hfp, 0x8500, 1.0)
-    b = place_python_float(hfp, 0x6100, 1.0)
+    b = place_python_float(hfp, 0x9100, 1.0)
     assert run_val_eq(hfp, a, b) == 1
 
 
 def test_val_eq_different_values(hfp):
     a = place_python_float(hfp, 0x8500, 1.0)
-    b = place_python_float(hfp, 0x6100, 2.0)
+    b = place_python_float(hfp, 0x9100, 2.0)
     assert run_val_eq(hfp, a, b) == 0
 
 
 def test_val_eq_int_vs_float_no_promotion(hfp):
     """Cross-type INT vs FLOAT: not equal (no promotion in v1)."""
     i = place_int(hfp, 0x8500, [0x01])
-    f = place_python_float(hfp, 0x6100, 1.0)
+    f = place_python_float(hfp, 0x9100, 1.0)
     assert run_val_eq(hfp, i, f) == 0
 
 
@@ -784,26 +784,26 @@ def run_val_cmp(hfp, a: int, b: int) -> int:
 
 def test_val_cmp_floats_lt(hfp):
     a = place_python_float(hfp, 0x8500, 1.0)
-    b = place_python_float(hfp, 0x6100, 2.0)
+    b = place_python_float(hfp, 0x9100, 2.0)
     assert run_val_cmp(hfp, a, b) == 0xFF
 
 
 def test_val_cmp_floats_gt(hfp):
     a = place_python_float(hfp, 0x8500, 2.0)
-    b = place_python_float(hfp, 0x6100, 1.0)
+    b = place_python_float(hfp, 0x9100, 1.0)
     assert run_val_cmp(hfp, a, b) == 1
 
 
 def test_val_cmp_floats_eq(hfp):
     a = place_python_float(hfp, 0x8500, 1.0)
-    b = place_python_float(hfp, 0x6100, 1.0)
+    b = place_python_float(hfp, 0x9100, 1.0)
     assert run_val_cmp(hfp, a, b) == 0
 
 
 def test_val_cmp_int_vs_float_orders_by_type_tag(hfp):
     """No cross-type promotion: TYPE_INT ($20) < TYPE_FLOAT ($27)."""
     i = place_int(hfp, 0x8500, [0x02])
-    f = place_python_float(hfp, 0x6100, 1.0)
+    f = place_python_float(hfp, 0x9100, 1.0)
     # i is "less" because $20 < $27.
     assert run_val_cmp(hfp, i, f) == 0xFF
     assert run_val_cmp(hfp, f, i) == 0x01
@@ -877,15 +877,15 @@ def test_chained_ops(hfp):
     """(2 + 3) * (10 - 6) = 20"""
     rsp_initial = hfp.rsp
     a = place_python_float(hfp, 0x8500, 2.0)
-    b = place_python_float(hfp, 0x6100, 3.0)
+    b = place_python_float(hfp, 0x9100, 3.0)
     hfp.rs_push(a)
     hfp.rs_push(b)
     hfp.call("float_add")
     sum1 = hfp.read_word(RV)
     assert hfp.rsp == rsp_initial
 
-    c = place_python_float(hfp, 0x6200, 10.0)
-    d = place_python_float(hfp, 0x6300, 6.0)
+    c = place_python_float(hfp, 0x9200, 10.0)
+    d = place_python_float(hfp, 0x9300, 6.0)
     hfp.rs_push(c)
     hfp.rs_push(d)
     hfp.call("float_sub")

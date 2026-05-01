@@ -140,11 +140,11 @@ def test_inserts_keep_keys_sorted(h):
     """Dict keeps keys sorted internally regardless of insertion order."""
     d = h.alloc_dict()
     k3 = place_int(h, 0x8500, [0x03])
-    k1 = place_int(h, 0x6100, [0x01])
-    k2 = place_int(h, 0x6200, [0x02])
-    v3 = place_int(h, 0x6300, [0xC3])
-    v1 = place_int(h, 0x6400, [0xC1])
-    v2 = place_int(h, 0x6500, [0xC2])
+    k1 = place_int(h, 0x9100, [0x01])
+    k2 = place_int(h, 0x9200, [0x02])
+    v3 = place_int(h, 0x9300, [0xC3])
+    v1 = place_int(h, 0x9400, [0xC1])
+    v2 = place_int(h, 0x9500, [0xC2])
 
     call_dict_set(h, d, k3, v3)
     call_dict_set(h, d, k1, v1)
@@ -158,11 +158,11 @@ def test_inserts_keep_keys_sorted(h):
 def test_get_after_multi_insert(h):
     d = h.alloc_dict()
     k1 = place_int(h, 0x8500, [0x01])
-    k2 = place_int(h, 0x6100, [0x02])
-    k3 = place_int(h, 0x6200, [0x03])
-    v1 = place_int(h, 0x6300, [0xA1])
-    v2 = place_int(h, 0x6400, [0xA2])
-    v3 = place_int(h, 0x6500, [0xA3])
+    k2 = place_int(h, 0x9100, [0x02])
+    k3 = place_int(h, 0x9200, [0x03])
+    v1 = place_int(h, 0x9300, [0xA1])
+    v2 = place_int(h, 0x9400, [0xA2])
+    v3 = place_int(h, 0x9500, [0xA3])
 
     call_dict_set(h, d, k2, v2)
     call_dict_set(h, d, k3, v3)
@@ -179,8 +179,8 @@ def test_get_after_multi_insert(h):
 def test_update_existing_key_does_not_grow(h):
     d = h.alloc_dict()
     k = place_int(h, 0x8500, [0x42])
-    v1 = place_int(h, 0x6100, [0x01])
-    v2 = place_int(h, 0x6200, [0x02])
+    v1 = place_int(h, 0x9100, [0x01])
+    v2 = place_int(h, 0x9200, [0x02])
 
     call_dict_set(h, d, k, v1)
     assert call_dict_len(h, d) == 1
@@ -197,11 +197,11 @@ def test_update_existing_key_does_not_grow(h):
 def test_string_keys_sorted_lexicographically(h):
     d = h.alloc_dict()
     apple = place_str(h, 0x8500, [ord(c) for c in "apple"])
-    banana = place_str(h, 0x6100, [ord(c) for c in "banana"])
-    cherry = place_str(h, 0x6200, [ord(c) for c in "cherry"])
-    v1 = place_int(h, 0x6300, [1])
-    v2 = place_int(h, 0x6400, [2])
-    v3 = place_int(h, 0x6500, [3])
+    banana = place_str(h, 0x9100, [ord(c) for c in "banana"])
+    cherry = place_str(h, 0x9200, [ord(c) for c in "cherry"])
+    v1 = place_int(h, 0x9300, [1])
+    v2 = place_int(h, 0x9400, [2])
+    v3 = place_int(h, 0x9500, [3])
 
     call_dict_set(h, d, banana, v2)
     call_dict_set(h, d, cherry, v3)
@@ -222,7 +222,7 @@ def test_bool_keys(h):
     true_addr = h.sym["TRUE"]
     false_addr = h.sym["FALSE"]
     v1 = place_int(h, 0x8500, [1])
-    v2 = place_int(h, 0x6100, [2])
+    v2 = place_int(h, 0x9100, [2])
 
     call_dict_set(h, d, true_addr, v1)
     call_dict_set(h, d, false_addr, v2)
@@ -239,12 +239,12 @@ def test_bool_keys(h):
 def test_tuple_keys(h):
     d = h.alloc_dict()
     a = place_int(h, 0x8500, [0x01])
-    b = place_int(h, 0x6100, [0x02])
-    c = place_int(h, 0x6200, [0x03])
-    k_ab = place_tuple(h, 0x6300, [a, b])
-    k_ac = place_tuple(h, 0x6400, [a, c])
-    v1 = place_int(h, 0x6500, [0xC1])
-    v2 = place_int(h, 0x6600, [0xC2])
+    b = place_int(h, 0x9100, [0x02])
+    c = place_int(h, 0x9200, [0x03])
+    k_ab = place_tuple(h, 0x9300, [a, b])
+    k_ac = place_tuple(h, 0x9400, [a, c])
+    v1 = place_int(h, 0x9500, [0xC1])
+    v2 = place_int(h, 0x9600, [0xC2])
 
     call_dict_set(h, d, k_ac, v2)
     call_dict_set(h, d, k_ab, v1)
@@ -263,15 +263,15 @@ def test_mixed_type_keys(h):
     TYPE_INT < TYPE_STR < TYPE_BOOL < TYPE_TUPLE numerically."""
     d = h.alloc_dict()
     int_key = place_int(h, 0x8500, [0x05])
-    str_key = place_str(h, 0x6100, [ord("z")])
+    str_key = place_str(h, 0x9100, [ord("z")])
     bool_key = h.sym["TRUE"]
-    a = place_int(h, 0x6200, [1])
-    tup_key = place_tuple(h, 0x6300, [a])
+    a = place_int(h, 0x9200, [1])
+    tup_key = place_tuple(h, 0x9300, [a])
 
-    v1 = place_int(h, 0x6400, [1])
-    v2 = place_int(h, 0x6500, [2])
-    v3 = place_int(h, 0x6600, [3])
-    v4 = place_int(h, 0x6700, [4])
+    v1 = place_int(h, 0x9400, [1])
+    v2 = place_int(h, 0x9500, [2])
+    v3 = place_int(h, 0x9600, [3])
+    v4 = place_int(h, 0x9700, [4])
 
     call_dict_set(h, d, tup_key, v4)
     call_dict_set(h, d, str_key, v2)
@@ -288,11 +288,11 @@ def test_mixed_type_keys(h):
 def test_del_removes_key(h):
     d = h.alloc_dict()
     k1 = place_int(h, 0x8500, [0x01])
-    k2 = place_int(h, 0x6100, [0x02])
-    k3 = place_int(h, 0x6200, [0x03])
-    v1 = place_int(h, 0x6300, [0xA1])
-    v2 = place_int(h, 0x6400, [0xA2])
-    v3 = place_int(h, 0x6500, [0xA3])
+    k2 = place_int(h, 0x9100, [0x02])
+    k3 = place_int(h, 0x9200, [0x03])
+    v1 = place_int(h, 0x9300, [0xA1])
+    v2 = place_int(h, 0x9400, [0xA2])
+    v3 = place_int(h, 0x9500, [0xA3])
 
     call_dict_set(h, d, k1, v1)
     call_dict_set(h, d, k2, v2)
@@ -311,10 +311,10 @@ def test_del_removes_key(h):
 def test_del_missing_is_noop(h):
     d = h.alloc_dict()
     k1 = place_int(h, 0x8500, [0x01])
-    v1 = place_int(h, 0x6100, [0xA1])
+    v1 = place_int(h, 0x9100, [0xA1])
     call_dict_set(h, d, k1, v1)
 
-    k_missing = place_int(h, 0x6200, [0xFF])
+    k_missing = place_int(h, 0x9200, [0xFF])
     call_dict_del(h, d, k_missing)
     assert call_dict_len(h, d) == 1
     assert call_dict_get(h, d, k1) == v1
@@ -360,9 +360,9 @@ def test_val_eq_equal_dicts(h):
     d1 = h.alloc_dict()
     d2 = h.alloc_dict()
     k1 = place_int(h, 0x8500, [0x01])
-    v1 = place_int(h, 0x6100, [0xA1])
-    k2 = place_int(h, 0x6200, [0x02])
-    v2 = place_int(h, 0x6300, [0xA2])
+    v1 = place_int(h, 0x9100, [0xA1])
+    k2 = place_int(h, 0x9200, [0x02])
+    v2 = place_int(h, 0x9300, [0xA2])
 
     call_dict_set(h, d1, k1, v1)
     call_dict_set(h, d1, k2, v2)
@@ -381,8 +381,8 @@ def test_val_eq_dicts_differ_in_value(h):
     d1 = h.alloc_dict()
     d2 = h.alloc_dict()
     k = place_int(h, 0x8500, [0x01])
-    v_a = place_int(h, 0x6100, [0xA1])
-    v_b = place_int(h, 0x6200, [0xA2])
+    v_a = place_int(h, 0x9100, [0xA1])
+    v_b = place_int(h, 0x9200, [0xA2])
 
     call_dict_set(h, d1, k, v_a)
     call_dict_set(h, d2, k, v_b)

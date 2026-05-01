@@ -26,7 +26,7 @@ The 6502's zero page ($00-$FF) is treated as an extended register file. Names be
 | `NEXT_DATA` | $22 | 2B | Bump allocator: next free data byte (grows UP) |
 | `ALLOC_SIZE` | $24 | 2B | Alloc input: caller-preset payload size (0..$FFFF) |
 | `ALLOC_TYPE` | $26 | 1B | Alloc input: caller-preset type tag |
-| `ERROR_CODE` | $27 | 1B | Fatal-error code written before `jmp error_handler`. $00 = none; `ERR_OOM` = $01; `ERR_DIV_ZERO` = $02; `ERR_OVERFLOW` = $03 |
+| `ERROR_CODE` | $27 | 1B | Fatal-error code written before `jmp error_handler`. $00 = none; `ERR_OOM` = $01; `ERR_DIV_ZERO` = $02; `ERR_OVERFLOW` = $03; `ERR_LEX` = $04; `ERR_TYPE` = $05; `ERR_ARITY` = $06; `ERR_DISK` = $07 |
 | `FREE_HEAD` | $28 | 2B | Head of free-handle list ($0000 = empty); chained via H_NEXT, LIFO |
 | `ALLOC_GC_TRIED` | $2A | 1B | Internal: marks that alloc already ran gc_collect this call (once-only retry) |
 | `RESERVED_HEAD` | $2B | 2B | Head of the live-handle list ($0000 = empty). Chained via H_NEXT; appended at tail by alloc, kept in H_PTR-ascending order |
@@ -350,12 +350,16 @@ On the first OOM check failure within a single `alloc` call, `alloc` runs `gc_co
 
 ## Fatal panic
 
-OOM and future fatal states are not recoverable on a 64K machine. Rather than burn bytes on error-return machinery at every call site, allocating/failing routines write an `ERR_*` code to `ERROR_CODE` then `jmp error_handler`. `error_handler` currently spins (`jmp *`); it will eventually render the code on screen and wait for reset.
+Rather than burn bytes on error-return machinery at every call site, failing routines write an `ERR_*` code to `ERROR_CODE` then `jmp error_handler`. The handler restores the stack pointers from a snapshot the REPL captured at boot (`repl_rec_*` in `repl.asm`), closes any leaked disk channels (`disk_close_data` + `disk_close_cmd`), prints `?ERR XX`, and jumps back to `repl_loop` for a fresh prompt. The persistent root scope stays on RS because the snapshot points just past it — globals defined before the panic survive.
 
-Current panic sites:
-- `alloc` (and thus `alloc_int`) on OOM after unsuccessful GC retry → `ERR_OOM`.
-- `int_divmod` (and wrappers `int_div`, `int_mod`) when the divisor is exactly zero → `ERR_DIV_ZERO`.
-- `float_div` when the divisor is exactly zero → `ERR_DIV_ZERO`.
+Panic codes:
+- `ERR_OOM` ($01) — `alloc` after unsuccessful GC retry.
+- `ERR_DIV_ZERO` ($02) — `int_divmod` (and wrappers `int_div`, `int_mod`); `float_div` when the divisor is exactly zero.
+- `ERR_OVERFLOW` ($03) — `float_to_int` out of range, etc.
+- `ERR_LEX` ($04) — lexer (illegal char, unterminated string, bad number).
+- `ERR_TYPE` ($05) — operator / builtin given an operand of the wrong type.
+- `ERR_ARITY` ($06) — wrong number of arguments to a builtin.
+- `ERR_DISK` ($07) — 1541/IEC reported a non-zero status code, or a disk-builtin name validation failed.
 
 Callers can assume success — no return-value check is needed.
 

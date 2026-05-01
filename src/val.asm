@@ -138,16 +138,19 @@ _veq_not_same_handle:
     jmp postamble
 
 _veq_types_match:
-    jsr deref_W0_to_W2
+    jsr deref_W0_to_W2           // A:X = O_LEN word of W0
     sta B0
-    jsr deref_W1_to_W3
+    stx B1                       // B0:B1 = length of W0 (16-bit)
+    jsr deref_W1_to_W3           // A:X = O_LEN word of W1
     cmp B0
+    bne _veq_not_equal
+    cpx B1
     beq _veq_lengths_match
-    lda #0
-    jmp postamble
+    jmp _veq_not_equal
 
 _veq_lengths_match:
-    sta B0
+    // B0:B1 = matched length (16-bit count of bytes for STR or elements for
+    // LIST/TUPLE/DICT — see _veq_array for the 2x stride on arrays).
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_TUPLE
@@ -157,16 +160,19 @@ _veq_lengths_match:
     cmp #TYPE_DICT
     beq _veq_array
 
-    // Leaf: byte-by-byte payload compare.
-    ldy B0
-    dey
-    bmi _veq_equal
+    // Leaf: byte-by-byte payload compare. Walk W2/W3 forward, decrement word.
 _veq_loop:
+    lda B0
+    ora B1
+    beq _veq_equal
+    ldy #0
     lda (W2),y
     cmp (W3),y
     bne _veq_not_equal
-    dey
-    bpl _veq_loop
+    jsr inc_w2_w
+    jsr inc_w3_w
+    jsr dec_b01_w
+    jmp _veq_loop
 
 _veq_equal:
     lda #1
@@ -180,6 +186,7 @@ _veq_not_equal:
 _veq_array:
 _veq_array_loop:
     lda B0
+    ora B1
     beq _veq_equal
 
     ldy #0
@@ -215,7 +222,7 @@ _veq_array_loop:
     bcc !+
     inc W3+1
 !:
-    dec B0
+    jsr dec_b01_w
     jmp _veq_array_loop
 
 
@@ -309,22 +316,35 @@ _vc_float:
     jmp postamble
 
 // --- TYPE_STR — byte-wise lexicographic, unsigned ---------------------------
+// 16-bit lengths: B0:B1 = a remaining, B2:B3 = b remaining. Walk W2/W3
+// forward; first end terminates with the shorter-as-less rule.
 _vc_str:
-    jsr deref_W0_to_W2           // W2 = a payload, A = a length
+    jsr deref_W0_to_W2           // W2 = a payload, A:X = a length
     sta B0
-    jsr deref_W1_to_W3           // W3 = b payload, A = b length
-    sta B1
+    stx B1
+    jsr deref_W1_to_W3           // W3 = b payload, A:X = b length
+    sta B2
+    stx B3
 
-    ldy #0
 _vc_str_loop:
-    cpy B0
+    lda B0
+    ora B1
     beq _vc_str_a_end
-    cpy B1
+    lda B2
+    ora B3
     beq _vc_str_b_end
+    ldy #0
     lda (W2),y
     cmp (W3),y
     bne _vc_str_byte_diff
-    iny
+    jsr inc_w2_w
+    jsr inc_w3_w
+    jsr dec_b01_w
+    lda B2
+    bne !+
+    dec B3
+!:
+    dec B2
     jmp _vc_str_loop
 
 _vc_str_byte_diff:
@@ -333,8 +353,9 @@ _vc_str_byte_diff:
     jmp postamble
 
 _vc_str_a_end:
-    cpy B1
-    beq _vc_zero
+    lda B2
+    ora B3
+    beq _vc_zero                 // both ended together → equal
     lda #$FF                     // a shorter — a < b
     jmp postamble
 
@@ -349,34 +370,31 @@ _vc_zero:
 // --- Sequence (tuple/list/dict) — element-wise recursive val_cmp ------------
 // First mismatching element decides; if all common-prefix elements match,
 // the shorter sequence is "less than" the longer.
+// 16-bit element counts: B0:B1 = a remaining, B2:B3 = b remaining.
 _vc_array:
-    jsr deref_W0_to_W2           // W2 = a payload, A = a O_LEN
+    jsr deref_W0_to_W2           // W2 = a payload, A:X = a O_LEN
     sta B0
-    jsr deref_W1_to_W3           // W3 = b payload, A = b O_LEN
-    sta B1
-
-    lda #0
-    sta B2                       // B2 = current index
+    stx B1
+    jsr deref_W1_to_W3           // W3 = b payload, A:X = b O_LEN
+    sta B2
+    stx B3
 
 _vc_array_loop:
-    lda B2
-    cmp B0
+    lda B0
+    ora B1
     beq _vc_array_a_end
-    cmp B1
+    lda B2
+    ora B3
     beq _vc_array_b_end
 
-    // Load a[B2] into W0, b[B2] into W1.
-    asl
-    tay
+    // Load a[next] into W0 from (W2)+0/+1, b[next] from (W3)+0/+1.
+    ldy #0
     lda (W2),y
     sta W0
     iny
     lda (W2),y
     sta W0+1
-
-    lda B2
-    asl
-    tay
+    ldy #0
     lda (W3),y
     sta W1
     iny
@@ -389,14 +407,35 @@ _vc_array_loop:
     cmp #0
     bne _vc_array_done           // first non-zero result wins
 
-    inc B2
+    // Advance W2 and W3 by 2; decrement both word counters.
+    clc
+    lda W2
+    adc #2
+    sta W2
+    bcc !+
+    inc W2+1
+!:
+    clc
+    lda W3
+    adc #2
+    sta W3
+    bcc !+
+    inc W3+1
+!:
+    jsr dec_b01_w
+    lda B2
+    bne !+
+    dec B3
+!:
+    dec B2
     jmp _vc_array_loop
 
 _vc_array_done:
     jmp postamble
 
 _vc_array_a_end:
-    cmp B1
+    lda B2
+    ora B3
     beq _vc_zero                 // both ended together → equal
     lda #$FF                     // a is shorter
     jmp postamble

@@ -9,7 +9,7 @@ from conftest import (
 )
 
 FLAG_MARKED = 0x80
-FLAG_PINNED = 0x20
+FLAG_RENDERING = 0x10
 H_FLAGS = 7
 
 
@@ -70,11 +70,14 @@ def test_mark_is_idempotent(h):
 
 
 def test_mark_preserves_other_flag_bits(h):
+    """gc_mark must OR in FLAG_MARKED without clobbering unrelated flags
+    (e.g. FLAG_RENDERING set by an in-progress print when an alloc inside
+    array_merge triggers a collection)."""
     handle = h.alloc_int(4)
-    h.mpu.memory[handle + H_FLAGS] = FLAG_PINNED
+    h.mpu.memory[handle + H_FLAGS] = FLAG_RENDERING
     h.rs_push(handle)
     h.call("gc_mark")
-    assert _flags(h, handle) == (FLAG_PINNED | FLAG_MARKED)
+    assert _flags(h, handle) == (FLAG_RENDERING | FLAG_MARKED)
 
 
 # --- stack state -------------------------------------------------------------

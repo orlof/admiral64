@@ -18,8 +18,14 @@
 // deref_{W0,W1,RV}_to_{W2,W3} — resolve a handle to its payload pointer.
 //   in:  source ZP register (W0/W1/RV) = handle address
 //   out: destination ZP register (W2/W3) = first payload byte
-//        A = length low byte
+//        A = O_LEN low byte
+//        X = O_LEN high byte
 //   clobbers: A, X, Y. Destination ZP is the only ZP written.
+//
+// O_LEN is a 16-bit field: STR/LIST/TUPLE/DICT can exceed 255 elements.
+// Callers iterating or comparing must use the (A,X) pair as a word, not just A.
+// Old byte-only callers that just `sta B0` still work for objects < 256.
+// INT lengths are byte-bounded by design, so byte-only is fine for those.
 //
 // The two destinations share a tail (`_deref_finish_W{2,3}`) that does the
 // O_LEN read + O_HEADER advance. Each entry thunk loads the handle into the
@@ -42,9 +48,12 @@ deref_W0_to_W2:
     lda (W0),y
     sta W2+1
 _deref_finish_W2:
-    ldy #O_LEN
+    ldy #O_LEN+1
     lda (W2),y
-    tax
+    tax                              // X = O_LEN high byte
+    dey                              // y = O_LEN
+    lda (W2),y
+    pha                              // stash low byte across W2 += O_HEADER
     lda W2
     clc
     adc #O_HEADER
@@ -52,7 +61,7 @@ _deref_finish_W2:
     bcc !+
     inc W2+1
 !:
-    txa
+    pla                              // A = O_LEN low byte
     rts
 
 deref_W1_to_W3:
@@ -79,9 +88,12 @@ deref_W0_to_W3:
     lda (W0),y
     sta W3+1
 _deref_finish_W3:
-    ldy #O_LEN
+    ldy #O_LEN+1
     lda (W3),y
     tax
+    dey
+    lda (W3),y
+    pha
     lda W3
     clc
     adc #O_HEADER
@@ -89,7 +101,7 @@ _deref_finish_W3:
     bcc !+
     inc W3+1
 !:
-    txa
+    pla
     rts
 
 // -----------------------------------------------------------------------------

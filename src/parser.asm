@@ -288,10 +288,13 @@ _sret_have_value:
     jmp postamble
 
 // -----------------------------------------------------------------------------
-// stmt_del — `del NAME[expr]`. Parses a subscript-only target (no `del NAME`
-// form for plain locals yet) and removes the entry. LIST: `array_del` at the
-// integer index. DICT: binary-search for the key, then `array_del` at the
-// found slot. Other types (TUPLE etc.) panic ERR_TYPE.
+// stmt_del — `del NAME` or `del NAME[expr]`.
+//   Plain `del NAME`: removes the binding from the current scope dict
+//   (GLOBAL_SCOPE). Subsequent reads of NAME walk the parent chain.
+//   `del NAME[expr]`: scope_get(NAME) → container, then remove `expr` from
+//   it. LIST → array_del at integer index. DICT → binary-search the key,
+//   then array_del. Other types (TUPLE etc.) panic ERR_TYPE.
+// Missing key/name → ERR_LEX.
 // V4' wrapper. RV = NONE on success.
 // -----------------------------------------------------------------------------
 stmt_del:
@@ -308,6 +311,34 @@ _sd_have_name:
     jsr lexer_get_token_as_string   // RV = name TYPE_STR
     rs_push(RV)                     // RS: [name]
     jsr lexer_next                  // consume name
+
+    // Branch: subscript form `del NAME[...]` or plain `del NAME`?
+    lda LEX_TOKEN_KIND
+    cmp #TK_LBRACK
+    beq _sd_subscript
+
+    // Plain `del NAME`: bin-search GLOBAL_SCOPE for the name handle, then
+    // array_del that slot. Name is currently at RS top.
+    rs_pop(W1)                      // W1 = name; RS: []
+    rs_push(GLOBAL_SCOPE)           // RS: [scope_dict]
+    rs_peek(W0)                     // W0 = scope_dict
+    jsr _dict_bin_search            // A = hit/miss; RV = index on hit
+    cmp #0
+    bne _sd_name_remove
+    // Miss → name not bound in current scope.
+    lda #ERR_LEX
+    sta ERROR_CODE
+    jmp error_handler
+_sd_name_remove:
+    lda RV
+    sta W2
+    lda RV+1
+    sta W2+1
+    fs_push(W2)
+    jsr array_del                   // consumes scope_dict + index
+    jmp _sd_done
+
+_sd_subscript:
     jsr scope_get                   // consumes name; RV = container
 
     lda #TK_LBRACK
@@ -336,17 +367,58 @@ _sd_have_name:
     jmp error_handler
 
 _sd_list_del:
-    // Extract index byte from int handle in RV → fs_push as a word.
+    // Extract signed int index from int handle RV → 16-bit word (B5:B6).
+    // Negative → add container O_LEN.
     ldy #H_PTR
     lda (RV),y
     sta W2
     iny
     lda (RV),y
     sta W2+1
-    ldy #O_HEADER
+    ldy #O_LEN
     lda (W2),y
+    pha                              // save int O_LEN low across ptr advance
+    clc
+    lda W2
+    adc #O_HEADER
     sta W2
+    bcc !+
+    inc W2+1
+!:
+    ldy #0
+    lda (W2),y
+    sta B5                           // B5 = idx low
+    pla                              // A = int O_LEN low
+    cmp #1
+    beq _sld_idx_1byte
+    iny
+    lda (W2),y
+    sta B6                           // B6 = idx high (2-byte int)
+    jmp _sld_idx_check
+_sld_idx_1byte:
+    lda B5
+    bmi !neg+
     lda #0
+    bpl !done+
+!neg:
+    lda #$FF
+!done:
+    sta B6
+_sld_idx_check:
+    lda B6
+    bpl _sld_idx_pos
+    rs_peek(W0)                      // container
+    jsr deref_W0_to_W2               // A:X = container O_LEN word
+    clc
+    adc B5
+    sta B5
+    txa
+    adc B6
+    sta B6
+_sld_idx_pos:
+    lda B5
+    sta W2
+    lda B6
     sta W2+1
     fs_push(W2)
     jsr array_del                   // consumes container + index
@@ -369,7 +441,7 @@ _sd_dict_del:
 _sd_dict_remove:
     lda RV
     sta W2
-    lda #0
+    lda RV+1
     sta W2+1
     fs_push(W2)
     jsr array_del                   // consumes dict + index
@@ -379,15 +451,27 @@ _sd_done:
     jmp postamble_return_none
 
 // -----------------------------------------------------------------------------
-// parser_suite — parse the body of a block: consume INDENT, run statements
-// until DEDENT (or EOF), consume DEDENT.
+// parser_suite — parse the body of a block.
+//   Block form: INDENT stmt* DEDENT — runs each statement until matching
+//   DEDENT (or EOF), consumes the DEDENT.
+//   Inline form: a single simple statement on the same line as the header
+//   colon, e.g. `for x in [1,2,3]: print x`. Caller has consumed the `:`
+//   (and any newline if a block follows). If the next token is not INDENT
+//   we take the inline path — parse one statement and return.
 // V4' wrapper. RV is the value of the LAST statement in the suite (mostly
 // for symmetry — control-flow contexts ignore it).
 // -----------------------------------------------------------------------------
 parser_suite:
     preamble_args(0, 0)
-    lda #TK_INDENT
-    jsr lexer_advance              // expect+consume INDENT
+    lda LEX_TOKEN_KIND
+    cmp #TK_INDENT
+    beq _psu_block
+    // Inline body — one simple statement, then return.
+    jsr parser_stmt
+    jmp postamble
+
+_psu_block:
+    jsr lexer_next                  // consume INDENT
 
 _psu_loop:
     lda LEX_TOKEN_KIND
@@ -469,6 +553,23 @@ _psu_done_no_dedent:
 // -----------------------------------------------------------------------------
 skip_suite:
     preamble_args(0, 0)
+    // Inline body: no INDENT yet → eat tokens up to (but not including) the
+    // statement-ending NEWLINE / EOF, leaving the lexer where it would be
+    // after a normal parser_stmt run on the inline body.
+    lda LEX_TOKEN_KIND
+    cmp #TK_INDENT
+    beq _ssu_block
+
+_ssu_inline_loop:
+    lda LEX_TOKEN_KIND
+    cmp #TK_NEWLINE
+    beq _ssu_done
+    cmp #TK_EOF
+    beq _ssu_done
+    jsr lexer_next
+    jmp _ssu_inline_loop
+
+_ssu_block:
     lda #0
     sta B0                          // B0 = nesting depth
 
@@ -948,19 +1049,59 @@ _pfa_paren:
     jmp postamble
 
 // -----------------------------------------------------------------------------
-// stmt_print — `print expr`. Evaluates expr, prints via print_value, emits a
-// trailing newline. Returns NONE.
+// stmt_cls — `cls` keyword. Clears the screen and homes the cursor; returns
+// NONE. Same effect as `cls()` but without the no-op parens — chosen as a
+// statement keyword (like `print`) because it's the most-used REPL command.
+// -----------------------------------------------------------------------------
+stmt_cls:
+    preamble_args(0, 0)
+    jsr lexer_next                  // consume `cls`
+    jsr screen_clear
+    jmp postamble_return_none
+
+// -----------------------------------------------------------------------------
+// stmt_print — `print [expr [, expr]*]`. Evaluates each comma-separated
+// argument left-to-right, prints them with a single space between, then
+// emits a trailing newline. Returns NONE. Mirrors DCPU's `std_print` shape
+// (`print 1, 2` → "1 2") rather than printing the comma-built tuple's repr.
+//
+// Top-level commas are kept as loop separators by passing rbp = LBP_COMMA
+// to expression(), which makes the comma LED stop binding (lbp == rbp →
+// done). Parenthesized tuples like `print (1, 2)` are unaffected: nud_lparen
+// handles the inner commas itself, so expression() returns one tuple value
+// that we render via the normal tuple repr path.
 // -----------------------------------------------------------------------------
 stmt_print:
     preamble_args(0, 0)
     jsr lexer_next                  // consume `print`
-    lda #0
+
+_sp_loop:
+    // End-of-statement → emit trailing newline and exit.
+    lda LEX_TOKEN_KIND
+    cmp #TK_NEWLINE
+    beq _sp_done
+    cmp #TK_EOF
+    beq _sp_done
+
+    // Parse + print one argument.
+    lda #LBP_COMMA
     sta B7
     jsr expression                  // RV = lazy value
     rs_push(RV)
     jsr eval                        // RV = forced value
     rs_push(RV)
     jsr print_value                 // consumes 1 arg
+
+    // Comma → emit a separator space and parse the next argument.
+    lda LEX_TOKEN_KIND
+    cmp #TK_COMMA
+    bne _sp_done
+    jsr lexer_next                  // consume `,`
+    lda #$20                         // PETSCII space
+    jsr screen_put_char
+    jmp _sp_loop
+
+_sp_done:
     lda #$0D
     jsr screen_put_char             // newline
     jmp postamble_return_none
@@ -1225,6 +1366,38 @@ _ccnt_type_error:
     jmp error_handler
 
 // -----------------------------------------------------------------------------
+// cast_common_number_type_optional — like cast_common_number_type, but
+// returns without modification (and without panicking) when either operand
+// is non-numeric. Used by `<` `<=` `>` `>=` `==` `!=`: val_cmp can compare
+// any pair of types (falling back to type-tag order on mismatch and to
+// element-wise val_cmp on tuples/lists/dicts), so we only need the
+// int↔float coercion when both sides are actually numeric.
+// -----------------------------------------------------------------------------
+cast_common_number_type_optional:
+    rs_peek_at(W0, 1)
+    rs_peek_at(W1, 0)
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_INT
+    beq _ccnto_a_num
+    cmp #TYPE_BOOL
+    beq _ccnto_a_num
+    cmp #TYPE_FLOAT
+    beq _ccnto_a_num
+    rts                          // a non-numeric → no cast, no panic
+_ccnto_a_num:
+    lda (W1),y
+    cmp #TYPE_INT
+    beq _ccnto_delegate
+    cmp #TYPE_BOOL
+    beq _ccnto_delegate
+    cmp #TYPE_FLOAT
+    beq _ccnto_delegate
+    rts                          // a numeric, b non-numeric → leave as-is
+_ccnto_delegate:
+    jmp cast_common_number_type
+
+// -----------------------------------------------------------------------------
 // infix_eval — shared prologue for every binary LED. Reads the current
 // token's LBP from the lbp_table (so we don't hardcode `lda #LBP_PLUS` in
 // each LED), advances past the operator, parses+evaluates the RHS, and
@@ -1335,7 +1508,7 @@ infixr_eval:
 .macro led_cmp(mask) {
     preamble_args(1, 0)
     jsr infix_eval
-    jsr cast_common_number_type       // promote so int/float compare correctly
+    jsr cast_common_number_type_optional  // promote int↔float; pass through others
     jsr val_cmp                       // A = $FF / $00 / $01; consumes 2 args
     ldx #mask
     jsr _cmp_finish                   // RV = TRUE / FALSE
@@ -1707,22 +1880,106 @@ _nlp_tclose:
     jmp postamble
 
 // -----------------------------------------------------------------------------
-// nud_lcurly — dict literal `{key: value, ...}`.  `{}` is an empty dict
-// (Python convention; sets aren't supported).
+// nud_dict_lt — dict literal `<key: value, ...>`.  `<>` is an empty dict.
+//
+// We use angle brackets, NOT curly braces, because the C64 character ROM has
+// no `{` `}` glyphs in either charset (PETSCII $7B and $7D map to graphic
+// blocks). Source-level `{...}` is no longer accepted; `<...>` is THE dict
+// syntax. Repr also emits `<...>`.
+//
+// Ambiguity with comparison `<` `>`: the parser dispatches based on
+// position. In nud position (no left operand) `<` opens a dict literal; in
+// led position `<` is the less-than comparison.
+//
+// To prevent `>` from being parsed as comparison while we're reading dict
+// keys/values, we PATCH the lbp-table entries for TK_LT and TK_GT to
+// LBP_TERM (=0) on entry, restore on exit. The original lbps are pushed on
+// the HW stack so nested literals stack correctly — each level saves the
+// value it overwrites and restores it when done. Comparisons inside a value
+// (`<a: 1<2>`) need parens: `<a: (1<2)>`.
+//
+// Nested dicts: the lexer would otherwise greedily coalesce `>>` into
+// TK_RSHIFT and `<<` into TK_LSHIFT. At each point in nud_dict_lt where we
+// expect a `<` or `>`, we call _dict_split_lshift / _dict_split_rshift to
+// split a paired token in place: replace TK_LSHIFT with TK_LT (or TK_RSHIFT
+// with TK_GT) and back LEX_PTR up by 1 so the leftover char re-lexes on the
+// next advance.
 // -----------------------------------------------------------------------------
-nud_lcurly:
+// _dict_split_rshift — if current token is TK_RSHIFT (`>>`), shrink it to a
+// single TK_GT. LEX_PTR is reset to point at the second `>` so the next
+// lexer_next picks it up. Preserves all registers; never panics.
+_dict_split_rshift:
+    lda LEX_TOKEN_KIND
+    cmp #TK_RSHIFT
+    bne !done+
+    lda #TK_GT
+    sta LEX_TOKEN_KIND
+    clc
+    lda LEX_TOKEN_START
+    adc #1
+    sta LEX_TOKEN_END
+    sta LEX_PTR
+    lda LEX_TOKEN_START+1
+    adc #0
+    sta LEX_TOKEN_END+1
+    sta LEX_PTR+1
+!done:
+    rts
+
+// _dict_split_lshift — same idea, TK_LSHIFT → TK_LT.
+_dict_split_lshift:
+    lda LEX_TOKEN_KIND
+    cmp #TK_LSHIFT
+    bne !done+
+    lda #TK_LT
+    sta LEX_TOKEN_KIND
+    clc
+    lda LEX_TOKEN_START
+    adc #1
+    sta LEX_TOKEN_END
+    sta LEX_PTR
+    lda LEX_TOKEN_START+1
+    adc #0
+    sta LEX_TOKEN_END+1
+    sta LEX_PTR+1
+!done:
+    rts
+
+nud_dict_lt:
     preamble_args(0, 0)
-    jsr lexer_next                // consume '{'
-    jsr _skip_layout              // newlines OK after `{`
+
+    // Save current lbp[TK_LT] / lbp[TK_GT] / lbp[TK_LSHIFT] / lbp[TK_RSHIFT]
+    // on the HW stack so nested dict literals stack correctly. Patch all to
+    // 0 so `<` / `>` don't bind as comparisons and `<<` / `>>` don't bind as
+    // shift operators while reading dict keys/values. (Shift binding would
+    // cause the expression parser to consume a closing `>>` as a shift
+    // before nud_dict_lt's split logic gets a chance.)
+    lda lbp_table + TK_LT
+    pha
+    lda lbp_table + TK_GT
+    pha
+    lda lbp_table + TK_LSHIFT
+    pha
+    lda lbp_table + TK_RSHIFT
+    pha
+    lda #LBP_TERM
+    sta lbp_table + TK_LT
+    sta lbp_table + TK_GT
+    sta lbp_table + TK_LSHIFT
+    sta lbp_table + TK_RSHIFT
+
+    jsr lexer_next                // consume '<'
+    jsr _skip_layout              // newlines OK after open
     jsr dict_alloc                // RV = empty dict
     rs_push(RV)                   // RS: [dict]
 
+    jsr _dict_split_rshift        // `>>` → `>` if empty-dict close stuck
     lda LEX_TOKEN_KIND
-    cmp #TK_RCURLY
+    cmp #TK_GT
     bne _ndc_loop
-    jsr lexer_next                // empty `{}`
+    jsr lexer_next                // empty `<>`
     rs_pop(RV)
-    jmp postamble
+    jmp _ndc_restore_and_return
 
 _ndc_loop:
     // Push a dict copy so dict_set's 3-arg consume leaves the persistent
@@ -1749,26 +2006,40 @@ _ndc_loop:
     jsr expression                // RV = lazy value
     rs_push(RV)
     jsr eval                      // force value
-    jsr _skip_layout              // newlines OK before `,` / `}`
+    jsr _skip_layout              // newlines OK before `,` / `>`
     rs_push(RV)                   // RS: [dict, dict_copy, key, value]
 
     jsr dict_set                  // consumes 3 → RS: [dict]
 
+    jsr _dict_split_rshift        // `>>` after value → `>` close + leftover `>`
     lda LEX_TOKEN_KIND
     cmp #TK_COMMA
     bne _ndc_close
     jsr lexer_next                // consume ','
     jsr _skip_layout              // newlines OK after `,`
-    // Trailing comma `{a: 1,}` is allowed.
+    jsr _dict_split_rshift        // `>>` after `,` → close
+    // Trailing comma `<a: 1,>` is allowed.
     lda LEX_TOKEN_KIND
-    cmp #TK_RCURLY
+    cmp #TK_GT
     beq _ndc_close
     jmp _ndc_loop
 
 _ndc_close:
-    lda #TK_RCURLY
+    lda #TK_GT
     jsr lexer_advance
     rs_pop(RV)
+
+_ndc_restore_and_return:
+    // Restore lbps in reverse-push order. Postamble's HW-stack work is
+    // balanced, so leaving the body with four extra HW-stack pops is correct.
+    pla
+    sta lbp_table + TK_RSHIFT
+    pla
+    sta lbp_table + TK_LSHIFT
+    pla
+    sta lbp_table + TK_GT
+    pla
+    sta lbp_table + TK_LT
     jmp postamble
 
 // -----------------------------------------------------------------------------
@@ -2053,14 +2324,21 @@ _lin_str:
     sta ERROR_CODE
     jmp error_handler
 !ok:
-    // Full-range search: start=0, end=$FF (sentinel → haystack_len).
+    // Full-range search: start=0:0, end=$FFFF (sentinel → haystack_len).
     lda #0
+    sta B4
     sta B5
     lda #$FF
     sta B6
-    jsr str_find_pos                  // A = position or $FF (not found)
+    sta B7
+    jsr str_find_pos                  // RV = position word or $FFFF
+    lda RV
+    and RV+1
     cmp #$FF
-    beq _lin_false
+    bne !found+
+    lda #0
+    jmp _lin_to_bool
+!found:
     lda #1
     jmp _lin_to_bool
 
@@ -3098,7 +3376,7 @@ led_recover:
 // already-emitted bytes via `* = addr`, so the entire table is built in one
 // forward pass.
 // -----------------------------------------------------------------------------
-.const TK_TABLE_SIZE = $4C    // TK_PRINT + 1 = 76
+.const TK_TABLE_SIZE = $4D    // TK_CLS + 1 = 77
 
 // --- nud_lo / nud_hi ---------------------------------------------------------
 // Active NUDs: literals (INT/HEX/BIN/STR/TRUE/FALSE/NONE), unary +/-,
@@ -3120,19 +3398,21 @@ nud_lo:
     .byte <nud_recover                          // 11 TK_RPAREN
     .byte <nud_lbrack                           // 12 TK_LBRACK (list literal)
     .byte <nud_recover                          // 13 TK_RBRACK
-    .byte <nud_lcurly                           // 14 TK_LCURLY (dict literal)
+    .byte <nud_recover                          // 14 TK_LCURLY (no longer dict — use `<...>`)
     .fill TK_PLUS - 15, <nud_recover            // 15..TK_PLUS-1
     .byte <nud_plus                             // 21 TK_PLUS
     .byte <nud_minus                            // 22 TK_MINUS
     .fill TK_TILDE - TK_MINUS - 1, <nud_recover // 23..32
     .byte <nud_tilde                            // 33 TK_TILDE
-    .fill TK_NOT - TK_TILDE - 1, <nud_recover   // 34..69
+    .byte <nud_dict_lt                          // 34 TK_LT (dict literal `<...>`)
+    .fill TK_NOT - TK_TILDE - 2, <nud_recover   // 35..69
     .byte <nud_not                              // TK_NOT (=$46 = 70)
     .byte <nud_recover                          // TK_IS — LED only
     .byte <nud_true                             // TK_TRUE
     .byte <nud_false                            // TK_FALSE
     .byte <nud_none                             // TK_NONE_KW
     .byte <nud_recover                          // TK_PRINT (statement only)
+    .byte <nud_recover                          // TK_CLS (statement only)
 
 nud_hi:
     .fill TK_INT, >nud_recover
@@ -3146,19 +3426,21 @@ nud_hi:
     .byte >nud_recover
     .byte >nud_lbrack
     .byte >nud_recover
-    .byte >nud_lcurly
+    .byte >nud_recover                          // 14 TK_LCURLY (no longer dict)
     .fill TK_PLUS - 15, >nud_recover
     .byte >nud_plus
     .byte >nud_minus
     .fill TK_TILDE - TK_MINUS - 1, >nud_recover
     .byte >nud_tilde
-    .fill TK_NOT - TK_TILDE - 1, >nud_recover
+    .byte >nud_dict_lt                          // 34 TK_LT
+    .fill TK_NOT - TK_TILDE - 2, >nud_recover
     .byte >nud_not
     .byte >nud_recover
     .byte >nud_true
     .byte >nud_false
     .byte >nud_none
     .byte >nud_recover                          // TK_PRINT (statement only)
+    .byte >nud_recover                          // TK_CLS (statement only)
 
 // --- led_lo / led_hi ---------------------------------------------------------
 // Active LEDs: binary + - * / // %, comparisons < <= > >= == !=.
@@ -3350,6 +3632,7 @@ std_lo:
     .byte <(stmt_del - 1)                                  // $43 TK_DEL
     .fill TK_PRINT - TK_DEL - 1, <(stmt_expression - 1)    // $44..$4A
     .byte <(stmt_print - 1)                         // $4B TK_PRINT
+    .byte <(stmt_cls - 1)                           // $4C TK_CLS
 
 std_hi:
     .fill TK_IF, >(stmt_expression - 1)
@@ -3367,3 +3650,4 @@ std_hi:
     .byte >(stmt_del - 1)
     .fill TK_PRINT - TK_DEL - 1, >(stmt_expression - 1)
     .byte >(stmt_print - 1)
+    .byte >(stmt_cls - 1)                           // $4C TK_CLS

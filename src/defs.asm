@@ -68,6 +68,7 @@
                            //       (also reused as dst ptr by screen_scroll_up's
                            //       call to mem_copy_down — safe because GC re-inits
                            //       GC_DEST at the start of every gc_compact)
+.const B7_save_buf = $30   // byte: replace-pass-2 scratch — free ZP cell.
 
 // --- Screen cursor state (ZP) -----------------------------------------------
 // Note: RV2 above is a WORD at $31-$32, so cursor bytes start at $33.
@@ -115,6 +116,7 @@
 .const ERR_LEX      = $04  // Lexer panic — illegal char, unterminated string, malformed number
 .const ERR_TYPE     = $05  // Type mismatch — operator/builtin received an unsupported operand type
 .const ERR_ARITY    = $06  // Wrong number of arguments to a builtin or user function
+.const ERR_DISK     = $07  // 1541/IEC error — DOS error channel reported a non-zero code
 
 // --- Handle struct -----------------------------------------------------------
 .const H_PTR         = 0   // 2 bytes — pointer to heap object (header + payload)
@@ -129,7 +131,14 @@
 .const FLAG_GRAY   = $40   // GC tri-color worklist bit — set during phase 1 of
                            // gc_mark on roots and on newly-discovered children;
                            // cleared in phase 2 once children traced.
-.const FLAG_PINNED = $20   // don't relocate data during compact (reserved)
+.const FLAG_RENDERING = $10   // currently inside a str-render call on this
+                              // container — set by builtin_str on entry to
+                              // _bstr_list / _bstr_tuple / _bstr_dict, cleared
+                              // on exit. If set on entry the renderer emits
+                              // the matching ellipsis (`<...>` etc.) and
+                              // returns instead of recursing.
+                              // Bits $0F and $20 are unused and free for
+                              // future flags.
 
 // --- Heap object header ------------------------------------------------------
 .const O_LEN    = 0        // 2 bytes — type-specific used count
@@ -270,6 +279,7 @@
 .const TK_FALSE         = $49
 .const TK_NONE_KW       = $4A   // distinct name from TYPE_NONE
 .const TK_PRINT         = $4B   // print statement (Stage 9b)
+.const TK_CLS           = $4C   // cls statement — clears the screen
 
 // Dict pair-tuple slots. Each dict element is a 2-tuple of [key, value].
 .const DICT_KEY   = 0

@@ -153,6 +153,12 @@ error_handler:
     lda repl_rec_fp+1
     sta FP+1
 
+    // Close any disk channels left open by an aborted save/load/dir/format/rm.
+    // KERNAL CLOSE on an unopened lfn is a harmless no-op; calling both
+    // unconditionally avoids stuck channels across panic recoveries.
+    jsr disk_close_data
+    jsr disk_close_cmd
+
     // Newline so the message starts on a fresh row regardless of how far
     // the panicking print got.
     lda #$0D
@@ -282,6 +288,7 @@ nmi_handler:
 #import "scope.asm"
 #import "rnd.asm"
 #import "edit.asm"
+#import "disk.asm"
 #import "builtins.asm"
 #import "assign.asm"
 #import "parser.asm"

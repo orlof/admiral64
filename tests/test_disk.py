@@ -67,7 +67,7 @@ def parse_stream(data: bytes) -> list[dict]:
 # Test scratch for staging the filename bytes we hand to disk_open_seq_*.
 # Picked to live above the current code top (~$6900) and below the frame
 # stack ($8000) — gives ~4 KB of slack as the binary grows.
-NAME_ADDR = 0x7000
+NAME_ADDR = 0x9A00
 
 
 def _stage_name(h, name: bytes) -> None:

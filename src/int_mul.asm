@@ -206,10 +206,7 @@ mul_inner:
 
 mul_outer_done:
     // Advance W2 (ma+i) and W0 (c+i) by 1.
-    inc W2
-    bne !+
-    inc W2+1
-!:
+    jsr inc_w2_w
     inc W0
     bne !+
     inc W0+1

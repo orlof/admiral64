@@ -23,7 +23,10 @@ def test_inline_montecarlo_small(hfp):
 
 def test_inline_montecarlo_full(hfp):
     h = hfp
-    """The full 200-iteration variant the user reported as crashing."""
+    """The full 200-iteration variant the user reported as crashing.
+    Each iteration is ~94k emulator steps in py65 (BASIC FP is the
+    bottleneck), so 200 iters need ~20M steps; we budget 30M for the
+    GC overhead that accumulates as the heap fills."""
     src = (
         'n = 200\n'
         'hits = 0\n'
@@ -36,7 +39,7 @@ def test_inline_montecarlo_full(hfp):
         '    i += 1\n'
         '4 * hits'
     )
-    tp._eval(h, src)
+    tp._eval(h, src, max_steps=30_000_000)
 
 
 def test_string_call_with_rnd(hfp):
@@ -167,7 +170,8 @@ def test_mc_string_call_bisect_n(hfp, n):
 
 @pytest.mark.parametrize("n", [12, 15, 20, 30])
 def test_mc_inline_bisect_n(hfp, n):
-    """Same as bisect_n but inline (no string-call lambda)."""
+    """Same as bisect_n but inline (no string-call lambda).
+    n=30 needs ~3M steps; bump budget for that case."""
     h = hfp
     src = (
         f'n = {n}\n'
@@ -181,7 +185,7 @@ def test_mc_inline_bisect_n(hfp, n):
         '    i += 1\n'
         '4 * hits'
     )
-    tp._eval(h, src)
+    tp._eval(h, src, max_steps=5_000_000)
 
 
 def test_montecarlo_via_string_call(hfp):

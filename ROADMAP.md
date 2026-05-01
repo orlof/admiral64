@@ -40,9 +40,9 @@ hi-res / SID. Watch code size from Stage 8 onward.
 | 8. Parser-evaluator (combined) | ✅ expression-level done | +226 | Pratt + all literals + all operators (arithmetic, comparison, boolean, identity, bitwise, shifts), parens, indexing, mixed int/float arith, square-and-multiply pow. Statement-level dispatch lives in Stage 9. |
 | 9. Runtime support | ✅ 9a + 9b + 9c (functions) | +63 | Scopes, all control flow (if/elif/else/while/for/break/continue/pass), `return`. **String-as-function (Admiral pattern)**: TYPE_STR is callable via `led_lparen`'s TYPE_STR arm — body re-lexed in fresh scope, kwargs bound, CTRL_RETURN extracted. `add = "return a + b"; add(a=1, b=2)` works. Pending: positional args / `argv`, parent scope chain, exceptions. |
 | 10. Built-ins | 🟡 print + len + range | +27 | `print expr` (statement-level). `len(x)` for str/list/tuple/dict, `range(n)` returns a list (Py2-style), via TYPE_BUILTIN handles bound in global_scope at `parser_eval` start + `led_lparen` LED for call syntax. Pending: `type`, `str`, `int`, `input`, `abs`, etc. |
-| 11. REPL + line editor (input, history, blink) | ⏸ pending | — | First "running language" milestone |
+| 11. REPL + line editor (input, history, blink) | ✅ done | — | `repl.asm`: cursor movement, history ring, error recovery via `error_handler` snapshot |
 | 12. Gap-buffer editor (`edit()`) | ⏸ pending | — | |
-| 13. Disk + object-graph serialization | ⏸ pending | — | KERNAL 1541; save/load |
+| 13. Disk + object-graph serialization | ✅ done | +54 | KERNAL 1541, mocked in tests; `format`/`dir`/`save`/`load`/`rm` builtins; BFS serializer + placeholder-morph deserializer; `error_handler` closes leaked channels |
 | 14. Hi-res graphics (bank 3 migration) | ⏸ pending | — | Optional; 4 KB cost |
 | 15. SID sound | ⏸ pending | — | Optional |
 | 16. Polish (custom IRQ, .d64 image, cold-start) | ⏸ pending | — | |

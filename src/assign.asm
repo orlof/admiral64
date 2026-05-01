@@ -184,23 +184,60 @@ _ev_sub_dict:
     jmp postamble
 
 _ev_sub_arr:
-    // Extract int index, normalize negatives.
+    // Extract int index as a 16-bit signed value, normalize negatives.
+    // Read int's first byte into B5 (low) and second byte (or sign-ext) into
+    // B6 (high). Then if MSB of B6 is set, idx += container length.
     ldy #H_PTR
     lda (W1),y
     sta W2
     iny
     lda (W1),y
     sta W2+1
-    ldy #O_HEADER
+    ldy #O_LEN
     lda (W2),y
-    bpl _ev_sub_idx_pos
-    sta B6
-    jsr deref_W0_to_W2
+    pha                              // save int length across ptr advance
     clc
-    adc B6
-_ev_sub_idx_pos:
+    lda W2
+    adc #O_HEADER
     sta W2
+    bcc !+
+    inc W2+1
+!:
+    ldy #0
+    lda (W2),y
+    sta B5                           // B5 = idx low byte
+    pla                              // A = int length
+    cmp #1
+    beq _ev_sub_idx_1byte
+    iny
+    lda (W2),y
+    sta B6                           // B6 = idx high byte (from int payload)
+    jmp _ev_sub_idx_check
+_ev_sub_idx_1byte:
+    // 1-byte int: sign-extend low byte to fill high.
+    lda B5
+    bmi !neg+
     lda #0
+    bpl !done+
+!neg:
+    lda #$FF
+!done:
+    sta B6
+_ev_sub_idx_check:
+    // B5:B6 = signed 16-bit index. Negative → add container length.
+    lda B6
+    bpl _ev_sub_idx_pos
+    jsr deref_W0_to_W2               // A:X = container O_LEN word
+    clc
+    adc B5
+    sta B5
+    txa
+    adc B6
+    sta B6
+_ev_sub_idx_pos:
+    lda B5
+    sta W2
+    lda B6
     sta W2+1
     fs_push(W2)
 
@@ -209,27 +246,58 @@ _ev_sub_idx_pos:
     jmp postamble
 
 _ev_sub_str:
-    // STR subscript: read 1 byte at the (possibly-negative) index and alloc
-    // a fresh 1-char TYPE_STR. The container handle is rooted on RS so it
-    // survives the alloc's potential GC.
+    // STR subscript: read 1 byte at the (possibly-negative) 16-bit index and
+    // alloc a fresh 1-char TYPE_STR. The container handle is rooted on RS so
+    // it survives the alloc's potential GC.
     rs_push(W0)                      // RS: [..., container]
 
-    // Effective index in B5.
+    // Read int subscript (W1) into signed 16-bit (B5:B6).
     ldy #H_PTR
     lda (W1),y
     sta W2
     iny
     lda (W1),y
     sta W2+1
-    ldy #O_HEADER
+    ldy #O_LEN
     lda (W2),y
-    bpl _ev_sub_str_idx_pos
-    sta B6
-    jsr deref_W0_to_W2
+    pha                              // save int O_LEN low across ptr advance
     clc
-    adc B6
-_ev_sub_str_idx_pos:
+    lda W2
+    adc #O_HEADER
+    sta W2
+    bcc !+
+    inc W2+1
+!:
+    ldy #0
+    lda (W2),y
+    sta B5                           // B5 = idx low
+    pla
+    cmp #1
+    beq _ev_sub_str_1byte
+    iny
+    lda (W2),y
+    sta B6                           // B6 = idx high (2-byte int)
+    jmp _ev_sub_str_idx_check
+_ev_sub_str_1byte:
+    lda B5
+    bmi !neg+
+    lda #0
+    bpl !done+
+!neg:
+    lda #$FF
+!done:
+    sta B6
+_ev_sub_str_idx_check:
+    lda B6
+    bpl _ev_sub_str_idx_pos
+    jsr deref_W0_to_W2               // A:X = container O_LEN word
+    clc
+    adc B5
     sta B5
+    txa
+    adc B6
+    sta B6
+_ev_sub_str_idx_pos:
 
     // Alloc 1-byte TYPE_STR.
     lda #1
@@ -243,7 +311,15 @@ _ev_sub_str_idx_pos:
     // Re-deref container after alloc (GC may have moved it).
     rs_peek(W0)
     jsr deref_W0_to_W2               // W2 = container payload
-    ldy B5
+    // W2 += B5:B6 to point at the indexed byte.
+    clc
+    lda W2
+    adc B5
+    sta W2
+    lda W2+1
+    adc B6
+    sta W2+1
+    ldy #0
     lda (W2),y
     sta B5                           // stash byte (W2 about to be overwritten)
 
@@ -266,45 +342,79 @@ _ev_sub_str_idx_pos:
 // stdlib.dasm16:259 in the DCPU port.
 _ev_tuple:
     rs_peek(W0)                       // W0 = tuple handle
-    jsr deref_W0_to_W2                // W2 -> payload, A = O_LEN
-    sta B0                            // B0 = N
+    jsr deref_W0_to_W2                // A:X = O_LEN word, W2 = payload
+    sta B0
+    stx B1                            // B0:B1 = N (word)
 
     lda #0
-    sta B1                            // B1 = i
+    sta B2
+    sta B3                            // B2:B3 = i (word)
 
 _ev_tup_loop:
-    lda B1
+    // Loop while i < N (16-bit unsigned compare).
+    lda B2
     cmp B0
-    beq _ev_tup_done
+    lda B3
+    sbc B1
+    bcs _ev_tup_done
+
+    // W3 = payload + 2*i.
+    lda B2
+    asl
+    sta W3
+    lda B3
+    rol
+    sta W3+1
+    clc
+    lda W3
+    adc W2
+    sta W3
+    lda W3+1
+    adc W2+1
+    sta W3+1
 
     // Load tuple[i] → W1.
-    lda B1
-    asl
-    tay
-    lda (W2),y
+    ldy #0
+    lda (W3),y
     sta W1
     iny
-    lda (W2),y
+    lda (W3),y
     sta W1+1
 
     rs_push(W1)
     jsr eval                          // RV = forced value (consumes 1)
 
-    // Re-deref tuple — eval is alloc-free today, but stay defensive.
+    // Re-deref tuple (eval may alloc).
     rs_peek(W0)
     jsr deref_W0_to_W2
 
-    // tuple[i] = RV.
-    lda B1
+    // W3 = payload + 2*i (recompute — W2 just refreshed).
+    lda B2
     asl
-    tay
+    sta W3
+    lda B3
+    rol
+    sta W3+1
+    clc
+    lda W3
+    adc W2
+    sta W3
+    lda W3+1
+    adc W2+1
+    sta W3+1
+
+    ldy #0
     lda RV
-    sta (W2),y
+    sta (W3),y
     iny
     lda RV+1
-    sta (W2),y
+    sta (W3),y
 
-    inc B1
+    // i++ (16-bit).
+    inc B2
+    bne !+
+    inc B3
+!:
     jmp _ev_tup_loop
 
 _ev_tup_done:
@@ -412,22 +522,57 @@ _as_sub:
     jmp error_handler
 
 _as_sub_list:
+    // Read int subscript (W1) into signed 16-bit (B5:B6); negative → add
+    // container O_LEN.
     ldy #H_PTR
     lda (W1),y
     sta W2
     iny
     lda (W1),y
     sta W2+1
-    ldy #O_HEADER
+    ldy #O_LEN
     lda (W2),y
-    bpl _as_sub_idx_pos
+    pha                              // int O_LEN low
+    clc
+    lda W2
+    adc #O_HEADER
+    sta W2
+    bcc !+
+    inc W2+1
+!:
+    ldy #0
+    lda (W2),y
+    sta B5
+    pla
+    cmp #1
+    beq _as_sub_list_1byte
+    iny
+    lda (W2),y
     sta B6
+    jmp _as_sub_list_idx_check
+_as_sub_list_1byte:
+    lda B5
+    bmi !neg+
+    lda #0
+    bpl !done+
+!neg:
+    lda #$FF
+!done:
+    sta B6
+_as_sub_list_idx_check:
+    lda B6
+    bpl _as_sub_idx_pos
     jsr deref_W0_to_W2
     clc
+    adc B5
+    sta B5
+    txa
     adc B6
+    sta B6
 _as_sub_idx_pos:
+    lda B5
     sta W2
-    lda #0
+    lda B6
     sta W2+1
     fs_push(W2)
 

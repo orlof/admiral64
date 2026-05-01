@@ -269,10 +269,426 @@ def msbasic_to_python(b: bytes | list[int]) -> float:
     return sign * mantissa * (2.0 ** exp)
 
 
+# --- Virtual 1541 / KERNAL disk mock -----------------------------------------
+# py65 has no IEC bus emulation, and our running code banks KERNAL out
+# anyway ($01=$34 steady state). Disk-touching tests need a mock that
+# intercepts the KERNAL routines disk.asm uses, simulates a tiny 1541, and
+# RTSes back to the caller — without ever executing real KERNAL bytes.
+#
+# Behaviour summary:
+#   - SETLFS / SETNAM stash params (mirrors real KERNAL writing to $B7-$BC)
+#   - OPEN parses the SETNAM string, wires up a per-LFN channel:
+#       sec=15  → command/error channel
+#       name=$  → directory channel (synthesizes BASIC-program format)
+#       else    → SEQ read or write depending on `,S,R` / `,S,W` modifier
+#   - CHRIN/CHROUT route through the active LFN (or default kbd/screen)
+#   - CLOSE finalizes a write (commits buffer to self.files)
+#   - READST returns the ST byte at zp $90 (we keep it in sync)
+#
+# Filenames are stored as PETSCII bytes; the mock doesn't case-fold or
+# translate. The DOS-status string format mirrors real CBM error replies.
+
+
+class _ReadChan:
+    def __init__(self, data: bytes) -> None:
+        self.data = data
+        self.pos = 0
+
+    def read_byte(self) -> tuple[int, bool]:
+        if self.pos >= len(self.data):
+            return 0, True
+        b = self.data[self.pos]
+        self.pos += 1
+        return b, self.pos >= len(self.data)
+
+
+class _WriteChan:
+    def __init__(self, mock: "KernalDiskMock", name: bytes) -> None:
+        self.mock = mock
+        self.name = name
+        self.buf = bytearray()
+
+    def write_byte(self, b: int) -> None:
+        self.buf.append(b)
+
+    def close(self) -> None:
+        self.mock.files[self.name] = bytes(self.buf)
+
+
+class _CmdChan:
+    def __init__(self, mock: "KernalDiskMock") -> None:
+        self.mock = mock
+        self.cmd_buf = bytearray()
+        self._reply: bytes | None = None
+        self._reply_pos = 0
+
+    def write_byte(self, b: int) -> None:
+        # CR ($0D) terminates a command; flush and execute now so subsequent
+        # writes start a fresh command (matches real DOS behaviour).
+        if b == 0x0D:
+            if self.cmd_buf:
+                self.mock.execute_dos_command(bytes(self.cmd_buf))
+                self.cmd_buf = bytearray()
+            return
+        self.cmd_buf.append(b)
+
+    def read_byte(self) -> tuple[int, bool]:
+        if self._reply is None:
+            c, m, t, s = self.mock.last_dos_error
+            self._reply = (
+                f"{c:02d},{m.decode('ascii')},{t:02d},{s:02d}\r"
+            ).encode("ascii")
+            self._reply_pos = 0
+        if self._reply_pos >= len(self._reply):
+            return 0, True
+        b = self._reply[self._reply_pos]
+        self._reply_pos += 1
+        return b, self._reply_pos >= len(self._reply)
+
+    def close(self) -> None:
+        if self.cmd_buf:
+            self.mock.execute_dos_command(bytes(self.cmd_buf))
+            self.cmd_buf = bytearray()
+
+
+class _DirChan:
+    """Synthesizes the BASIC-program format `LOAD "$",8` returns.
+
+    Stream layout (per CBM DOS):
+        $0401 little-endian load address (2 bytes)
+        per line:
+            link_lo link_hi   ; 2 bytes; final 00 00 = end of program
+            line#_lo line#_hi ; 2 bytes; for files = blocks-used count
+            tokens / chars    ; ASCII content of the line
+            00                ; line terminator
+        00 00                 ; final program terminator (the link of the
+                              ; last line is already 00 00)
+
+    Our streaming parser only cares about quoted filename + line-number =
+    block count, so we keep formatting loose: we don't bother computing
+    real BASIC links or matching the exact column padding. Tests assert
+    extracted (name, blocks) only.
+    """
+
+    def __init__(self, mock: "KernalDiskMock") -> None:
+        self.data = self._build(mock)
+        self.pos = 0
+
+    def _build(self, mock: "KernalDiskMock") -> bytes:
+        out = bytearray()
+        out += b"\x01\x04"  # load address $0401
+
+        # Header line: line# = 0, contents = "<diskname>" "<id> 2A"
+        out += self._line(0, b'"' + mock.disk_name + b'" ' + mock.disk_id + b" 2A")
+
+        # File lines: line# = blocks (size in disk blocks of 254 useful bytes)
+        for name, contents in mock.files.items():
+            blocks = (len(contents) + 253) // 254
+            out += self._line(blocks, b'"' + name + b'" PRG')
+
+        # End-of-program marker
+        out += b"\x00\x00"
+        return bytes(out)
+
+    @staticmethod
+    def _line(line_no: int, content: bytes) -> bytes:
+        # Use a dummy non-zero link so the parser sees "more lines coming"
+        # until our final 00 00 terminator. Exact value doesn't matter.
+        link = 0x0101
+        return (
+            bytes([link & 0xFF, (link >> 8) & 0xFF])
+            + bytes([line_no & 0xFF, (line_no >> 8) & 0xFF])
+            + content
+            + b"\x00"
+        )
+
+    def read_byte(self) -> tuple[int, bool]:
+        if self.pos >= len(self.data):
+            return 0, True
+        b = self.data[self.pos]
+        self.pos += 1
+        return b, self.pos >= len(self.data)
+
+
+class KernalDiskMock:
+    """Hooks KERNAL disk routines in py65 to simulate a virtual 1541.
+
+    Trapped routines (listed by jump-table address):
+      $FFB7 READST, $FFBA SETLFS, $FFBD SETNAM,
+      $FFC0 OPEN,   $FFC3 CLOSE,
+      $FFC6 CHKIN,  $FFC9 CHKOUT, $FFCC CLRCHN,
+      $FFCF CHRIN,  $FFD2 CHROUT.
+
+    Inspectable state:
+      .files: dict[bytes, bytes]  filename → contents
+      .formatted: bool            set by N0: command
+      .disk_name, .disk_id: bytes set by format
+      .last_dos_error: tuple      (code, msg, track, sector)
+    """
+
+    READST = 0xFFB7
+    SETLFS = 0xFFBA
+    SETNAM = 0xFFBD
+    OPEN = 0xFFC0
+    CLOSE = 0xFFC3
+    CHKIN = 0xFFC6
+    CHKOUT = 0xFFC9
+    CLRCHN = 0xFFCC
+    CHRIN = 0xFFCF
+    CHROUT = 0xFFD2
+
+    TRAPS = frozenset(
+        {READST, SETLFS, SETNAM, OPEN, CLOSE, CHKIN, CHKOUT, CLRCHN, CHRIN, CHROUT}
+    )
+
+    def __init__(self, mpu: MPU) -> None:
+        self.mpu = mpu
+        self.files: dict[bytes, bytes] = {}
+        self.formatted = False
+        self.disk_name = b"ADMIRAL"
+        self.disk_id = b"01"
+        # SETLFS/SETNAM staging (mirror of $B8 / $BA / $B9 / $B7 / $BB / $BC)
+        self._setlfs_lfn = 0
+        self._setlfs_dev = 8
+        self._setlfs_sec = 0
+        self._setnam_len = 0
+        self._setnam_ptr = 0
+        # Per-LFN channels
+        self._channels: dict[int, _ReadChan | _WriteChan | _CmdChan | _DirChan] = {}
+        # Active input/output LFN. 0 = default (kbd/screen — we discard).
+        self._in_lfn = 0
+        self._out_lfn = 0
+        # Last DOS error (code, message, track, sector)
+        self.last_dos_error: tuple[int, bytes, int, int] = (73, b"CBM DOS V2.6 1541", 0, 0)
+
+    # --- public API used by tests ------------------------------------------
+
+    def add_file(self, name: bytes, contents: bytes) -> None:
+        """Pre-populate a file (e.g. for load-this-existing-file tests)."""
+        self.files[name] = contents
+
+    def execute_dos_command(self, cmd: bytes) -> None:
+        """Parse + execute a DOS command (called from cmd-channel close/CR)."""
+        # Strip optional trailing CR for parser robustness.
+        if cmd.endswith(b"\r"):
+            cmd = cmd[:-1]
+        # N0:NAME,ID  — format
+        if cmd.startswith(b"N0:") or cmd.startswith(b"N:"):
+            payload = cmd.split(b":", 1)[1]
+            if b"," in payload:
+                name, did = payload.split(b",", 1)
+            else:
+                name, did = payload, b"01"
+            self.disk_name = name
+            self.disk_id = did
+            self.files.clear()
+            self.formatted = True
+            self.last_dos_error = (0, b"OK", 0, 0)
+            return
+        # S:NAME or S0:NAME — scratch (delete)
+        if cmd.startswith(b"S:") or cmd.startswith(b"S0:"):
+            target = cmd.split(b":", 1)[1]
+            n = 0
+            if target in self.files:
+                del self.files[target]
+                n = 1
+            self.last_dos_error = (1, b"FILES SCRATCHED", n, 0) if n else (62, b"FILE NOT FOUND", 0, 0)
+            return
+        # Anything else: ignore but flag as unknown command
+        self.last_dos_error = (31, b"SYNTAX ERROR", 0, 0)
+
+    # --- step hook ---------------------------------------------------------
+
+    def step_hook(self) -> bool:
+        """If PC is at a trapped address, simulate the routine and RTS.
+
+        Returns True if a trap fired (caller should NOT also step the MPU).
+        """
+        pc = self.mpu.pc
+        if pc not in self.TRAPS:
+            return False
+        if pc == self.SETLFS:
+            self._do_setlfs()
+        elif pc == self.SETNAM:
+            self._do_setnam()
+        elif pc == self.OPEN:
+            self._do_open()
+        elif pc == self.CLOSE:
+            self._do_close()
+        elif pc == self.CHKIN:
+            self._do_chkin()
+        elif pc == self.CHKOUT:
+            self._do_chkout()
+        elif pc == self.CLRCHN:
+            self._do_clrchn()
+        elif pc == self.CHRIN:
+            self._do_chrin()
+        elif pc == self.CHROUT:
+            self._do_chrout()
+        elif pc == self.READST:
+            self._do_readst()
+        self._simulate_rts()
+        return True
+
+    # --- KERNAL routine simulators -----------------------------------------
+
+    def _do_setlfs(self) -> None:
+        # A=lfn, X=dev, Y=sec
+        self._setlfs_lfn = self.mpu.a
+        self._setlfs_dev = self.mpu.x
+        self._setlfs_sec = self.mpu.y
+
+    def _do_setnam(self) -> None:
+        # A=length, X=name_lo, Y=name_hi
+        self._setnam_len = self.mpu.a
+        self._setnam_ptr = self.mpu.x | (self.mpu.y << 8)
+
+    def _do_open(self) -> None:
+        if self._setlfs_dev != 8:
+            # Device-not-present: C=1, A=$05.
+            self.mpu.a = 0x05
+            self.mpu.p |= 0x01  # set C
+            return
+        name = bytes(
+            self.mpu.memory[(self._setnam_ptr + i) & 0xFFFF]
+            for i in range(self._setnam_len)
+        )
+        lfn = self._setlfs_lfn
+        sec = self._setlfs_sec
+        if sec == 15:
+            ch: _ReadChan | _WriteChan | _CmdChan | _DirChan = _CmdChan(self)
+            self._channels[lfn] = ch
+            if name:
+                # Open with an inline command: execute it now.
+                self.execute_dos_command(name)
+        elif name == b"$":
+            self._channels[lfn] = _DirChan(self)
+            # Real DOS clears the error channel after a successful $ open.
+            self.last_dos_error = (0, b"OK", 0, 0)
+        else:
+            self._open_file(lfn, name)
+        self.mpu.p &= ~0x01  # clear C — no OPEN-level error
+
+    def _open_file(self, lfn: int, name: bytes) -> None:
+        # Strip optional `@0:` overwrite prefix and parse `NAME,T,M`.
+        replace = False
+        body = name
+        if body.startswith(b"@"):
+            replace = True
+            body = body.lstrip(b"@")
+            if body.startswith(b"0:"):
+                body = body[2:]
+        elif body.startswith(b"0:"):
+            body = body[2:]
+        parts = body.split(b",")
+        fname = parts[0]
+        mode = parts[2] if len(parts) >= 3 else b"R"
+        if mode == b"W":
+            if not replace and fname in self.files:
+                self.last_dos_error = (63, b"FILE EXISTS", 0, 0)
+                # Real DOS still opens the channel; the error appears on
+                # ch15. Mirror that — installing a write channel that will
+                # silently overwrite is wrong, so install a sink-channel
+                # whose close() is a no-op.
+                self._channels[lfn] = _WriteChan(_NullDict(), fname)
+                return
+            self._channels[lfn] = _WriteChan(self, fname)
+            self.last_dos_error = (0, b"OK", 0, 0)
+        else:  # default to read
+            if fname not in self.files:
+                self.last_dos_error = (62, b"FILE NOT FOUND", 0, 0)
+                self._channels[lfn] = _ReadChan(b"")
+                return
+            self._channels[lfn] = _ReadChan(self.files[fname])
+            self.last_dos_error = (0, b"OK", 0, 0)
+
+    def _do_close(self) -> None:
+        # A=lfn
+        lfn = self.mpu.a
+        ch = self._channels.pop(lfn, None)
+        if ch is not None and hasattr(ch, "close"):
+            ch.close()
+        if self._in_lfn == lfn:
+            self._in_lfn = 0
+        if self._out_lfn == lfn:
+            self._out_lfn = 0
+
+    def _do_chkin(self) -> None:
+        # X=lfn
+        lfn = self.mpu.x
+        if lfn in self._channels:
+            self._in_lfn = lfn
+            self.mpu.p &= ~0x01
+        else:
+            self.mpu.a = 0x03  # FILE NOT OPEN
+            self.mpu.p |= 0x01
+
+    def _do_chkout(self) -> None:
+        lfn = self.mpu.x
+        if lfn in self._channels:
+            self._out_lfn = lfn
+            self.mpu.p &= ~0x01
+        else:
+            self.mpu.a = 0x03
+            self.mpu.p |= 0x01
+
+    def _do_clrchn(self) -> None:
+        self._in_lfn = 0
+        self._out_lfn = 0
+
+    def _do_chrin(self) -> None:
+        if self._in_lfn == 0:
+            # Default kbd: tests don't cover this path; return 0.
+            self.mpu.a = 0
+            self._set_st(0)
+            return
+        ch = self._channels.get(self._in_lfn)
+        if ch is None:
+            self.mpu.a = 0
+            self._set_st(0x40)
+            return
+        b, eof = ch.read_byte()
+        self.mpu.a = b & 0xFF
+        self._set_st(0x40 if eof else 0)
+
+    def _do_chrout(self) -> None:
+        b = self.mpu.a
+        if self._out_lfn == 0:
+            return  # discard screen output
+        ch = self._channels.get(self._out_lfn)
+        if ch is None:
+            return
+        if hasattr(ch, "write_byte"):
+            ch.write_byte(b)
+
+    def _do_readst(self) -> None:
+        # KERNAL READST simply returns the byte at $90.
+        self.mpu.a = self.mpu.memory[0x0090]
+
+    # --- helpers -----------------------------------------------------------
+
+    def _set_st(self, st: int) -> None:
+        self.mpu.memory[0x0090] = st & 0xFF
+
+    def _simulate_rts(self) -> None:
+        sp = (self.mpu.sp + 1) & 0xFF
+        pcl = self.mpu.memory[0x0100 + sp]
+        sp = (sp + 1) & 0xFF
+        pch = self.mpu.memory[0x0100 + sp]
+        self.mpu.sp = sp
+        self.mpu.pc = (((pch << 8) | pcl) + 1) & 0xFFFF
+
+
+class _NullDict:
+    """Sink dict used when an OPEN-for-write fails (file-exists without @)."""
+    def __setitem__(self, k, v): pass
+
+
 @dataclass
 class Harness:
     mpu: MPU
     sym: dict[str, int]
+    kernal_mock: KernalDiskMock | None = None
 
     # --- memory helpers ---
 
@@ -419,6 +835,8 @@ class Harness:
                         f"return was expected"
                     )
                 return
+            if self.kernal_mock is not None and self.kernal_mock.step_hook():
+                continue
             self.mpu.step()
         raise TimeoutError(
             f"{label}() did not return within {max_steps} steps "
@@ -482,4 +900,31 @@ def hfp(built) -> Harness:
     # Move handle area below BASIC ROM so allocations don't trample ROM bytes
     # in the py65 image. NEXT_HANDLE = $A000 → first handle at $9FF8.
     harness.write_word(0x20, 0xA000)  # NEXT_HANDLE — must match defs.asm
+    return harness
+
+
+@pytest.fixture
+def hd(built) -> Harness:
+    """Like `h`, but with a virtual 1541 wired in as a KernalDiskMock.
+
+    KERNAL ROM is NOT loaded — the mock traps PC entries to disk routines
+    and simulates them in Python. Real disk.asm code that brackets KERNAL
+    calls with `lda #$36; sta $01; jsr $FFD2; lda #$34; sta $01` works
+    transparently: py65's writes to $01 are no-ops, the JSR to $FFD2 hits
+    our trap, and the surrounding bank toggles do nothing observable.
+
+    Inspect/seed the virtual disk via `harness.kernal_mock.files` and
+    `harness.kernal_mock.add_file(name, contents)`.
+    """
+    prg, vs = built
+    mpu = MPU()
+    mpu.sp = 0xFF
+    _load_prg(mpu, prg)
+    syms = _load_symbols(vs)
+    harness = Harness(mpu=mpu, sym=syms)
+    harness.kernal_mock = KernalDiskMock(mpu)
+    harness.call("rs_init")
+    harness.call("fs_init")
+    harness.call("alloc_init")
+    harness.call("rnd_init")
     return harness

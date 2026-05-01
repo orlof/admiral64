@@ -93,8 +93,69 @@ _aai_done:
     rts
 
 // -----------------------------------------------------------------------------
+// _array_alloc_init_w — word-N variant. Same job as _array_alloc_init but takes
+// element count from B0:B1 (16-bit). Used by callers that need >127 elements.
+//
+//   in:  B0:B1 = N (0..32767), X = type tag
+//   out: RV = new handle. Object's O_LEN = N. Payload zeroed.
+//   clobbers: A, X, Y, W2, W3, B0:B1, B2:B3
+// -----------------------------------------------------------------------------
+_array_alloc_init_w:
+    stx ALLOC_TYPE
+    lda B0
+    asl
+    sta ALLOC_SIZE
+    lda B1
+    rol
+    sta ALLOC_SIZE+1
+    jsr alloc
+
+    ldy #H_PTR
+    lda (RV),y
+    sta W2
+    iny
+    lda (RV),y
+    sta W2+1
+    ldy #O_LEN
+    lda B0
+    sta (W2),y
+    iny
+    lda B1
+    sta (W2),y
+
+    clc
+    lda W2
+    adc #O_HEADER
+    sta W2
+    bcc !+
+    inc W2+1
+!:
+    lda B0
+    asl
+    sta B2
+    lda B1
+    rol
+    sta B3
+_aaiw_zero_loop:
+    lda B2
+    ora B3
+    beq _aaiw_done
+    lda #0
+    ldy #0
+    sta (W2),y
+    jsr inc_w2_w
+    lda B2
+    bne !+
+    dec B3
+!:
+    dec B2
+    jmp _aaiw_zero_loop
+_aaiw_done:
+    rts
+
+// -----------------------------------------------------------------------------
 // array_get / tuple_get / list_get — fetch handle at slot i.
-//   in:  RS top: container handle. FS top: index (word; low byte used).
+//   in:  RS top: container handle. FS top: index (word).
 //   out: RV = child handle (0 if slot unset). Args consumed.
 // -----------------------------------------------------------------------------
 array_get:
@@ -103,16 +164,28 @@ list_get:
     preamble_args(1, 1)
 
     rs_peek_at(W0, 0)
-    fs_peek_arg(W1, 0)
+    fs_peek_arg(W1, 0)           // W1 = index word
     jsr deref_W0_to_W2           // W2 = payload (post-header)
 
+    // W3 = W2 + 2*W1 (16-bit pointer to slot).
     lda W1
-    asl                          // byte offset = 2*index
-    tay
-    lda (W2),y
+    asl
+    sta W3
+    lda W1+1
+    rol
+    sta W3+1
+    clc
+    lda W3
+    adc W2
+    sta W3
+    lda W3+1
+    adc W2+1
+    sta W3+1
+    ldy #0
+    lda (W3),y
     sta RV
     iny
-    lda (W2),y
+    lda (W3),y
     sta RV+1
 
     jmp postamble
@@ -157,22 +230,36 @@ list_set:
 // array_set_leaf / tuple_set_leaf — write a child handle into a slot.
 //
 // Leaf-helper contract — caller's V4' body owns its W regs as scratch.
-//   in:  W0 = container, W1 = child, A = slot index (0..127)
-//   out: container payload at index A holds W1
-//   clobbers: A, X, Y, W2 (W0 / W1 preserved)
+//   array_set_leaf / tuple_set_leaf:    W0=container, W1=child, A=index (0..127)
+//   array_set_leaf_w / tuple_set_leaf_w: W0=container, W1=child, A:X = index word
+//
+//   out: container payload at the given index holds W1
+//   clobbers: A, X, Y, W2, W3 (W0 / W1 preserved)
 // -----------------------------------------------------------------------------
 array_set_leaf:
 tuple_set_leaf:
-    pha
-    jsr deref_W0_to_W2
-    pla
-    asl
-    tay
+    ldx #0                       // X = high byte of index = 0 for byte caller
+    // fall through
+array_set_leaf_w:
+tuple_set_leaf_w:
+    sta W3                       // W3 = 2 * index (byte offset into payload)
+    stx W3+1
+    asl W3
+    rol W3+1
+    jsr deref_W0_to_W2           // W2 = payload base; A:X clobbered (length)
+    clc
+    lda W2
+    adc W3
+    sta W3
+    lda W2+1
+    adc W3+1
+    sta W3+1                     // W3 = payload + 2*index
+    ldy #0
     lda W1
-    sta (W2),y
+    sta (W3),y
     iny
     lda W1+1
-    sta (W2),y
+    sta (W3),y
     rts
 
 // -----------------------------------------------------------------------------
@@ -187,7 +274,7 @@ list_append:
 aap_retry:
     rs_peek_at(W0, 1)            // W0 = container
 
-    // Read O_LEN.
+    // Read O_LEN word into B0:B1.
     ldy #H_PTR
     lda (W0),y
     sta W2
@@ -196,45 +283,49 @@ aap_retry:
     sta W2+1
     ldy #O_LEN
     lda (W2),y
-    sta B0                       // B0 = O_LEN
+    sta B0
+    iny
+    lda (W2),y
+    sta B1                       // B0:B1 = O_LEN word
 
     // need = 2*(O_LEN + 1) + O_HEADER (16-bit).
     clc
     lda B0
     adc #1
-    sta B1
-    lda #0
-    adc #0
     sta B2
-    asl B1
-    rol B2
-    clc
     lda B1
-    adc #O_HEADER
-    sta B1
-    lda B2
     adc #0
+    sta B3
+    asl B2
+    rol B3
+    clc
+    lda B2
+    adc #O_HEADER
     sta B2
+    lda B3
+    adc #0
+    sta B3
 
     // If H_SIZE >= need, we have room.
     ldy #H_SIZE
     sec
     lda (W0),y
-    sbc B1
+    sbc B2
     iny
     lda (W0),y
-    sbc B2
+    sbc B3
     bcs aap_have_room
 
     jsr _array_grow
     jmp aap_retry
 
 aap_have_room:
-    // Write child at slot B0 (= old O_LEN).
+    // Write child at slot index = old O_LEN (B0:B1, word).
     rs_peek_at(W0, 1)
     rs_peek_at(W1, 0)
     lda B0
-    jsr array_set_leaf
+    ldx B1
+    jsr array_set_leaf_w
 
     jsr _array_inc_o_len_at_rs1
 
@@ -264,62 +355,85 @@ ains_retry:
     sta W2+1
     ldy #O_LEN
     lda (W2),y
-    sta B0                       // B0 = O_LEN
+    sta B0
+    iny
+    lda (W2),y
+    sta B1                       // B0:B1 = O_LEN word
 
+    // need = 2*(O_LEN+1) + O_HEADER (16-bit) into B2:B3.
     clc
     lda B0
     adc #1
-    sta B1
-    lda #0
-    adc #0
     sta B2
-    asl B1
-    rol B2
-    clc
     lda B1
-    adc #O_HEADER
-    sta B1
-    lda B2
     adc #0
+    sta B3
+    asl B2
+    rol B3
+    clc
+    lda B2
+    adc #O_HEADER
     sta B2
+    lda B3
+    adc #0
+    sta B3
 
     ldy #H_SIZE
     sec
     lda (W0),y
-    sbc B1
+    sbc B2
     iny
     lda (W0),y
-    sbc B2
+    sbc B3
     bcs ains_have_room
 
     jsr _array_grow
     jmp ains_retry
 
 ains_have_room:
-    // Compute clipped index. B0 still holds O_LEN.
+    // Read raw index from FS (word).
     fs_peek_arg(W1, 0)
+
+    // Clip: if W1 > O_LEN, set W1 = O_LEN. Compare W1 vs B0:B1.
+    sec
+    lda B0
+    sbc W1
+    lda B1
+    sbc W1+1
+    bcs ains_idx_ok              // O_LEN >= W1 → no clip
+    lda B0
+    sta W1
+    lda B1
+    sta W1+1
+ains_idx_ok:
+
+    // Stash clipped index in B6:B7 (survives across the shift call which
+    // clobbers B0..B5).
+    lda W1
+    sta B6
+    lda W1+1
+    sta B7
+
+    // Shift only if W1 < O_LEN. (W1 already clipped to ≤ O_LEN.)
     lda W1
     cmp B0
-    bcc ains_idx_ok
-    lda B0                       // index > O_LEN → clip to O_LEN
-ains_idx_ok:
-    sta B1                       // B1 = effective index
+    bne ains_do_shift
+    lda W1+1
+    cmp B1
+    beq ains_no_shift
 
-    // If index < O_LEN, shift elements [index..O_LEN-1] up by 1.
-    lda B1
-    cmp B0
-    bcs ains_no_shift            // idx == O_LEN → no shift
-
+ains_do_shift:
     rs_peek_at(W0, 1)
-    lda B1
-    jsr _array_shift_up_leaf
+    lda B6
+    ldx B7
+    jsr _array_shift_up_leaf_w
 
 ains_no_shift:
-    // Write child at slot B1.
     rs_peek_at(W0, 1)
     rs_peek_at(W1, 0)
-    lda B1
-    jsr array_set_leaf
+    lda B6
+    ldx B7
+    jsr array_set_leaf_w
 
     jsr _array_inc_o_len_at_rs1
 
@@ -328,14 +442,14 @@ ains_no_shift:
 // -----------------------------------------------------------------------------
 // array_del / list_del — remove element at slot `index`, shifting subsequent
 // elements down. O_LEN -= 1. If index ≥ O_LEN, no-op.
-//   in:  RS: container. FS: index (word; low byte used).
+//   in:  RS: container. FS: index (word).
 // -----------------------------------------------------------------------------
 array_del:
 list_del:
     preamble_args(1, 1)
 
     rs_peek_at(W0, 0)
-    fs_peek_arg(W1, 0)
+    fs_peek_arg(W1, 0)           // W1 = index word (already 16-bit)
 
     ldy #H_PTR
     lda (W0),y
@@ -345,16 +459,29 @@ list_del:
     sta W2+1
     ldy #O_LEN
     lda (W2),y
-    sta B0                       // B0 = O_LEN
+    sta B0
+    iny
+    lda (W2),y
+    sta B1                       // B0:B1 = O_LEN word
 
+    // 16-bit unsigned compare: index >= O_LEN → no-op.
+    lda W1+1
+    cmp B1
+    bcc _adel_in_range
+    bne adel_done
     lda W1
     cmp B0
-    bcs adel_done                // index >= O_LEN: no-op
+    bcs adel_done
+_adel_in_range:
+    lda W1
+    sta B6
+    lda W1+1
+    sta B7                       // B6:B7 = index word (survives shift call)
 
-    sta B1                       // B1 = index
-
-    lda B1
-    jsr _array_shift_down_leaf
+    rs_peek_at(W0, 0)
+    lda B6
+    ldx B7
+    jsr _array_shift_down_leaf_w
 
     rs_peek_at(W0, 0)
     ldy #H_PTR
@@ -402,45 +529,87 @@ _array_inc_o_len_at_rs1:
 
 // -----------------------------------------------------------------------------
 // _array_shift_up_leaf — make room at slot `index` by sliding elements
-// [index..O_LEN-1] to [index+1..O_LEN]. Backward byte copy so we don't
-// overwrite source bytes before reading them.
+// [index..O_LEN-1] to [index+1..O_LEN]. Backward byte copy.
 //
-//   in:  W0 = container, A = index. Slot at O_LEN must be reserved
-//        (capacity ≥ O_LEN+1 — caller verified).
-//   clobbers: A, X, Y, W2, B0, B1 (W0, W1 preserved)
+//   _array_shift_up_leaf:    W0=container, A=index (byte legacy entry).
+//   _array_shift_up_leaf_w:  W0=container, A:X=index word.
+//   Slot at O_LEN must be reserved (capacity ≥ O_LEN+1 — caller verified).
+//   clobbers: A, X, Y, W2, W3, B0:B5 (W0, W1, B6, B7 preserved)
 // -----------------------------------------------------------------------------
 _array_shift_up_leaf:
-    pha                          // save index
-    jsr deref_W0_to_W2           // W2 = payload, A = O_LEN
+    ldx #0
+    // fall through
+_array_shift_up_leaf_w:
     sta B0
-    pla
-    sta B1                       // B1 = index
+    stx B1                       // B0:B1 = index word
+    jsr deref_W0_to_W2           // W2 = payload base, A:X = O_LEN word
+    sta B2
+    stx B3                       // B2:B3 = O_LEN word
 
-    // count_bytes = 2 * (O_LEN - index)
-    lda B0
+    // count_elements = O_LEN - index. If 0 → done.
     sec
+    lda B2
+    sbc B0
+    sta B4
+    lda B3
     sbc B1
+    sta B5
+    lda B4
+    ora B5
     beq _asu_done
-    asl
-    tax                          // X = byte counter
 
-    // Y = 2*O_LEN + 1 (last new byte, = high of new slot O_LEN)
-    lda B0
+    // count_bytes = 2 * count_elements (16-bit shift left).
+    asl B4
+    rol B5
+
+    // W2 = src_end = payload + 2*O_LEN. Use W3 as scratch for 2*O_LEN.
+    lda B2
     asl
+    sta W3
+    lda B3
+    rol
+    sta W3+1
     clc
-    adc #1
-    tay
+    lda W2
+    adc W3
+    sta W2
+    lda W2+1
+    adc W3+1
+    sta W2+1                     // W2 = payload + 2*O_LEN
+
+    // W3 = dst_end = W2 + 2.
+    clc
+    lda W2
+    adc #2
+    sta W3
+    lda W2+1
+    adc #0
+    sta W3+1
 
 _asu_loop:
-    dey
-    dey
-    lda (W2),y                   // src at Y-2
-    iny
-    iny
-    sta (W2),y                   // dst at Y
-    dey
-    dex
-    bne _asu_loop
+    lda B4
+    ora B5
+    beq _asu_done
+    // dec W2 (src), then dec W3 (dst), then copy.
+    lda W2
+    bne !+
+    dec W2+1
+!:
+    dec W2
+    lda W3
+    bne !+
+    dec W3+1
+!:
+    dec W3
+    ldy #0
+    lda (W2),y
+    sta (W3),y
+    lda B4
+    bne !+
+    dec B5
+!:
+    dec B4
+    jmp _asu_loop
 _asu_done:
     rts
 
@@ -449,42 +618,83 @@ _asu_done:
 // sliding elements [index+1..O_LEN-1] down to [index..O_LEN-2]. Forward
 // byte copy.
 //
-//   in:  W0 = container, A = index (in range).
-//   clobbers: A, X, Y, W2, B0, B1 (W0, W1 preserved)
+//   _array_shift_down_leaf:    W0=container, A=index (byte legacy entry).
+//   _array_shift_down_leaf_w:  W0=container, A:X=index word.
+//   clobbers: A, X, Y, W2, W3, B0:B5 (W0, W1, B6, B7 preserved)
 // -----------------------------------------------------------------------------
 _array_shift_down_leaf:
-    pha
-    jsr deref_W0_to_W2           // W2 = payload, A = O_LEN
+    ldx #0
+    // fall through
+_array_shift_down_leaf_w:
     sta B0
-    pla
-    sta B1                       // B1 = index
+    stx B1                       // B0:B1 = index word
+    jsr deref_W0_to_W2           // W2 = payload, A:X = O_LEN word
+    sta B2
+    stx B3                       // B2:B3 = O_LEN word
 
-    // count_bytes = 2 * (O_LEN - 1 - index). If ≤0, nothing to shift.
-    lda B0
+    // count_elements = O_LEN - 1 - index. If ≤0 → done.
     sec
-    sbc B1
-    sec
+    lda B2
     sbc #1
-    bcc _asd_done
-    beq _asd_done
-    asl
-    tax
+    sta B4
+    lda B3
+    sbc #0
+    sta B5                       // B4:B5 = O_LEN - 1
+    sec
+    lda B4
+    sbc B0
+    sta B4
+    lda B5
+    sbc B1
+    sta B5
+    bcc _asd_done                // (O_LEN-1) - index < 0
+    lda B4
+    ora B5
+    beq _asd_done                // count == 0
 
-    // Y = 2 * index (first dst byte offset)
-    lda B1
+    // count_bytes = 2 * count_elements.
+    asl B4
+    rol B5
+
+    // W3 = dst_ptr = payload + 2*index.
+    lda B0
     asl
-    tay
+    sta W3
+    lda B1
+    rol
+    sta W3+1
+    clc
+    lda W3
+    adc W2
+    sta W3
+    lda W3+1
+    adc W2+1
+    sta W3+1                     // W3 = payload + 2*index
+
+    // W2 = src_ptr = W3 + 2.
+    clc
+    lda W3
+    adc #2
+    sta W2
+    lda W3+1
+    adc #0
+    sta W2+1
 
 _asd_loop:
-    iny
-    iny
-    lda (W2),y                   // src at Y+2
-    dey
-    dey
-    sta (W2),y                   // dst at Y
-    iny
-    dex
-    bne _asd_loop
+    lda B4
+    ora B5
+    beq _asd_done
+    ldy #0
+    lda (W2),y
+    sta (W3),y
+    jsr inc_w2_w
+    jsr inc_w3_w
+    lda B4
+    bne !+
+    dec B5
+!:
+    dec B4
+    jmp _asd_loop
 _asd_done:
     rts
 
@@ -529,7 +739,7 @@ _array_grow:
 _ag_size_ok:
 
     // Save current O_LEN (heap_carve_payload writes a fresh O_LEN that we
-    // overwrite back to the live element count).
+    // overwrite back to the live element count). 16-bit.
     ldy #H_PTR
     lda (W0),y
     sta W2
@@ -539,6 +749,9 @@ _ag_size_ok:
     ldy #O_LEN
     lda (W2),y
     sta B2
+    iny
+    lda (W2),y
+    sta B3                       // B2:B3 = saved O_LEN word
 
     lda B0
     sta ALLOC_SIZE
@@ -577,11 +790,11 @@ _ag_size_ok:
     lda B2
     sta (RV),y
     iny
-    lda #0
+    lda B3
     sta (RV),y
 
     // Copy old elements: src = old + O_HEADER, dst = RV + O_HEADER,
-    // count = 2 * O_LEN. Forward copy is safe — regions disjoint.
+    // count = 2 * (B2:B3) word. Forward copy is safe — regions disjoint.
     clc
     lda W2
     adc #O_HEADER
@@ -599,7 +812,8 @@ _ag_size_ok:
     lda B2
     asl
     sta W3
-    lda #0
+    lda B3
+    rol
     sta W3+1
     jsr mem_copy_down
 
@@ -630,14 +844,25 @@ _ag_size_ok:
 array_merge:
     preamble_args(2, 0)               // RS: [a, b]
 
-    // Validate types and stash the (output) type in B6.
+    // Validate types and stash the (output) type in B6. TYPE_NAME and
+    // TYPE_STR share their payload layout, so we normalize NAME→STR for
+    // the type-equality check; the resulting handle is always TYPE_STR
+    // when either input is string-shaped.
     rs_peek_at(W0, 1)
     ldy #H_TYPE
     lda (W0),y
-    sta B6                            // B6 = a.type (also output type)
+    cmp #TYPE_NAME
+    bne !s+
+    lda #TYPE_STR
+!s:
+    sta B6                            // B6 = a.type (normalized; output type)
     rs_peek_at(W1, 0)
     ldy #H_TYPE                       // rs_peek_at clobbered Y — restore.
     lda (W1),y
+    cmp #TYPE_NAME
+    bne !s+
+    lda #TYPE_STR
+!s:
     cmp B6
     beq !ok+
     jmp _amrg_type_err
@@ -653,29 +878,41 @@ array_merge:
     jmp _amrg_type_err
 _amrg_type_ok:
 
-    // Read both element counts (low byte of O_LEN).
+    // Read both element counts as 16-bit words.
+    //   B4:B7 = a count
+    //   B5:B3 = b count
     rs_peek_at(W0, 1)
-    jsr deref_W0_to_W2                // A = a.O_LEN low
-    sta B4                            // B4 = a_count
+    jsr deref_W0_to_W2                // A:X = a.O_LEN word
+    sta B4
+    stx B7
     rs_peek_at(W0, 0)
-    jsr deref_W0_to_W2                // A = b.O_LEN low
-    sta B5                            // B5 = b_count
+    jsr deref_W0_to_W2                // A:X = b.O_LEN word
+    sta B5
+    stx B3
 
     // Dispatch on type for the alloc.
     lda B6
     cmp #TYPE_STR
     beq _amrg_alloc_str
 
-    // LIST/TUPLE: total elements = B4+B5 (must fit in 7 bits).
+    // LIST/TUPLE: total = a + b. Each element is a 2-byte handle, so payload
+    // bytes = 2 * total. Total must fit in 15 bits so 2*total fits a word.
     clc
     lda B4
     adc B5
-    cmp #128
+    sta B0                            // B0:B1 = total elements (16-bit)
+    lda B7
+    adc B3
+    sta B1
     bcc !ok+
-    jmp _amrg_overflow
+    jmp _amrg_overflow                // 17-bit sum
+!ok:
+    lda B1
+    bpl !ok+
+    jmp _amrg_overflow                // high bit set → 2*total overflows
 !ok:
     ldx #TYPE_LIST
-    jsr _array_alloc_init             // RV = new list, O_LEN = a+b, payload zeroed.
+    jsr _array_alloc_init_w           // B0:B1=N word, X=type. RV = new list.
 
     // If a was a TUPLE, mutate H_TYPE of the new handle to TYPE_TUPLE.
     lda B6
@@ -684,9 +921,11 @@ _amrg_type_ok:
     ldy #H_TYPE
     sta (RV),y
 _amrg_to_bytes:
-    // Convert element counts to byte counts (×2 for handle slots).
+    // Convert per-input element counts to byte counts (×2) — 16-bit shift.
     asl B4
+    rol B7
     asl B5
+    rol B3
     jmp _amrg_do_copy
 
 _amrg_alloc_str:
@@ -695,9 +934,12 @@ _amrg_alloc_str:
     lda B4
     adc B5
     sta ALLOC_SIZE
-    lda #0
-    adc #0
+    lda B7
+    adc B3
     sta ALLOC_SIZE+1
+    bcc !ok+
+    jmp _amrg_overflow
+!ok:
     lda #TYPE_STR
     sta ALLOC_TYPE
     jsr alloc                          // RV = new TYPE_STR; O_LEN already = total.
@@ -705,38 +947,44 @@ _amrg_alloc_str:
 _amrg_do_copy:
     jsr deref_RV_to_W2                // dst = RV's payload base
 
-    // Phase 1: copy B4 bytes from a's payload to W2.
+    // Phase 1: copy B4:B7 bytes from a's payload to W2 (16-bit count).
     rs_peek_at(W0, 1)
     jsr deref_W0_to_W3                // src = a's payload base
-    ldy #0
 _amrg_loop_a:
-    cpy B4
+    lda B4
+    ora B7
     beq _amrg_a_done
+    ldy #0
     lda (W3),y
     sta (W2),y
-    iny
-    bne _amrg_loop_a
-_amrg_a_done:
-    // Advance dst (W2) by B4.
-    tya
-    clc
-    adc W2
-    sta W2
-    bcc !+
-    inc W2+1
+    jsr inc_w2_w
+    jsr inc_w3_w
+    lda B4
+    bne !+
+    dec B7
 !:
+    dec B4
+    jmp _amrg_loop_a
+_amrg_a_done:
 
-    // Phase 2: copy B5 bytes from b's payload.
+    // Phase 2: copy B5:B3 bytes from b's payload.
     rs_peek_at(W0, 0)
     jsr deref_W0_to_W3                // src = b's payload base
-    ldy #0
 _amrg_loop_b:
-    cpy B5
+    lda B5
+    ora B3
     beq _amrg_b_done
+    ldy #0
     lda (W3),y
     sta (W2),y
-    iny
-    bne _amrg_loop_b
+    jsr inc_w2_w
+    jsr inc_w3_w
+    lda B5
+    bne !+
+    dec B3
+!:
+    dec B5
+    jmp _amrg_loop_b
 _amrg_b_done:
     jmp postamble
 
@@ -756,9 +1004,10 @@ _amrg_type_err:
 //   out: RV = new container; payload = container.payload concatenated N times.
 //        Args consumed.
 //
-// Negative N (or zero) yields an empty container of the same type. N's
-// payload high byte and sign are honored: any negative magnitude → empty.
-// LIST/TUPLE total elements must still fit in 7 bits.
+// Negative N yields an empty container of the same type. N is read as a
+// 16-bit unsigned magnitude (0..32767); larger or negative ints panic
+// ERR_OOM. LIST/TUPLE total bytes (2*elements) must fit a word; STR total
+// must too.
 // V4'.
 // -----------------------------------------------------------------------------
 array_repeat:
@@ -776,20 +1025,65 @@ array_repeat:
     jmp _arep_type_err
 _arep_n_type_ok:
 
-    // Read N. Negative or zero → empty result.
-    jsr deref_W0_to_W2                // A = O_LEN, W2 = payload
-    sta B7                            // B7 = O_LEN of the int (used for sign byte)
-    beq _arep_n_zero
+    // Read N as a 16-bit unsigned multiplier in B5:B3. Negative or zero →
+    // empty result. Reject magnitudes >= 32768 (word bit 15 set is
+    // ambiguous with sign).
+    jsr deref_W0_to_W2                // A:X = O_LEN word, W2 = payload
+    cpx #0
+    beq !ok+
+    jmp _arep_overflow                // O_LEN > 255: absurdly large int
+!ok:
+    cmp #0
+    bne _arep_n_check_sign
+    jmp _arep_n_zero                  // O_LEN = 0
+_arep_n_check_sign:
+    sta B6                            // B6 = O_LEN low (scratch)
     jsr sign_byte_W2                  // A = $FF if negative
-    bmi _arep_n_zero
-    // Positive non-empty int: low byte = N.
+    bpl !pos+
+    jmp _arep_n_zero
+!pos:
     ldy #0
     lda (W2),y
-    sta B5
-    bne _arep_have_n                  // N > 0
+    sta B5                            // B5 = N low
+    lda #0
+    sta B3                            // B3 = N high (default 0)
+    lda B6
+    cmp #2
+    bcs !rd2+
+    jmp _arep_check_n
+!rd2:
+    // O_LEN ≥ 2 → read byte 1 as N high.
+    ldy #1
+    lda (W2),y
+    sta B3
+    bpl !ok+
+    jmp _arep_overflow                // word's bit 15 set → ambiguous sign
+!ok:
+    // For O_LEN > 2, surplus bytes must be 0 (positive sign extension).
+    lda B6
+    cmp #3
+    bcs !chk+
+    jmp _arep_check_n
+!chk:
+    ldy #2
+_arep_chk_msb:
+    lda (W2),y
+    beq !ok+
+    jmp _arep_overflow
+!ok:
+    iny
+    cpy B6
+    bcc _arep_chk_msb
+_arep_check_n:
+    lda B5
+    ora B3
+    bne _arep_have_n
+    jmp _arep_n_zero
+
 _arep_n_zero:
     lda #0
     sta B5
+    sta B3
 _arep_have_n:
 
     // Read container type (B6) and validate.
@@ -807,24 +1101,40 @@ _arep_have_n:
 _arep_type_ok:
 
     rs_peek_at(W0, 1)
-    jsr deref_W0_to_W2                // A = container.O_LEN low
-    sta B4                            // B4 = per-iter element count
+    jsr deref_W0_to_W2                // A:X = container.O_LEN word
+    sta B4                            // B4:B7 = per-iter element count
+    stx B7
 
-    // total_count = B4 * B5 → 16-bit B0:B1.
+    // total_count = (B4:B7) * (B5:B3) → 16-bit B0:B1, repeated-add.
+    // 16-bit multiplier: walk a copy in W3 down to zero (B5:B3 must survive
+    // intact — outer copy loop iterates N times).
     lda #0
     sta B0
     sta B1
-    ldx B5
+    lda B5
+    sta W3
+    lda B3
+    sta W3+1
+    ora W3
     beq _arep_alloc                   // N=0 → empty
 _arep_mul_loop:
     clc
     lda B0
     adc B4
     sta B0
+    lda B1
+    adc B7
+    sta B1
     bcc !+
-    inc B1
+    jmp _arep_overflow                // 17th-bit set
 !:
-    dex
+    lda W3
+    bne !+
+    dec W3+1
+!:
+    dec W3
+    lda W3
+    ora W3+1
     bne _arep_mul_loop
 
 _arep_alloc:
@@ -832,18 +1142,13 @@ _arep_alloc:
     cmp #TYPE_STR
     beq _arep_alloc_str
 
-    // LIST/TUPLE: B0 ≤ 127 and B1 == 0 required.
+    // LIST/TUPLE: total fits 15 bits so 2*total fits a word.
     lda B1
-    beq !ok+
-    jmp _arep_overflow
-!ok:
-    lda B0
-    cmp #128
-    bcc !ok+
+    bpl !ok+
     jmp _arep_overflow
 !ok:
     ldx #TYPE_LIST
-    jsr _array_alloc_init             // RV = new list
+    jsr _array_alloc_init_w           // B0:B1 = N, X = type. RV = new list.
 
     lda B6
     cmp #TYPE_TUPLE
@@ -851,10 +1156,11 @@ _arep_alloc:
     ldy #H_TYPE
     sta (RV),y
 _arep_to_bytes:
-    // Element counts → byte counts.
-    asl B4                            // per-iter bytes (8-bit)
-    asl B0                            // total bytes lo
-    rol B1                            // total bytes hi (carry from B0's asl)
+    // Element counts → byte counts (×2) — 16-bit shifts on per-iter and total.
+    asl B4
+    rol B7
+    asl B0
+    rol B1
     jmp _arep_do_copy
 
 _arep_alloc_str:
@@ -871,31 +1177,42 @@ _arep_do_copy:
 
     // If N == 0, nothing to copy.
     lda B5
+    ora B3
     beq _arep_done
 
 _arep_outer:
-    // src = container's payload (re-read each iter; container doesn't move
-    // during this loop, but cheap to re-read).
+    // src = container's payload (re-read each iter to handle GC relocation
+    // during the str_alloc / _array_alloc_init_w above).
     rs_peek_at(W0, 1)
     jsr deref_W0_to_W3
-    ldy #0
+    // Per-iter remaining count B2:B6 = copy of B4:B7 (decremented in inner).
+    lda B4
+    sta B2
+    lda B7
+    sta B6
 _arep_inner:
-    cpy B4
+    lda B2
+    ora B6
     beq _arep_inner_done
+    ldy #0
     lda (W3),y
     sta (W2),y
-    iny
-    bne _arep_inner
+    jsr inc_w2_w
+    jsr inc_w3_w
+    lda B2
+    bne !+
+    dec B6
+!:
+    dec B2
+    jmp _arep_inner
 _arep_inner_done:
-    // Advance dst by per-iter byte count (B4).
-    tya
-    clc
-    adc W2
-    sta W2
-    bcc !+
-    inc W2+1
+    lda B5
+    bne !+
+    dec B3
 !:
     dec B5
+    lda B5
+    ora B3
     bne _arep_outer
 _arep_done:
     jmp postamble
@@ -924,21 +1241,17 @@ array_find:
     preamble_args(2, 0)
 
     rs_peek_at(W0, 0)                 // W0 = container
-    jsr deref_W0_to_W2                // A = O_LEN, W2 = payload base
-    sta B0                            // B0 = element count
-
-    lda #0
-    sta B1                            // B1 = current index
+    jsr deref_W0_to_W2                // A:X = O_LEN word, W2 = payload base
+    sta B0                            // B0:B1 = remaining element count
+    stx B1
 
 _afind_loop:
-    lda B1
-    cmp B0
-    bcs _afind_not_found              // B1 >= B0
+    lda B0
+    ora B1
+    beq _afind_not_found
 
-    // W3 = container.payload[B1] (a handle word at offset 2*B1).
-    lda B1
-    asl
-    tay
+    // W3 = next container element (handle word at W2[0..1]).
+    ldy #0
     lda (W2),y
     sta W3
     iny
@@ -953,9 +1266,16 @@ _afind_loop:
     cmp #0
     bne _afind_found
 
-    // val_eq's V4' frame restored W2 (its caller's value), but did GC happen?
-    // No — val_eq doesn't allocate. W2 still points at our container payload.
-    inc B1
+    // val_eq doesn't allocate (no GC), so W2 is still valid. Step W2 by 2
+    // and decrement the 16-bit counter.
+    clc
+    lda W2
+    adc #2
+    sta W2
+    bcc !+
+    inc W2+1
+!:
+    jsr dec_b01_w
     jmp _afind_loop
 
 _afind_found:

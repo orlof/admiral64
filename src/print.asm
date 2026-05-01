@@ -25,8 +25,9 @@ print_str:
     preamble_args(1, 0)
 
     rs_peek(W0)                  // W0 = string handle
-    jsr deref_W0_to_W2           // W2 = payload, A = O_LEN
-    sta B0                       // B0 = bytes remaining
+    jsr deref_W0_to_W2           // W2 = payload, A:X = O_LEN word
+    sta B0                       // B0:B1 = bytes remaining (16-bit)
+    stx B1
 
     // Move the payload pointer into W0 for the loop — W0 is preserved across
     // screen_put_char, W2 is not.
@@ -37,6 +38,7 @@ print_str:
 
 ps_loop:
     lda B0
+    ora B1
     beq ps_done
     ldy #0
     lda (W0),y
@@ -46,7 +48,8 @@ ps_loop:
     bne !+
     inc W0+1
 !:
-    dec B0
+    // Decrement B0:B1 by 1.
+    jsr dec_b01_w
     jmp ps_loop
 ps_done:
     jmp postamble

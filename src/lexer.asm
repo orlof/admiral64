@@ -8,11 +8,25 @@
 // via `lexer_get_token_as_string`.
 //
 // Source rooting: caller keeps the source-string handle on RS for the
-// duration of lexing. LEX_SRC_HANDLE is a ZP cache of that handle. The hot
-// path (`lexer_next`) does NOT allocate, so payload pointers stay valid.
-// Allocation-bearing routines (`lexer_get_token_as_string`, `lexer_save`)
-// save/recompute pointers via offsets across any alloc that could trigger
-// gc_compact.
+// duration of lexing. LEX_SRC_HANDLE is a ZP cache of that handle.
+//
+// Pointer staleness across `gc_compact`: `LEX_PTR / LEX_END / LEX_TOKEN_*`
+// are absolute pointers into the source's heap payload. Any allocation
+// (anywhere in the program — not just inside the lexer) can move that
+// payload. The lexer keeps these pointers valid via two mechanisms:
+//
+//   (1) `gc_collect` brackets `gc_compact` with `_lex_to_offsets`/
+//       `_lex_from_offsets` (see gc.asm). This rebases the active ZP state
+//       on every collection, transparent to all callers.
+//
+//   (2) `lexer_save` / `lexer_restore` snapshot pointers as OFFSETS from the
+//       source payload base (plus LEX_SRC_HANDLE), so saved snapshots
+//       survive a compact between save and restore. (Used by `while`/`for`
+//       body re-evaluation and `_llp_str_call` outer-state preservation.)
+//
+//   (3) `lexer_get_token_as_string` does its own pre-/post-alloc rebase
+//       through the same `_lex_to_offsets`/`_lex_from_offsets` helpers,
+//       since `str_alloc` may compact mid-routine.
 //
 // Char dispatch: single dispatch site at `_lex_dispatch_char`. Per-char
 // handler table is 256 bytes (lo+hi parallel, 128 entries each — bytes
@@ -1371,117 +1385,37 @@ lex_jmp_hi:
 //        DECODED — the raw `\\n` etc. survive in the result. (Stage 8 will
 //        layer a decode pass on top once it cares.)
 //
-// V4' wrapper. May trigger gc_compact via str_alloc, in which case the
-// source-string payload moves; we save offsets up front and rebase all four
-// LEX_* pointers afterward. Token length must be < 256 bytes (asserted by
-// the size-fits-in-byte check); longer tokens will be truncated by the copy
-// loop today — fix when needed.
+// V4' wrapper. `str_alloc` may trigger gc_compact and relocate the source
+// payload; LEX_PTR / LEX_END / LEX_TOKEN_* are kept valid by the `gc_collect`
+// hook (gc.asm), so this routine no longer needs per-call offset bookkeeping.
+// Token length must be < 256 bytes (asserted by the size-fits-in-byte check);
+// longer tokens will be truncated by the copy loop today — fix when needed.
 // -----------------------------------------------------------------------------
 lexer_get_token_as_string:
     preamble_args(0, 0)
 
-    // Step 1: snapshot all LEX_* pointers as offsets from the source payload
-    // base. After str_alloc, gc_compact may move the source's payload — we
-    // re-deref the (immovable) handle to recompute fresh absolute pointers.
-    lda LEX_SRC_HANDLE
-    sta W0
-    lda LEX_SRC_HANDLE+1
-    sta W0+1
-    jsr deref_W0_to_W2           // W2 = source payload base
-
-    // offset_start (B0:B1)
-    sec
-    lda LEX_TOKEN_START
-    sbc W2
-    sta B0
-    lda LEX_TOKEN_START+1
-    sbc W2+1
-    sta B1
-
-    // offset_end (B2:B3)
+    // ALLOC_SIZE = LEX_TOKEN_END - LEX_TOKEN_START (span byte length). The
+    // pointer subtraction is invariant under gc_compact (both pointers shift
+    // by the same delta), so we compute it once up front.
     sec
     lda LEX_TOKEN_END
-    sbc W2
-    sta B2
-    lda LEX_TOKEN_END+1
-    sbc W2+1
-    sta B3
-
-    // offset_ptr (B4:B5)
-    sec
-    lda LEX_PTR
-    sbc W2
-    sta B4
-    lda LEX_PTR+1
-    sbc W2+1
-    sta B5
-
-    // offset_end_buf (B6:B7)
-    sec
-    lda LEX_END
-    sbc W2
-    sta B6
-    lda LEX_END+1
-    sbc W2+1
-    sta B7
-
-    // ALLOC_SIZE = offset_end - offset_start (span byte length).
-    sec
-    lda B2
-    sbc B0
+    sbc LEX_TOKEN_START
     sta ALLOC_SIZE
-    lda B3
-    sbc B1
+    lda LEX_TOKEN_END+1
+    sbc LEX_TOKEN_START+1
     sta ALLOC_SIZE+1
 
-    // Allocate the result string.
+    // Allocate the result string. The gc_collect hook in gc.asm handles
+    // any payload relocation: by the time str_alloc returns, LEX_PTR /
+    // LEX_END / LEX_TOKEN_* have been rebased against the (post-compact)
+    // source payload base. No per-routine offset bookkeeping needed.
     jsr str_alloc                // RV = handle to fresh TYPE_STR
     rs_push(RV)                  // root through subsequent derefs
 
-    // Step 2: rebase all LEX_* abs pointers after the (possibly compacting)
-    // alloc. Re-deref source handle.
-    lda LEX_SRC_HANDLE
-    sta W0
-    lda LEX_SRC_HANDLE+1
-    sta W0+1
-    jsr deref_W0_to_W2           // W2 = source payload base (current)
-
-    clc
-    lda W2
-    adc B0
-    sta LEX_TOKEN_START
-    lda W2+1
-    adc B1
-    sta LEX_TOKEN_START+1
-
-    clc
-    lda W2
-    adc B2
-    sta LEX_TOKEN_END
-    lda W2+1
-    adc B3
-    sta LEX_TOKEN_END+1
-
-    clc
-    lda W2
-    adc B4
-    sta LEX_PTR
-    lda W2+1
-    adc B5
-    sta LEX_PTR+1
-
-    clc
-    lda W2
-    adc B6
-    sta LEX_END
-    lda W2+1
-    adc B7
-    sta LEX_END+1
-
-    // Step 3: copy span into the new TYPE_STR's payload. For TK_STR,
-    // decode escape sequences into raw bytes; for other kinds (NAME / INT /
-    // HEX / BIN / FLOAT_LIT) we copy verbatim — the parser re-scans those
-    // spans for value extraction.
+    // Copy span into the new TYPE_STR's payload. For TK_STR, decode escape
+    // sequences into raw bytes; for other kinds (NAME / INT / HEX / BIN /
+    // FLOAT_LIT) we copy verbatim — the parser re-scans those spans for
+    // value extraction.
     lda LEX_TOKEN_START
     sta W3
     lda LEX_TOKEN_START+1
@@ -1494,56 +1428,69 @@ lexer_get_token_as_string:
     cmp #TK_STR
     beq _lgts_decode
 
-    // Raw copy for non-string kinds.
-    ldy #0
+    // Raw copy for non-string kinds. 16-bit count via ALLOC_SIZE word.
+    lda ALLOC_SIZE
+    sta B0
+    lda ALLOC_SIZE+1
+    sta B1
 !cloop:
-    cpy ALLOC_SIZE
+    lda B0
+    ora B1
     beq !cdone+
+    ldy #0
     lda (W3),y
     sta (W2),y
-    iny
+    jsr inc_w2_w
+    jsr inc_w3_w
+    jsr dec_b01_w
     jmp !cloop-
 !cdone:
     jmp postamble
 
 // --- TK_STR: decode escape sequences ---------------------------------------
 // W3 = src ptr (advances per byte read), W2 = dst ptr (advances per byte
-// written). B0 = decoded length counter. B1 = remaining input bytes
-// (decremented as we consume the source).
+// written). B0:B1 = decoded length counter (word). B2:B3 = remaining input
+// bytes (word, decremented as we consume the source).
 //
 // Decoded length ≤ source length (each escape collapses 2-4 bytes → 1).
 // We over-allocated based on source length; after decoding, patch the
 // heap object's O_LEN to the actual count.
 _lgts_decode:
     lda ALLOC_SIZE
-    sta B1                       // B1 = source bytes remaining
+    sta B2
+    lda ALLOC_SIZE+1
+    sta B3                       // B2:B3 = source bytes remaining (word)
     lda #0
-    sta B0                       // B0 = decoded byte count
+    sta B0
+    sta B1                       // B0:B1 = decoded byte count (word)
 
 _lgts_dec_loop:
-    lda B1
-    beq _lgts_dec_done
-
+    lda B2
+    ora B3
+    bne !go+
+    jmp _lgts_dec_done
+!go:
     ldy #0
     lda (W3),y                   // c = *src
-    jsr _lgts_advance_src        // src++; B1--
+    jsr _lgts_advance_src        // src++; B2:B3--
     cmp #$5C                     // '\'
     beq _lgts_dec_escape
 
 _lgts_emit:
-    // Store A at *dst, advance dst, count.
+    // Store A at *dst, advance dst, count (word).
     ldy #0
     sta (W2),y
-    inc W2
-    bne !sk+
-    inc W2+1
-!sk:
+    jsr inc_w2_w
     inc B0
+    bne !sk+
+    inc B1
+!sk:
     jmp _lgts_dec_loop
 
 _lgts_dec_escape:
     // Read the escape kind from src[next].
-    lda B1
+    lda B2
+    ora B3
     beq _lgts_dec_done            // truncated — shouldn't happen (lexer validated)
     ldy #0
     lda (W3),y
@@ -1596,13 +1543,13 @@ _lgts_hex_escape:
     asl
     asl
     asl
-    sta B2                        // high nibble shifted into upper 4 bits
+    sta B4                        // high nibble shifted into upper 4 bits
     jsr _lgts_read_hex_nibble    // A = low nibble
-    ora B2
+    ora B4
     jmp _lgts_emit
 
 _lgts_dec_done:
-    // Patch the heap object's O_LEN to the actual decoded byte count.
+    // Patch the heap object's O_LEN to the actual decoded byte count (word).
     rs_peek(W0)
     ldy #H_PTR
     lda (W0),y
@@ -1614,17 +1561,21 @@ _lgts_dec_done:
     lda B0
     sta (W3),y
     iny
-    lda #0
+    lda B1
     sta (W3),y
     jmp postamble
 
-// Helper: advance W3 by 1, decrement B1.
+// Helper: advance W3 by 1, decrement source-remaining word B2:B3.
+// Caller relies on A being preserved (holds the just-read source byte).
 _lgts_advance_src:
-    inc W3
+    pha
+    jsr inc_w3_w
+    lda B2
     bne !sk+
-    inc W3+1
+    dec B3
 !sk:
-    dec B1
+    dec B2
+    pla
     rts
 
 // Helper: read one hex digit at *src, decode 0..15, advance src.
@@ -1655,136 +1606,228 @@ _lgts_upper:
     rts
 
 // -----------------------------------------------------------------------------
+// _lex_load_base — _lex_base = (LEX_SRC_HANDLE).H_PTR.
+// Caller is responsible for guarding against LEX_SRC_HANDLE == 0; this
+// routine just reads the H_PTR slot via indirect-Y.
+//
+// Clobbers: A, Y.
+// -----------------------------------------------------------------------------
+_lex_load_base:
+    ldy #H_PTR
+    lda (LEX_SRC_HANDLE),y
+    sta _lex_base
+    iny
+    lda (LEX_SRC_HANDLE),y
+    sta _lex_base+1
+    rts
+
+// _lex_to_offsets / _lex_from_offsets — bidirectional rebase of the four
+// LEX_PTR / LEX_END / LEX_TOKEN_START / LEX_TOKEN_END payload pointers.
+//
+// _lex_to_offsets: each LEX_* -= _lex_base, leaving offsets in the same ZP
+// cells (cells temporarily hold offsets, not absolute addresses).
+// _lex_from_offsets: each LEX_* += _lex_base, restoring absolute addresses.
+//
+// Used in three places:
+//   • gc_collect: _lex_to_offsets pre-compact, _lex_from_offsets post-compact.
+//   • lexer_save / lexer_restore: snapshots store offsets so they survive
+//     a compact between save and restore.
+//   • lexer_get_token_as_string: rebase across str_alloc.
+//
+// Clobbers: A.
+// -----------------------------------------------------------------------------
+_lex_to_offsets:
+    sec
+    lda LEX_PTR
+    sbc _lex_base
+    sta LEX_PTR
+    lda LEX_PTR+1
+    sbc _lex_base+1
+    sta LEX_PTR+1
+    sec
+    lda LEX_END
+    sbc _lex_base
+    sta LEX_END
+    lda LEX_END+1
+    sbc _lex_base+1
+    sta LEX_END+1
+    sec
+    lda LEX_TOKEN_START
+    sbc _lex_base
+    sta LEX_TOKEN_START
+    lda LEX_TOKEN_START+1
+    sbc _lex_base+1
+    sta LEX_TOKEN_START+1
+    sec
+    lda LEX_TOKEN_END
+    sbc _lex_base
+    sta LEX_TOKEN_END
+    lda LEX_TOKEN_END+1
+    sbc _lex_base+1
+    sta LEX_TOKEN_END+1
+    rts
+
+_lex_from_offsets:
+    clc
+    lda LEX_PTR
+    adc _lex_base
+    sta LEX_PTR
+    lda LEX_PTR+1
+    adc _lex_base+1
+    sta LEX_PTR+1
+    clc
+    lda LEX_END
+    adc _lex_base
+    sta LEX_END
+    lda LEX_END+1
+    adc _lex_base+1
+    sta LEX_END+1
+    clc
+    lda LEX_TOKEN_START
+    adc _lex_base
+    sta LEX_TOKEN_START
+    lda LEX_TOKEN_START+1
+    adc _lex_base+1
+    sta LEX_TOKEN_START+1
+    clc
+    lda LEX_TOKEN_END
+    adc _lex_base
+    sta LEX_TOKEN_END
+    lda LEX_TOKEN_END+1
+    adc _lex_base+1
+    sta LEX_TOKEN_END+1
+    rts
+
+// 2-byte payload-base scratch shared by the three rebase clients above.
+// Loaded by _lex_load_base; consumed by _lex_to_offsets/_lex_from_offsets.
+_lex_base:
+    .byte 0, 0
+
+// -----------------------------------------------------------------------------
 // lexer_save / lexer_restore — snapshot the lexer's full state so callers
-// (chiefly `while`/`for` body re-evaluation) can rewind to a point.
+// (chiefly `while`/`for` body re-evaluation, plus `_llp_str_call`) can rewind
+// to a point — even across a `gc_compact` that moves the source payload.
 //
 // State saved (matches what `lexer_next` reads/writes):
-//   LEX_PTR (2), LEX_END (2), LEX_TOKEN_START (2), LEX_TOKEN_END (2),
-//   LEX_TOKEN_KIND (1), LEX_INDENT_TARGET (1), LEX_INDENT_CURRENT (1),
-//   indent_depth (1), indent_stack[16].
-// Total: 28 bytes.
+//   LEX_PTR / LEX_END / LEX_TOKEN_START / LEX_TOKEN_END (4 words, stored as
+//     OFFSETS from the source payload base — survive payload relocation),
+//   LEX_TOKEN_KIND, LEX_INDENT_TARGET, LEX_INDENT_CURRENT, indent_depth (4
+//     bytes), indent_stack (16 bytes), LEX_SRC_HANDLE (2 bytes — popped
+//     first on restore so we know which payload base to add the offsets to).
+// Total: 30 bytes.
 //
-// Saved onto FS as a contiguous block (28 byte pushes per save). For nested
-// `while` loops, FS just stacks the snapshots.
+// Saved onto FS as a contiguous block. For nested `while` loops, FS just
+// stacks the snapshots.
 //
 // Both routines are leaf helpers (no V4' wrapper) so the FS pushes survive
 // across the call boundary into caller's frame.
 // -----------------------------------------------------------------------------
 lexer_save:
-    // Push 28 bytes from highest-addressed (so pop reverses cleanly).
-    ldx #15                       // start at indent_stack[15]
+    // Push 16-byte indent_stack first (sits at the bottom of the snapshot).
+    ldx #15
 _lsv_stack_loop:
     lda indent_stack,x
-    sta _lsv_byte
-    lda _lsv_byte
-    pha                           // PHA can't go through fs_push_byte due to A clobber
-                                  // (fs_push_byte expects A = byte; we have A = byte)
-    // Inline fs_push_byte body:
-    lda FSP
-    bne !+
-    dec FSP+1
-!:
-    dec FSP
-    pla
-    ldy #0
-    sta (FSP),y
+    jsr fs_push_byte_call
     dex
     bpl _lsv_stack_loop
 
+    // Push the four single-byte fields.
     lda indent_depth
-    jsr _lsv_push_a
+    jsr fs_push_byte_call
     lda LEX_INDENT_CURRENT
-    jsr _lsv_push_a
+    jsr fs_push_byte_call
     lda LEX_INDENT_TARGET
-    jsr _lsv_push_a
+    jsr fs_push_byte_call
     lda LEX_TOKEN_KIND
-    jsr _lsv_push_a
+    jsr fs_push_byte_call
+
+    // Convert the four pointer fields to offsets, push them, restore the
+    // ZP cells so the active lexer continues working with absolute pointers.
+    jsr _lex_load_base
+    jsr _lex_to_offsets
+
     lda LEX_TOKEN_END+1
-    jsr _lsv_push_a
+    jsr fs_push_byte_call
     lda LEX_TOKEN_END
-    jsr _lsv_push_a
+    jsr fs_push_byte_call
     lda LEX_TOKEN_START+1
-    jsr _lsv_push_a
+    jsr fs_push_byte_call
     lda LEX_TOKEN_START
-    jsr _lsv_push_a
+    jsr fs_push_byte_call
     lda LEX_END+1
-    jsr _lsv_push_a
+    jsr fs_push_byte_call
     lda LEX_END
-    jsr _lsv_push_a
+    jsr fs_push_byte_call
     lda LEX_PTR+1
-    jsr _lsv_push_a
+    jsr fs_push_byte_call
     lda LEX_PTR
-    jsr _lsv_push_a
-    rts
+    jsr fs_push_byte_call
 
-// Helper: push A onto FS (one byte). Standalone version to keep lexer_save
-// readable.
-_lsv_push_a:
-    pha
-    lda FSP
-    bne !+
-    dec FSP+1
-!:
-    dec FSP
-    pla
-    ldy #0
-    sta (FSP),y
-    rts
+    jsr _lex_from_offsets
 
-_lsv_byte:
-    .byte 0
+    // Push LEX_SRC_HANDLE last → top of snapshot, popped first on restore.
+    lda LEX_SRC_HANDLE+1
+    jsr fs_push_byte_call
+    lda LEX_SRC_HANDLE
+    jsr fs_push_byte_call
+    rts
 
 lexer_restore:
-    // Pop in reverse order (LSB-first → 16-byte stack last).
-    jsr _lrs_pop_a
+    // LEX_SRC_HANDLE first — needed as base for offset → absolute conversion.
+    jsr fs_pop_byte_call
+    sta LEX_SRC_HANDLE
+    jsr fs_pop_byte_call
+    sta LEX_SRC_HANDLE+1
+
+    // Pop the four pointer offsets directly into the LEX_* cells. The cells
+    // hold offsets at this point; we'll rebase below.
+    jsr fs_pop_byte_call
     sta LEX_PTR
-    jsr _lrs_pop_a
+    jsr fs_pop_byte_call
     sta LEX_PTR+1
-    jsr _lrs_pop_a
+    jsr fs_pop_byte_call
     sta LEX_END
-    jsr _lrs_pop_a
+    jsr fs_pop_byte_call
     sta LEX_END+1
-    jsr _lrs_pop_a
+    jsr fs_pop_byte_call
     sta LEX_TOKEN_START
-    jsr _lrs_pop_a
+    jsr fs_pop_byte_call
     sta LEX_TOKEN_START+1
-    jsr _lrs_pop_a
+    jsr fs_pop_byte_call
     sta LEX_TOKEN_END
-    jsr _lrs_pop_a
+    jsr fs_pop_byte_call
     sta LEX_TOKEN_END+1
-    jsr _lrs_pop_a
+
+    // Rebase: add the (possibly post-compact) payload base to each offset.
+    jsr _lex_load_base
+    jsr _lex_from_offsets
+
+    // Pop the four byte fields.
+    jsr fs_pop_byte_call
     sta LEX_TOKEN_KIND
-    jsr _lrs_pop_a
+    jsr fs_pop_byte_call
     sta LEX_INDENT_TARGET
-    jsr _lrs_pop_a
+    jsr fs_pop_byte_call
     sta LEX_INDENT_CURRENT
-    jsr _lrs_pop_a
+    jsr fs_pop_byte_call
     sta indent_depth
 
+    // Pop the 16-byte indent_stack.
     ldx #0
 _lrs_stack_loop:
-    jsr _lrs_pop_a
+    jsr fs_pop_byte_call
     sta indent_stack,x
     inx
     cpx #16
     bne _lrs_stack_loop
     rts
 
-_lrs_pop_a:
-    ldy #0
-    lda (FSP),y
-    inc FSP
-    bne !+
-    inc FSP+1
-!:
-    rts
-
-// lexer_drop — discard a saved state (advance FSP by 28 bytes). Used by
+// lexer_drop — discard a saved state (advance FSP by 30 bytes). Used by
 // `while` when the loop exits without running another iteration.
 lexer_drop:
     clc
     lda FSP
-    adc #28
+    adc #30
     sta FSP
     bcc !+
     inc FSP+1
@@ -1875,6 +1918,7 @@ kw_bucket_3:
     .byte $66,$6F,$72, TK_FOR        // "for"
     .byte $64,$65,$6C, TK_DEL        // "del"
     .byte $74,$72,$79, TK_TRY        // "try"
+    .byte $63,$6C,$73, TK_CLS        // "cls"
     .byte 0
 
 kw_bucket_4:

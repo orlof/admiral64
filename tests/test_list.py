@@ -110,15 +110,15 @@ def _call_list_len(h, list_handle: int) -> int:
 
 def test_list_get_alias_reads_slot(h):
     a = place_int(h, 0x8500, [0x11])
-    b = place_int(h, 0x6100, [0x22])
-    L = place_list(h, 0x6200, [a, b])
+    b = place_int(h, 0x9100, [0x22])
+    L = place_list(h, 0x9200, [a, b])
     assert _call_seq_get_via_list(h, L, 0) == a
     assert _call_seq_get_via_list(h, L, 1) == b
 
 
 def test_list_len_alias(h):
     a = place_int(h, 0x8500, [0x11])
-    L = place_list(h, 0x6100, [a, a, a, a])
+    L = place_list(h, 0x9100, [a, a, a, a])
     assert _call_list_len(h, L) == 4
 
 
@@ -139,17 +139,17 @@ def _call_list_set(h, list_handle: int, index: int, child: int) -> None:
 
 def test_list_set_replaces_slot(h):
     a = place_int(h, 0x8500, [0x11])
-    b = place_int(h, 0x6100, [0x22])
-    new_child = place_int(h, 0x6200, [0xFF])
-    L = place_list(h, 0x6300, [a, b])
+    b = place_int(h, 0x9100, [0x22])
+    new_child = place_int(h, 0x9200, [0xFF])
+    L = place_list(h, 0x9300, [a, b])
     _call_list_set(h, L, 1, new_child)
     assert read_list(h, L) == [a, new_child]
 
 
 def test_list_set_does_not_change_o_len(h):
     a = place_int(h, 0x8500, [0x11])
-    new_child = place_int(h, 0x6100, [0xFF])
-    L = place_list(h, 0x6200, [a, a, a])
+    new_child = place_int(h, 0x9100, [0xFF])
+    L = place_list(h, 0x9200, [a, a, a])
     _call_list_set(h, L, 1, new_child)
     obj = h.read_word(L + H_PTR)
     assert h.read_word(obj + O_LEN) == 3
@@ -191,13 +191,13 @@ def test_append_to_empty_list_grows_and_writes(h):
 def test_append_within_capacity_no_grow(h):
     """List with slack capacity: append must not realloc."""
     a = place_int(h, 0x8500, [0x11])
-    b = place_int(h, 0x6100, [0x22])
+    b = place_int(h, 0x9100, [0x22])
     # Capacity 4, length 2.
-    L = place_list(h, 0x6200, [a, b], capacity=4)
+    L = place_list(h, 0x9200, [a, b], capacity=4)
     h_ptr_before = h.read_word(L + H_PTR)
     h_size_before = h.read_word(L + H_SIZE)
 
-    new_child = place_int(h, 0x6300, [0x33])
+    new_child = place_int(h, 0x9300, [0x33])
     _call_list_append(h, L, new_child)
 
     assert h.read_word(L + H_PTR) == h_ptr_before, "should not have grown"
@@ -237,7 +237,7 @@ def test_grow_preserves_existing_elements(h):
     obj = h.read_word(L + H_PTR)
     # Manually set elements to recognisable handle-shaped values.
     a = place_int(h, 0x8500, [0xAA])
-    b = place_int(h, 0x6100, [0xBB])
+    b = place_int(h, 0x9100, [0xBB])
     h.write_word(obj + O_HEADER, a)
     h.write_word(obj + O_HEADER + 2, b)
     # capacity == 2, O_LEN == 2 → next append grows.
@@ -291,24 +291,24 @@ def _call_val_eq(h, a: int, b: int) -> int:
 
 def test_val_eq_lists_equal_payloads(h):
     a1 = place_int(h, 0x8500, [0x01])
-    b1 = place_int(h, 0x6100, [0x02])
-    L1 = place_list(h, 0x6200, [a1, b1])
+    b1 = place_int(h, 0x9100, [0x02])
+    L1 = place_list(h, 0x9200, [a1, b1])
 
-    a2 = place_int(h, 0x6300, [0x01])
-    b2 = place_int(h, 0x6400, [0x02])
-    L2 = place_list(h, 0x6500, [a2, b2])
+    a2 = place_int(h, 0x9300, [0x01])
+    b2 = place_int(h, 0x9400, [0x02])
+    L2 = place_list(h, 0x9500, [a2, b2])
 
     assert _call_val_eq(h, L1, L2) == 1
 
 
 def test_val_eq_lists_differ(h):
     a1 = place_int(h, 0x8500, [0x01])
-    b1 = place_int(h, 0x6100, [0x02])
-    L1 = place_list(h, 0x6200, [a1, b1])
+    b1 = place_int(h, 0x9100, [0x02])
+    L1 = place_list(h, 0x9200, [a1, b1])
 
-    a2 = place_int(h, 0x6300, [0x99])
-    b2 = place_int(h, 0x6400, [0x02])
-    L2 = place_list(h, 0x6500, [a2, b2])
+    a2 = place_int(h, 0x9300, [0x99])
+    b2 = place_int(h, 0x9400, [0x02])
+    L2 = place_list(h, 0x9500, [a2, b2])
 
     assert _call_val_eq(h, L1, L2) == 0
 
@@ -317,8 +317,8 @@ def test_val_eq_list_ne_tuple_same_payload(h):
     """Type tag distinguishes list from tuple even when contents match."""
     from test_tuple import place_tuple
     a = place_int(h, 0x8500, [0x11])
-    L = place_list(h, 0x6100, [a])
-    T = place_tuple(h, 0x6200, [a])
+    L = place_list(h, 0x9100, [a])
+    T = place_tuple(h, 0x9200, [a])
     assert _call_val_eq(h, L, T) == 0
 
 

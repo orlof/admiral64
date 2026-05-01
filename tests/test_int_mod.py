@@ -12,7 +12,7 @@ from test_int_add import place_int, read_int
 def run_mod(h, a_bytes: list[int], b_bytes: list[int]) -> list[int]:
     rsp_initial = h.rsp
     a = place_int(h, 0x8500, a_bytes)
-    b = place_int(h, 0x6100, b_bytes)
+    b = place_int(h, 0x9100, b_bytes)
     h.rs_push(a)
     h.rs_push(b)
     h.call("int_mod")

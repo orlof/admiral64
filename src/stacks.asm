@@ -253,6 +253,31 @@ rs_init:
 !:
 }
 
+// Subroutine forms of the byte push/pop. Useful where a routine pushes/pops
+// many bytes in a loop and the macro's ~10-byte expansion per site adds up
+// (lexer_save/restore in particular). Same contracts as the macros, plus an
+// rts at the end.
+fs_push_byte_call:
+    pha
+    lda FSP
+    bne !+
+    dec FSP+1
+!:
+    dec FSP
+    pla
+    ldy #0
+    sta (FSP),y
+    rts
+
+fs_pop_byte_call:
+    ldy #0
+    lda (FSP),y
+    inc FSP
+    bne !+
+    inc FSP+1
+!:
+    rts
+
 // -----------------------------------------------------------------------------
 // Callable wrappers — used both by the Python test harness and by the
 // `rs_push` macro itself, which compiles `rs_push(W0)` etc. into a 3-byte
@@ -480,4 +505,32 @@ rs_push_const_ax:
     iny
     txa
     sta (RSP),y
+    rts
+
+// inc_w2_w / inc_w3_w — 16-bit increment helpers. Replace the 6-byte
+// `inc Wn ; bne !+ ; inc Wn+1 ; !:` inline pattern with `jsr inc_wN_w`
+// (3 bytes). Preserves all flags after exit (rts after inc clears N/Z if
+// W2+1 changed; callers should not rely on flags). Clobbers nothing else.
+inc_w2_w:
+    inc W2
+    bne !+
+    inc W2+1
+!:
+    rts
+inc_w3_w:
+    inc W3
+    bne !+
+    inc W3+1
+!:
+    rts
+
+// dec_b01_w — 16-bit decrement of B0:B1. Replaces inline 8-byte
+// `lda B0 ; bne !+ ; dec B1 ; !: ; dec B0` with a 3-byte JSR.
+// Caller follows with `lda B0 ; ora B1 ; bne loop` if loop continues.
+dec_b01_w:
+    lda B0
+    bne !+
+    dec B1
+!:
+    dec B0
     rts

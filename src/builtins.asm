@@ -53,9 +53,25 @@
 // =============================================================================
 builtin_len:
     jsr preamble_call_1_1_w0
-    jsr deref_W0_to_W2           // A = O_LEN low byte
+    jsr deref_W0_to_W2           // A:X = O_LEN word
     sta B0
+    stx B1
+    // High byte zero AND low byte < 128 → 1-byte int.
+    cpx #0
+    bne _blen_2byte
+    cmp #$80
+    bcs _blen_2byte
     jmp postamble_set_rv_int_b0
+_blen_2byte:
+    lda #2
+    jsr alloc_int_a_deref_w2     // RV = TYPE_INT(2 bytes); W2 = payload
+    lda B0
+    ldy #0
+    sta (W2),y
+    iny
+    lda B1
+    sta (W2),y
+    jmp postamble
 
 // =============================================================================
 // builtin_range(n) — list of integers 0..n-1.
@@ -377,6 +393,12 @@ builtin_str:
     bne !next+
     jmp _bstr_passthrough
 !next:
+    cmp #TYPE_NAME
+    bne !next+
+    // Names share TYPE_STR's payload layout; treat as a string.
+    // print/repr of `globals()` keys land here.
+    jmp _bstr_passthrough
+!next:
     cmp #TYPE_INT
     bne !next+
     jmp _bstr_int
@@ -445,26 +467,94 @@ _bstr_none:
 // Containers: push container as a fresh root above the args tuple, then push
 // open/close, then call the renderer. Rendering helpers read container at RS
 // depth 1 (after their own internal pushes), as before.
+//
+// Cycle detection: each container path toggles bit 7 of its H_TYPE byte on
+// entry. If the bit was already set (i.e., XOR brings it to 0) we're inside
+// a render call already in progress on this same handle — emit the matching
+// ellipsis static and skip rendering. Either path falls through to the
+// shared finish that toggles the bit back, restoring state for the outer
+// call (or leaving it clean at the top level). Same trick as DCPU's
+// TYPE_EXTENSION-bit toggle in dict_repr.
 _bstr_list:
     arg_get(0, W0)
+    lda W0+1
+    pha
+    lda W0
+    pha
+    ldy #H_FLAGS
+    lda (W0),y
+    eor #FLAG_RENDERING
+    sta (W0),y
+    and #FLAG_RENDERING
+    beq _bstr_list_recursion
     rs_push(W0)
     rs_push_const(STR_LBRACK)
     rs_push_const(STR_RBRACK)
     jsr _bstr_render_seq
-    jmp postamble
+    jmp _bstr_container_finish
+_bstr_list_recursion:
+    lda #<STR_LIST_ELLIPSIS
+    sta RV
+    lda #>STR_LIST_ELLIPSIS
+    sta RV+1
+    jmp _bstr_container_finish
 
 _bstr_tuple:
     arg_get(0, W0)
+    lda W0+1
+    pha
+    lda W0
+    pha
+    ldy #H_FLAGS
+    lda (W0),y
+    eor #FLAG_RENDERING
+    sta (W0),y
+    and #FLAG_RENDERING
+    beq _bstr_tuple_recursion
     rs_push(W0)
     rs_push_const(STR_LPAREN)
     rs_push_const(STR_RPAREN)
     jsr _bstr_render_seq
-    jmp postamble
+    jmp _bstr_container_finish
+_bstr_tuple_recursion:
+    lda #<STR_TUPLE_ELLIPSIS
+    sta RV
+    lda #>STR_TUPLE_ELLIPSIS
+    sta RV+1
+    jmp _bstr_container_finish
 
 _bstr_dict:
     arg_get(0, W0)
+    lda W0+1
+    pha
+    lda W0
+    pha
+    ldy #H_FLAGS
+    lda (W0),y
+    eor #FLAG_RENDERING
+    sta (W0),y
+    and #FLAG_RENDERING
+    beq _bstr_dict_recursion
     rs_push(W0)
     jsr _bstr_render_dict
+    jmp _bstr_container_finish
+_bstr_dict_recursion:
+    lda #<STR_DICT_ELLIPSIS
+    sta RV
+    lda #>STR_DICT_ELLIPSIS
+    sta RV+1
+    // fall through
+
+_bstr_container_finish:
+    // Restore container handle from HW stack, toggle FLAG_RENDERING back.
+    pla
+    sta W0
+    pla
+    sta W0+1
+    ldy #H_FLAGS
+    lda (W0),y
+    eor #FLAG_RENDERING
+    sta (W0),y
     jmp postamble
 
 // -----------------------------------------------------------------------------
@@ -534,27 +624,45 @@ _bstr_render_seq:
     sta B7
     // RS now: [container, open]. The "open" handle becomes our accumulator.
 
-    // Container length → B4 (low byte; assumes < 256 elements).
+    // Container length word → B0:B1.
     rs_peek_at(W0, 1)
-    jsr deref_W0_to_W2
-    sta B4
+    jsr deref_W0_to_W2                // A:X = O_LEN word
+    sta B0
+    stx B1
 
+    // Index word B2:B3 = 0.
     lda #0
-    sta B5                            // index
+    sta B2
+    sta B3
 
 _brs_loop:
-    lda B5
-    cmp B4
+    // Loop while i < N (16-bit unsigned).
+    lda B2
+    cmp B0
+    lda B3
+    sbc B1
     bcc !go+
     jmp _brs_close
 !go:
 
-    // Fetch container[B5] handle → W3.
+    // Fetch container[B2:B3] handle → W3.
     rs_peek_at(W0, 1)
-    jsr deref_W0_to_W2
-    lda B5
+    jsr deref_W0_to_W2                // W2 = payload base
+    // W2 += 2*(B2:B3)
+    lda B2
     asl
-    tay
+    sta W3
+    lda B3
+    rol
+    sta W3+1
+    clc
+    lda W3
+    adc W2
+    sta W2
+    lda W3+1
+    adc W2+1
+    sta W2+1
+    ldy #0
     lda (W2),y
     sta W3
     iny
@@ -578,12 +686,19 @@ _brs_loop:
     rs_pop(W3)                        // discard old accum
     rs_push(RV)                       // new accum
 
-    // If not last, append ", ".
-    lda B5
+    // If i+1 < N, append ", ".
     clc
+    lda B2
     adc #1
-    cmp B4
-    bcs _brs_no_sep
+    sta B4
+    lda B3
+    adc #0
+    sta B5
+    lda B4
+    cmp B0
+    lda B5
+    sbc B1
+    bcs _brs_no_sep                   // i+1 >= N → no separator
     rs_peek(W3)
     rs_push(W3)
     rs_push_const(STR_COMMA_SPACE)
@@ -591,7 +706,10 @@ _brs_loop:
     rs_pop(W3)
     rs_push(RV)
 _brs_no_sep:
-    inc B5
+    inc B2
+    bne !+
+    inc B3
+!:
     jmp _brs_loop
 
 _brs_close:
@@ -619,27 +737,45 @@ _brs_close:
 _bstr_render_dict:
     rs_push_const(STR_LCURLY)         // RS: [dict, accum=`{`]
 
-    // Length → B4.
+    // Length word → B6:B7.
     rs_peek_at(W0, 1)
-    jsr deref_W0_to_W2
-    sta B4
+    jsr deref_W0_to_W2                // A:X = O_LEN word
+    sta B6
+    stx B7
 
+    // Index word → B4:B5 = 0.
     lda #0
+    sta B4
     sta B5
 
 _brd_loop:
+    // Loop while i < N (16-bit unsigned).
+    lda B4
+    cmp B6
     lda B5
-    cmp B4
+    sbc B7
     bcc !go+
     jmp _brd_close
 !go:
 
-    // Fetch dict.payload[B5] = entry tuple handle → W3.
+    // Fetch dict.payload[B4:B5] = entry tuple handle → W3.
     rs_peek_at(W0, 1)
     jsr deref_W0_to_W2
-    lda B5
+    // W2 += 2*(B4:B5)
+    lda B4
     asl
-    tay
+    sta W3
+    lda B5
+    rol
+    sta W3+1
+    clc
+    lda W3
+    adc W2
+    sta W2
+    lda W3+1
+    adc W2+1
+    sta W2+1
+    ldy #0
     lda (W2),y
     sta W3
     iny
@@ -703,12 +839,19 @@ _brd_loop:
     rs_pop(W3)
     rs_push(RV)
 
-    // If not last, append ", ".
-    lda B5
+    // If i+1 < N, append ", ".
     clc
+    lda B4
     adc #1
-    cmp B4
-    bcs _brd_no_sep
+    sta B0
+    lda B5
+    adc #0
+    sta B1                            // B0:B1 = i+1
+    lda B0
+    cmp B6
+    lda B1
+    sbc B7
+    bcs _brd_no_sep                   // i+1 >= N → no separator
     rs_peek(W3)
     rs_push(W3)
     rs_push_const(STR_COMMA_SPACE)
@@ -716,7 +859,10 @@ _brd_loop:
     rs_pop(W3)
     rs_push(RV)
 _brd_no_sep:
+    inc B4
+    bne !+
     inc B5
+!:
     jmp _brd_loop
 
 _brd_close:
@@ -1590,12 +1736,221 @@ _bsc_done:
 
 
 // =============================================================================
-// builtin_cls() — clear screen, cursor → (0,0). Returns None.
+// builtin_format() — re-initialize the disk in drive 8 with name "ADMIRAL",
+// id "01". Wipes all files. Returns None.
+//   Raises ERR_DISK if the 1541 reports a non-zero status code.
 // =============================================================================
-builtin_cls:
+builtin_format:
     preamble_call(0, 0)
-    jsr screen_clear
+
+    lda #<DOS_CMD_FORMAT
+    sta W0
+    lda #>DOS_CMD_FORMAT
+    sta W0+1
+    lda #DOS_CMD_FORMAT_LEN
+    sta B0
+    jsr disk_dos_cmd_check            // A = DOS status code
+    cmp #20                           // codes 00-19 are informational (CBM
+    bcs _bfmt_panic                   // convention); ≥20 is a real error
     jmp postamble_return_none
+_bfmt_panic:
+    lda #ERR_DISK
+    sta ERROR_CODE
+    jmp error_handler
+
+
+// =============================================================================
+// builtin_load(name) — read the file `name` and reconstruct the object graph.
+// Returns the root handle (the first record of the stream).
+//   name : TYPE_STR, 1..12 chars (PETSCII).
+//   Raises ERR_TYPE for bad name; ERR_DISK if the read fails.
+// =============================================================================
+builtin_load:
+    jsr preamble_call_1_1_w0          // W0 = name handle
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_STR
+    bne _bld_type_err
+    jsr deref_W0_to_W2                // W2 = name bytes, A = length
+    sta B0
+    beq _bld_type_err
+    cmp #13
+    bcs _bld_type_err
+
+    lda W2
+    sta W0
+    lda W2+1
+    sta W0+1                          // W0 = name ptr
+    jsr disk_open_seq_r               // CHKIN lfn 2
+
+    jsr disk_deserialize              // RV = root handle
+
+    rs_push(RV)                       // root via RS so close+status are safe
+
+    jsr disk_close_data
+    jsr disk_status_check             // A = DOS code
+    cmp #20
+    bcs _bld_disk_err
+
+    rs_pop(W0)
+    lda W0
+    sta RV
+    lda W0+1
+    sta RV+1
+    jmp postamble
+
+_bld_type_err:
+    lda #ERR_TYPE
+    sta ERROR_CODE
+    jmp error_handler
+_bld_disk_err:
+    lda #ERR_DISK
+    sta ERROR_CODE
+    jmp error_handler
+
+
+// =============================================================================
+// builtin_save(name, obj) — serialize `obj` (and everything reachable from it)
+// to disk under `name`. Returns None.
+//   name : TYPE_STR, 1..12 chars (PETSCII).
+//   obj  : any value; container subtypes are walked recursively.
+//   Existing files with this name are silently overwritten (DOS @0:NAME,S,W).
+//
+//   Raises ERR_TYPE for non-string name, oversized/empty name.
+//   Raises ERR_DISK if the 1541 reports a non-zero post-write status (write
+//     protect, disk full, etc.).
+// =============================================================================
+builtin_save:
+    jsr preamble_call_2_2_w0_w1       // W0 = name, W1 = obj
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_STR
+    bne _bsv_type_err
+    rs_push(W1)                       // root the obj across the open call
+    jsr deref_W0_to_W2                // W2 = name bytes, A = length
+    sta B0                            // B0 = name length
+    beq _bsv_type_err
+    cmp #13
+    bcs _bsv_type_err
+
+    // Open SEQ-write channel for "name".
+    lda W2
+    sta W0
+    lda W2+1
+    sta W0+1                          // W0 = name ptr
+    jsr disk_open_seq_w               // CHKOUT lfn 2
+
+    // Serialize obj. Re-fetch from RS to refresh through any GC since rs_push.
+    rs_peek(W0)                       // W0 = obj
+    jsr disk_serialize_w0
+
+    jsr disk_close_data
+    jsr disk_status_check             // A = DOS error code (00 OK, 01 info, ...)
+    cmp #20
+    bcs _bsv_disk_err
+
+    rs_pop(W0)                        // discard obj root
+    jmp postamble_return_none
+
+_bsv_type_err:
+    lda #ERR_TYPE
+    sta ERROR_CODE
+    jmp error_handler
+_bsv_disk_err:
+    lda #ERR_DISK
+    sta ERROR_CODE
+    jmp error_handler
+
+
+// =============================================================================
+// builtin_rm(name) — delete a file by name. Returns None.
+//   name : TYPE_STR, 1..12 chars (PETSCII).
+//   Raises ERR_TYPE for non-string args, oversized names, or empty names.
+//   Raises ERR_DISK if the DOS scratch fails (file not found, write-protect,
+//     etc.).
+//
+// Builds "S:NAME" in disk_filename_buf and dispatches via the cmd channel.
+// =============================================================================
+builtin_rm:
+    jsr preamble_call_1_1_w0          // W0 = filename handle
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_STR
+    bne _brm_type_err
+    jsr deref_W0_to_W2                // W2 = name bytes, A = length
+    sta B0                            // B0 = name length
+    beq _brm_type_err                 // empty name
+    cmp #13
+    bcs _brm_type_err                 // length > 12 → reject
+
+    // Build "S:" prefix into disk_filename_buf, then copy name bytes.
+    lda #$53                          // 'S'
+    sta disk_filename_buf
+    lda #$3A                          // ':'
+    sta disk_filename_buf + 1
+    ldy #0
+_brm_copy:
+    cpy B0
+    beq _brm_copy_done
+    lda (W2),y
+    sta disk_filename_buf + 2,y
+    iny
+    bne _brm_copy
+_brm_copy_done:
+
+    lda #<disk_filename_buf
+    sta W0
+    lda #>disk_filename_buf
+    sta W0+1
+    lda B0
+    clc
+    adc #2                            // 2-byte "S:" prefix
+    sta B0
+
+    jsr disk_dos_cmd_check
+    cmp #20                           // 01,FILES SCRATCHED is informational
+    bcs _brm_disk_err
+    jmp postamble_return_none
+
+_brm_type_err:
+    lda #ERR_TYPE
+    sta ERROR_CODE
+    jmp error_handler
+
+_brm_disk_err:
+    lda #ERR_DISK
+    sta ERROR_CODE
+    jmp error_handler
+
+
+// =============================================================================
+// builtin_dir() — read directory and return { TYPE_STR name : TYPE_INT blocks }.
+//   Empty disk → empty dict. Header line and "BLOCKS FREE." footer are skipped.
+//   Raises ERR_DISK if the post-read status is non-zero.
+// =============================================================================
+builtin_dir:
+    preamble_call(0, 0)
+
+    jsr disk_dir                       // RV = dict
+
+    rs_push(RV)                        // root across close + status
+
+    jsr disk_close_data
+    jsr disk_status_check              // A = DOS code
+    cmp #20
+    bcs _bdir_disk_err
+
+    rs_pop(W0)
+    lda W0
+    sta RV
+    lda W0+1
+    sta RV+1
+    jmp postamble
+
+_bdir_disk_err:
+    lda #ERR_DISK
+    sta ERROR_CODE
+    jmp error_handler
 
 
 // =============================================================================
@@ -1823,26 +2178,33 @@ builtin_edit:
     jmp _bedit_panic_type
 _bedit_arg_str_ok:
     arg_get(0, W0)
-    jsr deref_W0_to_W2                // W2 = arg payload, A = O_LEN
-    sta B4                             // B4 = length
+    jsr deref_W0_to_W2                // W2 = arg payload, A:X = O_LEN word
+    sta B4                             // B4:B5 = remaining bytes (word)
+    stx B5
     lda W2
     sta B2
     lda W2+1
-    sta B3
-    lda #0
-    sta B5                             // B5 = index
+    sta B3                             // B2:B3 = current src pointer
 _bedit_copy:
-    lda B5
-    cmp B4
-    bcs _bedit_render_initial
-    lda B2
-    sta W0
-    lda B3
-    sta W0+1
-    ldy B5
-    lda (W0),y
+    lda B4
+    ora B5
+    bne !go+
+    jmp _bedit_render_initial
+!go:
+    ldy #0
+    lda (B2),y
     jsr edit_insert_char
-    inc B5
+    // src++ (16-bit)
+    inc B2
+    bne !+
+    inc B3
+!:
+    // remaining-- (16-bit)
+    lda B4
+    bne !+
+    dec B5
+!:
+    dec B4
     jmp _bedit_copy
 
 _bedit_render_initial:
@@ -2114,81 +2476,64 @@ _bedit_panic_type:
 // --- str.upper() — return a new TYPE_STR with ASCII letters folded UP -------
 //   in:  args = (me,)   me: TYPE_STR
 // =============================================================================
+// upper and lower share one body via SMC trampoline.
 builtin_str_upper:
-    jsr preamble_call_1_1_w0
-    rs_push(W0)                       // root me at RS top so we can re-deref after alloc
-    jsr deref_W0_to_W2                // W2 = me payload, A = O_LEN
-    sta B0                            // B0 = len
-
-    lda B0
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    lda #TYPE_STR
-    sta ALLOC_TYPE
-    jsr alloc                         // RV = new STR
-
-    // src = me.payload (re-deref post-GC); dst = RV.payload.
-    rs_peek(W0)
-    jsr deref_W0_to_W3
-    jsr deref_RV_to_W2
-
-    ldy B0
-    beq _bsu_done
-_bsu_loop:
-    dey
-    lda (W3),y
-    cmp #$61                          // 'a'
-    bcc _bsu_store
-    cmp #$7B                          // 'z'+1
-    bcs _bsu_store
-    sec
-    sbc #$20                          // → uppercase
-_bsu_store:
-    sta (W2),y
-    cpy #0
-    bne _bsu_loop
-_bsu_done:
-    jmp postamble
-
-// --- str.lower() — fold ASCII letters DOWN ----------------------------------
-//   in:  args = (me,)   me: TYPE_STR
-// =============================================================================
+    lda #$61                          // 'a'
+    .byte $2C
 builtin_str_lower:
+    lda #$41                          // 'A'
+    sta _bs_case_lo+1
+    clc
+    adc #26
+    sta _bs_case_hi+1
     jsr preamble_call_1_1_w0
-    rs_push(W0)                       // root me at RS top
+    rs_push(W0)
     jsr deref_W0_to_W2
     sta B0
+    stx B1
 
     lda B0
     sta ALLOC_SIZE
-    lda #0
+    lda B1
     sta ALLOC_SIZE+1
     lda #TYPE_STR
     sta ALLOC_TYPE
     jsr alloc
 
-    // src = me.payload; dst = RV.payload.
     rs_peek(W0)
     jsr deref_W0_to_W3
     jsr deref_RV_to_W2
 
-    ldy B0
-    beq _bsl_done
-_bsl_loop:
-    dey
+_bs_case_loop:
+    lda B0
+    ora B1
+    beq _bs_case_done
+    ldy #0
     lda (W3),y
-    cmp #$41                          // 'A'
-    bcc _bsl_store
-    cmp #$5B                          // 'Z'+1
-    bcs _bsl_store
-    clc
-    adc #$20                          // → lowercase
-_bsl_store:
+_bs_case_lo:
+    cmp #$00                          // SMC: 'a' or 'A'
+    bcc _bs_case_store
+_bs_case_hi:
+    cmp #$00                          // SMC: 'z'+1 or 'Z'+1
+    bcs _bs_case_store
+    eor #$20
+_bs_case_store:
     sta (W2),y
-    cpy #0
-    bne _bsl_loop
-_bsl_done:
+    inc W3
+    bne !+
+    inc W3+1
+!:
+    inc W2
+    bne !+
+    inc W2+1
+!:
+    lda B0
+    bne !+
+    dec B1
+!:
+    dec B0
+    jmp _bs_case_loop
+_bs_case_done:
     jmp postamble
 
 // --- str.find(sub[, start[, end]]) — return first position or -1 ----------
@@ -2207,74 +2552,142 @@ builtin_str_find:
 
     // Cache me's length first — needed for negative-index normalization.
     arg_get(0, W0)
-    jsr deref_W0_to_W2
-    sta B0                            // B0 = me_len
+    jsr deref_W0_to_W2                // A:X = me_len word
+    sta B0
+    stx B1                            // B0:B1 = me_len
 
-    // Default range: full string.
+    // Default range: full string. start=0:0; end_excl=$FFFF (sentinel).
     lda #0
-    sta B5                            // start
-    lda #$FF
-    sta B6                            // end (sentinel → haystack_len)
-
-    lda B7
-    cmp #3
-    bcc _bfind_args_done
-
-    // Read start (arg index 2) — low byte of int payload, signed.
-    arg_get(2, W0)
-    jsr deref_W0_to_W2
-    ldy #0
-    lda (W2),y
-    bpl _bfind_start_set
-    clc
-    adc B0
-    bpl _bfind_start_set              // raw + len ≥ 0 → use that
-    lda #0                            // far-negative → 0
-_bfind_start_set:
+    sta B4
     sta B5
+    lda #$FF
+    sta B6
+    sta B7
 
-    lda B7
+    // Read args count from preamble's cached B7 — but we just clobbered B7
+    // setting end_excl. Re-fetch from the args tuple to know how many args.
+    rs_peek(W0)                       // args_tuple
+    jsr deref_W0_to_W2                // A = args tuple element count (low byte; max ≤ 4)
+    pha                               // save count
+    cmp #3
+    bcc _bfind_args_done_pop
+
+    // Read start (arg index 2) — int payload, signed → 16-bit B4:B5.
+    arg_get(2, W0)
+    jsr _bfind_read_signed_int        // A:X = signed-extended int
+    sta B4
+    stx B5
+    cpx #0                            // re-establish N flag (helper clobbered it)
+    bpl _bfind_start_set              // non-negative → use as-is
+    // negative → += me_len
+    clc
+    lda B4
+    adc B0
+    sta B4
+    lda B5
+    adc B1
+    sta B5
+    bpl _bfind_start_set              // (raw + me_len) >= 0 → ok
+    // far-negative: clamp to 0.
+    lda #0
+    sta B4
+    sta B5
+_bfind_start_set:
+
+    pla
+    pha                               // restore arg count, keep saved
     cmp #4
-    bcc _bfind_args_done
+    bcc _bfind_args_done_pop
 
-    // Read end (arg index 3) — same sign-handling.
+    // Read end (arg index 3).
     arg_get(3, W0)
-    jsr deref_W0_to_W2
-    ldy #0
-    lda (W2),y
+    jsr _bfind_read_signed_int
+    sta B6
+    stx B7
+    cpx #0                            // re-establish N flag (helper clobbered it)
     bpl _bfind_end_set
     clc
+    lda B6
     adc B0
+    sta B6
+    lda B7
+    adc B1
+    sta B7
     bpl _bfind_end_set
     lda #0
-_bfind_end_set:
     sta B6
+    sta B7
+_bfind_end_set:
 
-_bfind_args_done:
+_bfind_args_done_pop:
+    pla                               // discard saved count
+
     // Push needle, haystack on RS for str_find_pos.
     arg_get(0, W0)
     arg_get(1, W1)
     rs_push(W1)                       // sub deeper
     rs_push(W0)                       // me top
-    jsr str_find_pos                  // A = pos or $FF
+    jsr str_find_pos                  // RV = pos word or $FFFF
+    lda RV
     sta B0
+    lda RV+1
+    sta B1
 
-    // Allocate 2-byte signed INT (so positions ≥ 128 stay positive).
-    lda #2
-    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
-
+    // If RV == $FFFF → return -1 (2-byte int, both bytes $FF).
+    cmp #$FF
+    bne _bfind_alloc
+    lda B0
+    cmp #$FF
+    bne _bfind_alloc
+    // Not found → -1. Use 1-byte int $FF.
+    lda #1
+    jsr alloc_int_a_deref_w2
     ldy #0
-    lda B0
-    sta (W2),y                        // lo byte
-    iny
-    lda B0
-    asl                                // bit 7 → carry
-    lda #0
-    bcc _bfind_store_hi
     lda #$FF
-_bfind_store_hi:
     sta (W2),y
     jmp postamble
+_bfind_alloc:
+    // Found (0..0xFFFE). Allocate 2-byte signed INT (so positions ≥ 128 stay positive).
+    lda #2
+    jsr alloc_int_a_deref_w2
+    ldy #0
+    lda B0
+    sta (W2),y
+    iny
+    lda B1
+    sta (W2),y
+    jmp postamble
+
+// Helper: read signed int handle in W0 → A:X = sign-extended 16-bit value.
+// 1-byte int → sign-extend low byte. 2-byte int → take both bytes verbatim.
+// Bytes past index 1 are ignored.
+//   in:  W0 = INT handle (O_LEN ≥ 1).
+//   out: A = low, X = high.
+//   clobbers: W2, Y, B2.
+_bfind_read_signed_int:
+    jsr deref_W0_to_W2                // A=O_LEN low, X=O_LEN high, W2=payload
+    sta B2                            // B2 = O_LEN low
+    ldy #0
+    lda (W2),y                        // A = byte 0
+    cpx #0
+    bne _bfri_2byte                   // O_LEN >= 256 → byte 1 is at offset 1
+    ldx B2
+    cpx #2
+    bcs _bfri_2byte
+    // 1-byte: sign-extend.
+    ldx #0
+    cmp #$80
+    bcc _bfri_done
+    ldx #$FF
+    rts
+_bfri_2byte:
+    pha
+    ldy #1
+    lda (W2),y
+    tax
+    pla
+_bfri_done:
+    rts
 
 // --- str.startswith(prefix) -------------------------------------------------
 //   in:  args = (me, prefix)
@@ -2282,71 +2695,86 @@ _bfind_store_hi:
 builtin_str_startswith:
     jsr preamble_call_2_2_w0_w1
     // Cache both args before clobbering W3 (which arg_get reads from).
-    jsr deref_W1_to_W3                // W3 = prefix payload, A = prefix len
-    sta B0                            // B0 = prefix len
-    jsr deref_W0_to_W2                // W2 = me payload, A = me len
-    sta B1                            // B1 = me len
+    jsr deref_W1_to_W3                // W3 = prefix payload, A:X = prefix_len word
+    sta B0
+    stx B1                            // B0:B1 = prefix len
+    jsr deref_W0_to_W2                // W2 = me payload, A:X = me_len word
+    sta B2
+    stx B3                            // B2:B3 = me len
 
-    // If prefix len > me len, not a prefix.
+    // If prefix_len > me_len, not a prefix (16-bit unsigned compare).
+    lda B2
+    cmp B0
+    lda B3
+    sbc B1
+    bcc _bsw_false                    // me_len < prefix_len
+
+    // Empty prefix → always matches.
     lda B0
-    cmp B1
-    beq _bsw_check
-    bcc _bsw_check
-    jmp _bsw_false
-_bsw_check:
-    ldy B0
-    beq _bsw_true                     // empty prefix → always matches
+    ora B1
+    beq _bsw_true
+
+    // Walk B0:B1 bytes of W2 vs W3 from the start.
 _bsw_loop:
-    dey
+    lda B0
+    ora B1
+    beq _bsw_true
+    ldy #0
     lda (W2),y
     cmp (W3),y
     bne _bsw_false
-    cpy #0
-    bne _bsw_loop
+    inc W2
+    bne !+
+    inc W2+1
+!:
+    inc W3
+    bne !+
+    inc W3+1
+!:
+    lda B0
+    bne !+
+    dec B1
+!:
+    dec B0
+    jmp _bsw_loop
 _bsw_true:
     jmp postamble_return_true
 _bsw_false:
     jmp postamble_return_false
 
 // --- str.endswith(suffix) ---------------------------------------------------
-//   in:  args = (me, suffix)
+// Shares compare loop with startswith.
 // =============================================================================
 builtin_str_endswith:
     jsr preamble_call_2_2_w0_w1
-    jsr deref_W1_to_W3                // W3 = suffix payload, A = suffix len
-    sta B0                            // B0 = suffix len
-    jsr deref_W0_to_W2                // W2 = me payload, A = me len
-    sta B1                            // B1 = me len
+    jsr deref_W1_to_W3
+    sta B0
+    stx B1
+    jsr deref_W0_to_W2
+    sta B2
+    stx B3
 
-    lda B0
-    cmp B1
-    beq _bew_check
-    bcc _bew_check
-    jmp _bew_false
-_bew_check:
-    // Advance W2 by (me_len - suffix_len) so it points at the tail region.
+    lda B2
+    cmp B0
+    lda B3
+    sbc B1
+    bcc _bsw_false
+
     sec
-    lda B1
+    lda B2
     sbc B0
+    sta B4
+    lda B3
+    sbc B1
+    sta B5
     clc
-    adc W2
+    lda W2
+    adc B4
     sta W2
-    bcc !+
-    inc W2+1
-!:
-    ldy B0
-    beq _bew_true
-_bew_loop:
-    dey
-    lda (W2),y
-    cmp (W3),y
-    bne _bew_false
-    cpy #0
-    bne _bew_loop
-_bew_true:
-    jmp postamble_return_true
-_bew_false:
-    jmp postamble_return_false
+    lda W2+1
+    adc B5
+    sta W2+1
+    jmp _bsw_loop
 
 // --- str.split(sep=None) — list of substrings -----------------------------
 //   in:  args = (me)         — whitespace mode
@@ -2388,12 +2816,18 @@ _bsp_sep_body:
 
     rs_peek_at(W0, 1)
     rs_peek_at(W1, 0)
-    jsr deref_W0_to_W2                // W2=me payload, A=me_len
+    jsr deref_W0_to_W2                // W2=me payload, A:X = me_len word
     sta B0
-    jsr deref_W1_to_W3                // W3=sep payload, A=sep_len
-    sta B1
-
-    lda B1
+    stx B1
+    jsr deref_W1_to_W3                // W3=sep payload, A:X = sep_len word
+    cpx #0
+    beq _bsp_sep_ok                   // sep < 256 — required (sep is short)
+    lda #ERR_TYPE
+    sta ERROR_CODE
+    jmp error_handler
+_bsp_sep_ok:
+    tax                               // refresh N/Z from A (cpx above set Z=1)
+    sta B2                            // B2 = sep_len byte
     bne !ok+
     lda #ERR_TYPE
     sta ERROR_CODE
@@ -2409,47 +2843,58 @@ _bsp_sep_body:
 
     rs_peek_at(W0, 2)
     rs_peek_at(W1, 1)
-    jsr deref_W0_to_W2                // A = me_len
+    jsr deref_W0_to_W2                // A:X = me_len word
     sta B0
-    jsr deref_W1_to_W3                // A = sep_len
-    sta B1
+    stx B1
+    jsr deref_W1_to_W3                // A = sep_len low byte (already validated)
+    sta B2
 
     lda #0
-    sta B3                            // pos
-    sta B4                            // segment start
+    sta B4
+    sta B5                            // pos = 0
+    sta B6
+    sta B7                            // segment_start = 0
 
 _bsp_loop:
-    lda B3
+    // if pos (B4:B5) >= me_len (B0:B1) → done
+    lda B4
     cmp B0
+    lda B5
+    sbc B1
     bcc !go+
     jmp _bsp_done
 !go:
-
+    // remaining = me_len - pos. If remaining < sep_len → can't match here; advance.
+    sec
+    lda B0
+    sbc B4
+    sta B3
+    lda B1
+    sbc B5
+    bne _bsp_chk_room                 // (me_len - pos) >= 256 → fits any sep < 256
     lda B3
-    clc
-    adc B1
-    bcc !ovr_ok+
-    jmp _bsp_adv
-!ovr_ok:
-    cmp B0
-    beq _bsp_chk
-    bcc _bsp_chk
-    jmp _bsp_adv
-
-_bsp_chk:
+    cmp B2
+    bcc _bsp_adv                      // remaining < sep_len → advance
+_bsp_chk_room:
     jsr _bsr_match_at_pos
     cmp #0
     bne !go+
     jmp _bsp_adv
 !go:
-
-    // Match — emit me[B4..B3] then bump past sep.
+    // Match — emit me[seg_start..pos] then bump past sep.
     jsr _bsp_emit_segment
-    lda B3
+    // pos += sep_len (16-bit add)
     clc
-    adc B1
+    lda B4
+    adc B2
     sta B4
-    sta B3
+    bcc !+
+    inc B5
+!:
+    lda B4
+    sta B6
+    lda B5
+    sta B7
     rs_peek_at(W0, 2)
     rs_peek_at(W1, 1)
     jsr deref_W0_to_W2
@@ -2457,60 +2902,80 @@ _bsp_chk:
     jmp _bsp_loop
 
 _bsp_adv:
-    inc B3
+    // pos++ (16-bit)
+    inc B4
+    bne !+
+    inc B5
+!:
     jmp _bsp_loop
 
 _bsp_done:
-    // Emit final segment me[B4..me_len].
+    // Emit final segment me[seg_start..me_len]. Set pos := me_len.
     lda B0
-    sta B3
+    sta B4
+    lda B1
+    sta B5
     jsr _bsp_emit_segment
 
     rs_peek(RV)
     jmp postamble
 
-// Helper: alloc TYPE_STR of B3-B4 bytes, copy me[B4..B3] into it, append to
-// list. Caller's RS at entry: [args_tuple, me, sep, list]. Helper must NOT
-// change that on return.
+// Helper: alloc TYPE_STR of (B4:B5)-(B6:B7) bytes, copy me[B6:B7..B4:B5]
+// into it, append to list. Caller's RS at entry: [args_tuple, me, sep, list].
+// Helper must NOT change that on return.
 //
-// Preserves: B0, B1, B2, B4. Clobbers: A, X, Y, B5..B7, W0..W3, RV.
+// In:  B4:B5 = end (word), B6:B7 = start (word).
+// Preserves: B0, B1, B2 (me_len, sep_len), B4:B5, B6:B7. Clobbers: A, X, Y,
+// B3, W0..W3, RV.
 _bsp_emit_segment:
     sec
-    lda B3
-    sbc B4
-    sta B5                            // B5 = segment len
+    lda B4
+    sbc B6
     sta ALLOC_SIZE
-    lda #0
+    lda B5
+    sbc B7
     sta ALLOC_SIZE+1
     lda #TYPE_STR
     sta ALLOC_TYPE
-    jsr alloc                         // RV = new str
-    rs_push(RV)                       // RS: [args_tuple, me, sep, list, seg]
+    jsr alloc
+    rs_push(RV)
 
-    // Copy me[B4..B4+B5] into seg. seg payload first (W3), me payload after (W2).
-    rs_peek(W0)                       // seg (slot 0)
-    jsr deref_W0_to_W2                // W2 = seg payload
+    rs_peek(W0)
+    jsr deref_W0_to_W2
     lda W2
     sta W3
     lda W2+1
-    sta W3+1                          // W3 = seg payload (saved)
+    sta W3+1
 
-    rs_peek_at(W0, 3)                 // me (slot 3)
-    jsr deref_W0_to_W2                // W2 = me payload
-    lda W2
+    rs_peek_at(W0, 3)
+    jsr deref_W0_to_W2
     clc
-    adc B4
+    lda W2
+    adc B6
     sta W2
-    bcc !+
-    inc W2+1
-!:
-    ldy #0
+    lda W2+1
+    adc B7
+    sta W2+1
 _bsp_cp:
-    cpy B5
+    lda ALLOC_SIZE
+    ora ALLOC_SIZE+1
     beq _bsp_cpd
+    ldy #0
     lda (W2),y
     sta (W3),y
-    iny
+    inc W2
+    bne !+
+    inc W2+1
+!:
+    inc W3
+    bne !+
+    inc W3+1
+!:
+    lda ALLOC_SIZE
+    bne !+
+    dec ALLOC_SIZE+1
+!:
+    dec ALLOC_SIZE
     jmp _bsp_cp
 _bsp_cpd:
 
@@ -2538,46 +3003,75 @@ _bsp_ws_body:
     rs_push(RV)                       // RS: [tuple, me, me_decoy, list]
 
     rs_peek_at(W0, 2)                 // me
-    jsr deref_W0_to_W2                // W2 = me payload, A = me_len
+    jsr deref_W0_to_W2                // W2 = me payload, A:X = me_len word
     sta B0
+    stx B1
 
     lda #0
-    sta B3                            // pos
+    sta B4
+    sta B5                            // pos = 0
 
 _bsp_ws_skip:
     // Walk past whitespace until either end-of-string or first segment char.
-    lda B3
+    lda B4
     cmp B0
-    bcs _bsp_ws_done
-    ldy B3
-    lda (W2),y
+    lda B5
+    sbc B1
+    bcs _bsp_ws_done                  // pos >= me_len → done
+    // Byte at me + pos.
+    clc
+    lda W2
+    adc B4
+    sta W0
+    lda W2+1
+    adc B5
+    sta W0+1
+    ldy #0
+    lda (W0),y
     cmp #$20
     beq _bsp_ws_skip_inc
     cmp #$0D
     bne _bsp_ws_seg_start
 _bsp_ws_skip_inc:
-    inc B3
+    inc B4
+    bne !+
+    inc B5
+!:
     jmp _bsp_ws_skip
 
 _bsp_ws_seg_start:
-    lda B3
-    sta B4                            // segment start = current pos
+    lda B4
+    sta B6
+    lda B5
+    sta B7                            // segment_start = current pos
 
 _bsp_ws_scan:
-    lda B3
+    lda B4
     cmp B0
+    lda B5
+    sbc B1
     bcs _bsp_ws_emit
-    ldy B3
-    lda (W2),y
+    clc
+    lda W2
+    adc B4
+    sta W0
+    lda W2+1
+    adc B5
+    sta W0+1
+    ldy #0
+    lda (W0),y
     cmp #$20
     beq _bsp_ws_emit
     cmp #$0D
     beq _bsp_ws_emit
-    inc B3
+    inc B4
+    bne !+
+    inc B5
+!:
     jmp _bsp_ws_scan
 
 _bsp_ws_emit:
-    jsr _bsp_emit_segment             // appends me[B4..B3] to list
+    jsr _bsp_emit_segment             // appends me[seg_start..pos] to list
     rs_peek_at(W0, 2)                 // re-deref me — emit may have GC'd
     jsr deref_W0_to_W2
     jmp _bsp_ws_skip
@@ -2608,23 +3102,41 @@ builtin_str_replace:
     arg_get(2, W0)
     rs_push(W0)
 
-    // Lengths into B0..B2.
+    // Slot allocation (16-bit lengths only for me/output; old/new must each
+    // fit 8 bits since they appear inside a Y-indexed inner loop):
+    //   B0:B1 = me_len (word)
+    //   B2    = old_len (byte; < 256)
+    //   B3    = new_len (byte; < 256)
+    //   B4:B5 = src pos (word) — pass 2
+    //   B6:B7 = pass 1: match count (word); pass 2: dst pos (word)
     rs_peek_at(W0, 2)
     rs_peek_at(W1, 1)
-    jsr deref_W0_to_W2                // A = me_len, W2 = me payload
+    jsr deref_W0_to_W2                // A:X = me_len, W2 = me payload
     sta B0
-    jsr deref_W1_to_W3                // A = old_len, W3 = old payload
-    sta B1
-
-    lda B1
-    bne !ok+
+    stx B1
+    jsr deref_W1_to_W3                // A:X = old_len, W3 = old payload
+    cpx #0
+    beq _bsr_old_len_ok
+    lda #ERR_OOM
+    sta ERROR_CODE
+    jmp error_handler
+_bsr_old_len_ok:
+    tax                               // refresh N/Z from A (cpx above set Z=1)
+    sta B2
+    bne !ok+                          // empty old → ERR_TYPE
     lda #ERR_TYPE
     sta ERROR_CODE
     jmp error_handler
 !ok:
     rs_peek(W0)                       // new
-    jsr deref_W0_to_W2                // A = new_len (W2 trampled)
-    sta B2
+    jsr deref_W0_to_W2                // A:X = new_len, W2 = new payload
+    cpx #0
+    beq _bsr_new_len_ok
+    lda #ERR_OOM
+    sta ERROR_CODE
+    jmp error_handler
+_bsr_new_len_ok:
+    sta B3
 
     // Re-establish W2=me, W3=old after the new-deref.
     rs_peek_at(W0, 2)
@@ -2632,179 +3144,241 @@ builtin_str_replace:
     jsr deref_W0_to_W2
     jsr deref_W1_to_W3
 
-    // ----- Pass 1: count matches into B5 -----
+    // ----- Pass 1: count matches into B6:B7 (word). Walk pos B4:B5. -----
     lda #0
-    sta B3
+    sta B4
     sta B5
+    sta B6
+    sta B7
 _bsr_p1:
-    lda B3
-    clc
-    adc B1
-    bcs _bsr_p1d
-    cmp B0
-    beq _bsr_p1c
-    bcs _bsr_p1d
-_bsr_p1c:
+    // remaining = me_len - pos. If remaining < old_len, done.
+    sec
+    lda B0
+    sbc B4
+    tax                               // X = remaining low
+    lda B1
+    sbc B5
+    bne _bsr_p1_chk_room              // remaining >= 256 → fits any old < 256
+    cpx B2
+    bcc _bsr_p1d                      // remaining < old_len → done
+_bsr_p1_chk_room:
     jsr _bsr_match_at_pos
     cmp #0
     beq _bsr_p1m
-    inc B5
-    lda B3
+    // Match: count++, pos += old_len.
+    inc B6
+    bne !+
+    inc B7
+!:
     clc
-    adc B1
-    sta B3
+    lda B4
+    adc B2
+    sta B4
+    bcc !+
+    inc B5
+!:
     jmp _bsr_p1
 _bsr_p1m:
-    inc B3
+    inc B4
+    bne !+
+    inc B5
+!:
     jmp _bsr_p1
 _bsr_p1d:
 
-    // Compute output_len = me_len + B5*(B2 - B1) into W0:W0+1 (16-bit).
+    // Compute output_len = me_len + count*(new_len - old_len) into W0:W0+1
+    // (16-bit signed). count = B6:B7. Walking by repeated add, with a
+    // signed delta of (new_len - old_len) — sign-extended to 16-bit.
     lda B0
     sta W0
-    lda #0
+    lda B1
     sta W0+1
-    ldx B5
-    beq _bsr_olok
-_bsr_olax:
-    lda W0
-    clc
-    adc B2
-    sta W0
-    bcc !+
-    inc W0+1
-!:
-    lda W0
+    // count == 0 → shortcut.
+    lda B6
+    ora B7
+    bne !go+
+    jmp _bsr_alloc
+!go:
+    // Each iteration adds (new - old) signed. Compute delta in W1.
     sec
-    sbc B1
+    lda B3
+    sbc B2
+    sta W1                            // delta low
+    lda #0
+    bcs !pos+
+    lda #$FF
+!pos:
+    sta W1+1                          // delta high (sign-extended)
+_bsr_olax:
+    clc
+    lda W0
+    adc W1
     sta W0
-    bcs !+
-    dec W0+1
-!:
-    dex
-    bne _bsr_olax
-_bsr_olok:
     lda W0+1
-    beq _bsr_alloc
-    lda #ERR_OOM
-    sta ERROR_CODE
-    jmp error_handler
+    adc W1+1
+    sta W0+1
+    // count-- (16-bit)
+    lda B6
+    bne !+
+    dec B7
+!:
+    dec B6
+    lda B6
+    ora B7
+    bne _bsr_olax
+
 _bsr_alloc:
     lda W0
     sta ALLOC_SIZE
-    lda #0
+    lda W0+1
     sta ALLOC_SIZE+1
     lda #TYPE_STR
     sta ALLOC_TYPE
     jsr alloc                         // RV = new str
     rs_push(RV)                       // RS: [me, old, new, out]
 
-    // Re-deref me, old (heap may have moved during alloc).
-    rs_peek_at(W0, 3)
-    rs_peek_at(W1, 2)
-    jsr deref_W0_to_W2
-    jsr deref_W1_to_W3
-
-    // ----- Pass 2: build output -----
-    lda #0
-    sta B3                            // src pos
-    sta B4                            // dst pos
-_bsr_p2:
-    lda B3
-    cmp B0
-    bcc !skip+
-    jmp _bsr_p2d
-!skip:
-
-    lda B3
+    // ----- Pass 2: build output. No allocations from here on, so we can
+    // cache pointers and skip re-derefs. W2 = me_ptr (advances). W3 = old
+    // payload base (constant). out_ptr lives in B6:B7 as an absolute address.
+    rs_peek_at(W0, 3)                 // me
+    jsr deref_W0_to_W2                // W2 = me_ptr (= me payload base)
+    rs_peek_at(W0, 2)                 // old
+    jsr deref_W0_to_W3                // W3 = old payload base
+    // me_end = W2 + me_len → stash in B4:B5 (we no longer need src pos B4:B5
+    // separately — comparing W2 against me_end ends the loop).
     clc
-    adc B1
-    bcc !nooverflow+
-    jmp _bsr_p2byte
-!nooverflow:
-    cmp B0
-    beq _bsr_p2chk
-    bcc _bsr_p2chk
-    jmp _bsr_p2byte
-_bsr_p2chk:
-    jsr _bsr_match_at_pos
-    cmp #0
-    bne !skip+
-    jmp _bsr_p2byte
-!skip:
-
-    // Match — copy new bytes to out[B4..B4+B2].
-    rs_peek_at(W0, 1)                 // new (slot 1)
-    jsr deref_W0_to_W2                // W2 = new payload
-    rs_peek(W1)                       // out (slot 0)
-    jsr deref_W1_to_W3                // W3 = out payload
-    lda W3
-    clc
-    adc B4
-    sta W3
-    bcc !+
-    inc W3+1
-!:
-    ldy #0
-_bsr_pcn:
-    cpy B2
-    beq _bsr_pcnd
-    lda (W2),y
-    sta (W3),y
-    iny
-    jmp _bsr_pcn
-_bsr_pcnd:
-    lda B4
-    clc
-    adc B2
+    lda W2
+    adc B0
     sta B4
-    lda B3
-    clc
+    lda W2+1
     adc B1
-    sta B3
-    jmp _bsr_p2_redo
+    sta B5                            // B4:B5 = me_end_ptr
+    // out_ptr = out payload base.
+    rs_peek(W0)
+    jsr deref_W0_to_W3                // W3 used temporarily — but we need it back to old
+    // Actually: stash out_ptr in B6:B7 then reload W3 = old payload base.
+    lda W3
+    sta B6
+    lda W3+1
+    sta B7                            // B6:B7 = out_ptr
+    rs_peek_at(W0, 2)                 // old
+    jsr deref_W0_to_W3                // W3 = old payload base again
+_bsr_p2:
+    // if W2 >= me_end (B4:B5) → done.
+    lda W2
+    cmp B4
+    lda W2+1
+    sbc B5
+    bcc !ok+
+    jmp _bsr_p2d
+!ok:
+    // Check if old fits in remaining: me_end - W2 >= old_len.
+    sec
+    lda B4
+    sbc W2
+    tax
+    lda B5
+    sbc W2+1
+    bne _bsr_p2_can_match
+    cpx B2
+    bcc _bsr_p2byte                   // remaining < old_len → byte copy
+_bsr_p2_can_match:
+    // Inner compare: needle at W3 vs me at W2 for B2 bytes.
+    ldy #0
+_bsr_p2_cmp:
+    cpy B2
+    beq _bsr_p2_match
+    lda (W2),y
+    eor (W3),y
+    bne _bsr_p2byte
+    iny
+    jmp _bsr_p2_cmp
+_bsr_p2_match:
+    // Match — copy B3 bytes (new_len) from new payload to out_ptr.
+    // We need new payload temporarily; W2 = me_ptr is precious. Use W0.
+    rs_peek_at(W0, 1)                 // new
+    jsr deref_W0_to_W3                // W3 = new payload base (overwrites old —
+                                       // ok, we don't need old until after
+                                       // this match completes).
+    lda B6
+    sta W0
+    lda B7
+    sta W0+1                          // W0 = out_ptr
+    ldy #0
+_bsr_p2_cn:
+    cpy B3
+    beq _bsr_p2_cnd
+    lda (W3),y
+    sta (W0),y
+    iny
+    jmp _bsr_p2_cn
+_bsr_p2_cnd:
+    // out_ptr (B6:B7) += new_len; me_ptr (W2) += old_len.
+    clc
+    lda B6
+    adc B3
+    sta B6
+    bcc !+
+    inc B7
+!:
+    clc
+    lda W2
+    adc B2
+    sta W2
+    bcc !+
+    inc W2+1
+!:
+    // Restore W3 = old payload base for the next iteration's compare.
+    rs_peek_at(W0, 2)
+    jsr deref_W0_to_W3
+    jmp _bsr_p2
 
 _bsr_p2byte:
-    // No match: copy me[B3] to out[B4].
-    ldy B3
+    // No match: copy me[W2] to out_ptr; advance both by 1.
+    ldy #0
     lda (W2),y
-    sta B7
-    rs_peek(W0)
-    jsr deref_W0_to_W2                // W2 = out payload
-    ldy B4
+    sta B7_save_buf
+    lda B6
+    sta W0
     lda B7
-    sta (W2),y
-    inc B3
-    inc B4
-
-_bsr_p2_redo:
-    rs_peek_at(W0, 3)
-    rs_peek_at(W1, 2)
-    jsr deref_W0_to_W2
-    jsr deref_W1_to_W3
+    sta W0+1
+    lda B7_save_buf
+    sta (W0),y
+    inc W2
+    bne !+
+    inc W2+1
+!:
+    inc B6
+    bne !+
+    inc B7
+!:
     jmp _bsr_p2
 
 _bsr_p2d:
     rs_peek(RV)
     jmp postamble
 
-// Leaf helper: compare (W2 + B3)[0..B1-1] vs W3[0..B1-1].
-// Returns A=1 if equal else 0. Clobbers A, X, Y, B7.
+
+// Leaf helper: compare (W2 + B4:B5)[0..B2-1] vs W3[0..B2-1].
+// B4:B5 = position (word). B2 = compare length (byte; caller guarantees < 256).
+// Returns A=1 if equal else 0. Clobbers A, X, Y, W0. Preserves B0..B7.
 _bsr_match_at_pos:
+    // W0 = W2 + B4:B5 (haystack pointer at the position).
+    clc
+    lda W2
+    adc B4
+    sta W0
+    lda W2+1
+    adc B5
+    sta W0+1
     ldx #0
 _bsr_mat:
-    cpx B1
+    cpx B2
     beq _bsr_matok
-    txa
-    clc
-    adc B3
-    tay
-    lda (W2),y
-    sta B7
     txa
     tay
     lda (W3),y
-    cmp B7
+    eor (W0),y
     bne _bsr_matno
     inx
     jmp _bsr_mat
@@ -2820,46 +3394,65 @@ _bsr_matno:
 // =============================================================================
 builtin_str_isalpha:
     jsr preamble_call_1_1_w0
-    jsr deref_W0_to_W2                // A = O_LEN, W2 = payload
+    jsr deref_W0_to_W2
     sta B0
-    beq _bia_false                    // empty → False (Python rule)
-    ldy #0
+    stx B1
+    ora B0
+    beq _bia_false
 _bia_loop:
+    lda B0
+    ora B1
+    beq _bia_done
+    ldy #0
     lda (W2),y
-    cmp #$41                          // 'A'
+    and #$DF
+    cmp #$41
     bcc _bia_false
-    cmp #$5B                          // 'Z'+1
-    bcc _bia_next
-    cmp #$61                          // 'a'
-    bcc _bia_false
-    cmp #$7B                          // 'z'+1
+    cmp #$5B
     bcs _bia_false
-_bia_next:
-    iny
-    cpy B0
-    bcc _bia_loop
+    inc W2
+    bne !+
+    inc W2+1
+!:
+    lda B0
+    bne !+
+    dec B1
+!:
+    dec B0
+    jmp _bia_loop
+_bia_done:
     jmp postamble_return_true
 _bia_false:
     jmp postamble_return_false
 
-// --- str.isdigit() — TRUE iff every byte is 0-9 (and len > 0) --------------
-//   in:  args = (me,)
-// =============================================================================
 builtin_str_isdigit:
     jsr preamble_call_1_1_w0
     jsr deref_W0_to_W2
     sta B0
+    stx B1
+    ora B0
     beq _bid_false
-    ldy #0
 _bid_loop:
+    lda B0
+    ora B1
+    beq _bid_done
+    ldy #0
     lda (W2),y
-    cmp #$30                          // '0'
+    cmp #$30
     bcc _bid_false
-    cmp #$3A                          // '9'+1
+    cmp #$3A
     bcs _bid_false
-    iny
-    cpy B0
-    bcc _bid_loop
+    inc W2
+    bne !+
+    inc W2+1
+!:
+    lda B0
+    bne !+
+    dec B1
+!:
+    dec B0
+    jmp _bid_loop
+_bid_done:
     jmp postamble_return_true
 _bid_false:
     jmp postamble_return_false
@@ -2909,7 +3502,7 @@ builtin_list_insert:
 builtin_list_pop:
     jsr preamble_call_1_1_w0
 
-    // W2 = object base (at O_LEN), B0 = O_LEN low.
+    // W2 = object base (at O_LEN), B0:B1 = O_LEN word.
     ldy #H_PTR
     lda (W0),y
     sta W2
@@ -2919,38 +3512,59 @@ builtin_list_pop:
     ldy #O_LEN
     lda (W2),y
     sta B0
+    iny
+    lda (W2),y
+    sta B1
+    lda B0
+    ora B1
     bne _bpop_have
     lda #ERR_TYPE
     sta ERROR_CODE
     jmp error_handler
 _bpop_have:
-    dec B0                            // B0 = new O_LEN (= idx of element to remove)
+    // 16-bit dec: B0:B1 = new O_LEN = idx of element to remove.
+    lda B0
+    bne !+
+    dec B1
+!:
+    dec B0
 
-    // W3 = payload base (W2 + O_HEADER).
-    clc
-    lda W2
-    adc #O_HEADER
-    sta W3
-    lda W2+1
-    adc #0
-    sta W3+1
-
-    // RV = payload[B0].
+    // W3 = W2 + O_HEADER + 2*(B0:B1). Build 2*(B0:B1) in W3, then add base.
     lda B0
     asl
-    tay
+    sta W3
+    lda B1
+    rol
+    sta W3+1
+    clc
+    lda W3
+    adc W2
+    sta W3
+    lda W3+1
+    adc W2+1
+    sta W3+1
+    clc
+    lda W3
+    adc #O_HEADER
+    sta W3
+    bcc !+
+    inc W3+1
+!:
+
+    // RV = payload[B0:B1].
+    ldy #0
     lda (W3),y
     sta RV
     iny
     lda (W3),y
     sta RV+1
 
-    // Write new O_LEN at W2.
+    // Write new O_LEN word at W2.
     ldy #O_LEN
     lda B0
     sta (W2),y
     iny
-    lda #0
+    lda B1
     sta (W2),y
     jmp postamble
 

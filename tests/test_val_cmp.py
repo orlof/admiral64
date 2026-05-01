@@ -49,7 +49,7 @@ def test_int_0_static_eq(h):
 def test_int_lt_str(h):
     """TYPE_INT ($20) < TYPE_STR ($21) — type-tag order."""
     i = place_int(h, 0x8500, [0x00])
-    s = place_str(h, 0x6100, [0x00])
+    s = place_str(h, 0x9100, [0x00])
     assert run_cmp(h, i, s) == -1
     assert run_cmp(h, s, i) == 1
 
@@ -66,25 +66,25 @@ def test_int_lt_bool(h):
 
 def test_int_eq(h):
     a = place_int(h, 0x8500, [0xE8, 0x03])
-    b = place_int(h, 0x6100, [0xE8, 0x03])
+    b = place_int(h, 0x9100, [0xE8, 0x03])
     assert run_cmp(h, a, b) == 0
 
 
 def test_int_lt(h):
     a = place_int(h, 0x8500, [0x01])
-    b = place_int(h, 0x6100, [0x02])
+    b = place_int(h, 0x9100, [0x02])
     assert run_cmp(h, a, b) == -1
 
 
 def test_int_gt(h):
     a = place_int(h, 0x8500, [0x02])
-    b = place_int(h, 0x6100, [0x01])
+    b = place_int(h, 0x9100, [0x01])
     assert run_cmp(h, a, b) == 1
 
 
 def test_neg_int_lt_pos(h):
     a = place_int(h, 0x8500, [0xFF])  # -1
-    b = place_int(h, 0x6100, [0x01])
+    b = place_int(h, 0x9100, [0x01])
     assert run_cmp(h, a, b) == -1
 
 
@@ -104,25 +104,25 @@ def test_false_lt_true(h):
 
 def test_str_eq(h):
     a = place_str(h, 0x8500, [0x48, 0x49])
-    b = place_str(h, 0x6100, [0x48, 0x49])
+    b = place_str(h, 0x9100, [0x48, 0x49])
     assert run_cmp(h, a, b) == 0
 
 
 def test_str_lt_at_first_byte(h):
     a = place_str(h, 0x8500, [0x41, 0x42])  # "AB"
-    b = place_str(h, 0x6100, [0x42, 0x42])  # "BB"
+    b = place_str(h, 0x9100, [0x42, 0x42])  # "BB"
     assert run_cmp(h, a, b) == -1
 
 
 def test_str_lt_at_last_byte(h):
     a = place_str(h, 0x8500, [0x41, 0x41])
-    b = place_str(h, 0x6100, [0x41, 0x42])
+    b = place_str(h, 0x9100, [0x41, 0x42])
     assert run_cmp(h, a, b) == -1
 
 
 def test_str_shorter_is_less(h):
     a = place_str(h, 0x8500, [0x41])         # "A"
-    b = place_str(h, 0x6100, [0x41, 0x42])   # "AB"
+    b = place_str(h, 0x9100, [0x41, 0x42])   # "AB"
     assert run_cmp(h, a, b) == -1
     assert run_cmp(h, b, a) == 1
 
@@ -130,13 +130,13 @@ def test_str_shorter_is_less(h):
 def test_str_high_byte_is_unsigned(h):
     """$FF should be greater than $7F (no signed misinterpretation)."""
     a = place_str(h, 0x8500, [0x7F])
-    b = place_str(h, 0x6100, [0xFF])
+    b = place_str(h, 0x9100, [0xFF])
     assert run_cmp(h, a, b) == -1
 
 
 def test_empty_strings_equal(h):
     a = place_str(h, 0x8500, [])
-    b = place_str(h, 0x6100, [])
+    b = place_str(h, 0x9100, [])
     assert run_cmp(h, a, b) == 0
 
 
@@ -145,32 +145,32 @@ def test_empty_strings_equal(h):
 
 def test_tuple_eq(h):
     a1 = place_int(h, 0x8500, [0x01])
-    b1 = place_int(h, 0x6100, [0x02])
-    t1 = place_tuple(h, 0x6200, [a1, b1])
+    b1 = place_int(h, 0x9100, [0x02])
+    t1 = place_tuple(h, 0x9200, [a1, b1])
 
-    a2 = place_int(h, 0x6300, [0x01])
-    b2 = place_int(h, 0x6400, [0x02])
-    t2 = place_tuple(h, 0x6500, [a2, b2])
+    a2 = place_int(h, 0x9300, [0x01])
+    b2 = place_int(h, 0x9400, [0x02])
+    t2 = place_tuple(h, 0x9500, [a2, b2])
 
     assert run_cmp(h, t1, t2) == 0
 
 
 def test_tuple_lt_at_first_element(h):
     a1 = place_int(h, 0x8500, [0x01])
-    b1 = place_int(h, 0x6100, [0x02])
-    t1 = place_tuple(h, 0x6200, [a1, b1])
+    b1 = place_int(h, 0x9100, [0x02])
+    t1 = place_tuple(h, 0x9200, [a1, b1])
 
-    a2 = place_int(h, 0x6300, [0x05])
-    b2 = place_int(h, 0x6400, [0x02])
-    t2 = place_tuple(h, 0x6500, [a2, b2])
+    a2 = place_int(h, 0x9300, [0x05])
+    b2 = place_int(h, 0x9400, [0x02])
+    t2 = place_tuple(h, 0x9500, [a2, b2])
 
     assert run_cmp(h, t1, t2) == -1
 
 
 def test_tuple_shorter_prefix_is_less(h):
     a = place_int(h, 0x8500, [0x01])
-    short = place_tuple(h, 0x6100, [a])
-    long_ = place_tuple(h, 0x6200, [a, a])
+    short = place_tuple(h, 0x9100, [a])
+    long_ = place_tuple(h, 0x9200, [a, a])
     assert run_cmp(h, short, long_) == -1
     assert run_cmp(h, long_, short) == 1
 
@@ -180,12 +180,12 @@ def test_tuple_shorter_prefix_is_less(h):
 
 def test_list_lt_at_last_element(h):
     a1 = place_int(h, 0x8500, [0x01])
-    b1 = place_int(h, 0x6100, [0x02])
-    L1 = place_list(h, 0x6200, [a1, b1])
+    b1 = place_int(h, 0x9100, [0x02])
+    L1 = place_list(h, 0x9200, [a1, b1])
 
-    a2 = place_int(h, 0x6300, [0x01])
-    b2 = place_int(h, 0x6400, [0x05])
-    L2 = place_list(h, 0x6500, [a2, b2])
+    a2 = place_int(h, 0x9300, [0x01])
+    b2 = place_int(h, 0x9400, [0x05])
+    L2 = place_list(h, 0x9500, [a2, b2])
 
     assert run_cmp(h, L1, L2) == -1
 
@@ -195,14 +195,14 @@ def test_list_lt_at_last_element(h):
 
 def test_nested_tuple_compare(h):
     one_a = place_int(h, 0x8500, [0x01])
-    two_a = place_int(h, 0x6100, [0x02])
-    inner_a = place_tuple(h, 0x6200, [two_a])
-    outer_a = place_tuple(h, 0x6300, [one_a, inner_a])
+    two_a = place_int(h, 0x9100, [0x02])
+    inner_a = place_tuple(h, 0x9200, [two_a])
+    outer_a = place_tuple(h, 0x9300, [one_a, inner_a])
 
-    one_b = place_int(h, 0x6400, [0x01])
-    five_b = place_int(h, 0x6500, [0x05])  # different
-    inner_b = place_tuple(h, 0x6600, [five_b])
-    outer_b = place_tuple(h, 0x6700, [one_b, inner_b])
+    one_b = place_int(h, 0x9400, [0x01])
+    five_b = place_int(h, 0x9500, [0x05])  # different
+    inner_b = place_tuple(h, 0x9600, [five_b])
+    outer_b = place_tuple(h, 0x9700, [one_b, inner_b])
 
     assert run_cmp(h, outer_a, outer_b) == -1
 
@@ -211,9 +211,9 @@ def test_string_keys_sortable(h):
     """Strings of various lengths sort lexicographically with tie-broken by
     length (shorter first)."""
     apple = place_str(h, 0x8500, [ord("a"), ord("p"), ord("p"), ord("l"), ord("e")])
-    banana = place_str(h, 0x6100, [ord("b"), ord("a"), ord("n"), ord("a"), ord("n"), ord("a")])
-    apple2 = place_str(h, 0x6200, [ord("a"), ord("p"), ord("p"), ord("l"), ord("e")])
-    apricot = place_str(h, 0x6300, [ord("a"), ord("p"), ord("r")])
+    banana = place_str(h, 0x9100, [ord("b"), ord("a"), ord("n"), ord("a"), ord("n"), ord("a")])
+    apple2 = place_str(h, 0x9200, [ord("a"), ord("p"), ord("p"), ord("l"), ord("e")])
+    apricot = place_str(h, 0x9300, [ord("a"), ord("p"), ord("r")])
 
     assert run_cmp(h, apple, banana) == -1
     assert run_cmp(h, apple, apricot) == -1   # 'l' < 'r'

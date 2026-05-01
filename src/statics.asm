@@ -407,6 +407,10 @@ STR_RPAREN_OBJ:
     .word 1
     .byte $29                       // ")"
 
+// Dict open/close — angle brackets, NOT curly braces. The C64 character ROM
+// has no `{` `}` glyphs in either charset (PETSCII $7B/$7D map to graphic
+// blocks). Angle brackets exist in both charsets and don't collide with list
+// `[]` or tuple `()`. Both source syntax (`<a:1>`) and repr render with these.
 STR_LCURLY:
     .word STR_LCURLY_OBJ
     .word 3
@@ -415,7 +419,7 @@ STR_LCURLY:
     .byte 0
 STR_LCURLY_OBJ:
     .word 1
-    .byte $7B                       // "{"
+    .byte $3C                       // "<"
 
 STR_RCURLY:
     .word STR_RCURLY_OBJ
@@ -425,7 +429,7 @@ STR_RCURLY:
     .byte 0
 STR_RCURLY_OBJ:
     .word 1
-    .byte $7D                       // "}"
+    .byte $3E                       // ">"
 
 // Container element separators. We render without the trailing space — on a
 // 40-column screen, every spare column matters, and `[1,2,3]` is just as
@@ -450,6 +454,39 @@ STR_COLON_SPACE:
 STR_COLON_SPACE_OBJ:
     .word 1
     .byte $3A                       // ":"
+
+// Cycle-detection sentinels emitted by the container str-renderers when they
+// detect they're already rendering this container higher up the stack
+// (e.g., `g = globals(); print g`). One per bracket family.
+STR_DICT_ELLIPSIS:
+    .word STR_DICT_ELLIPSIS_OBJ
+    .word 3
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_DICT_ELLIPSIS_OBJ:
+    .word 5
+    .byte $3C, $2E, $2E, $2E, $3E    // "<...>"
+
+STR_LIST_ELLIPSIS:
+    .word STR_LIST_ELLIPSIS_OBJ
+    .word 3
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_LIST_ELLIPSIS_OBJ:
+    .word 5
+    .byte $5B, $2E, $2E, $2E, $5D    // "[...]"
+
+STR_TUPLE_ELLIPSIS:
+    .word STR_TUPLE_ELLIPSIS_OBJ
+    .word 3
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_TUPLE_ELLIPSIS_OBJ:
+    .word 5
+    .byte $28, $2E, $2E, $2E, $29    // "(...)"
 
 // Single-quote singleton, used by builtin_repr to wrap TYPE_STR.
 STR_QUOTE:

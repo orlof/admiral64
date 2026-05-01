@@ -493,10 +493,7 @@ _rhs_count_done:
     lda repl_line_len
     ldy #0
     sta (W2),y
-    inc W2
-    bne !+
-    inc W2+1
-!:
+    jsr inc_w2_w
     ldy #0
 _rhs_copy:
     cpy repl_line_len
@@ -540,10 +537,7 @@ _rhl_have_idx:
     lda (W2),y
     sta repl_line_len
     sta repl_line_pos                // cursor lands at end-of-line
-    inc W2
-    bne !+
-    inc W2+1
-!:
+    jsr inc_w2_w
     ldy #0
 _rhl_copy:
     cpy repl_line_len

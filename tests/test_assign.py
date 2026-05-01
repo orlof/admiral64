@@ -130,7 +130,7 @@ def test_assign_name_binds_in_scope(h):
     """assign(name_str, value) should call scope_set, binding name → value."""
     scope = setup_global_scope(h)
     name = place_str(h, 0x8500, [0x78])  # "x"
-    value = place_int(h, 0x6100, [0x42])
+    value = place_int(h, 0x9100, [0x42])
 
     call_assign(h, name, value)
 
@@ -141,8 +141,8 @@ def test_assign_name_binds_in_scope(h):
 def test_assign_name_overwrites_existing(h):
     scope = setup_global_scope(h)
     name = place_str(h, 0x8500, [0x79])  # "y"
-    v1 = place_int(h, 0x6100, [0x01])
-    v2 = place_int(h, 0x6200, [0x02])
+    v1 = place_int(h, 0x9100, [0x01])
+    v2 = place_int(h, 0x9200, [0x02])
 
     call_assign(h, name, v1)
     call_assign(h, name, v2)
@@ -157,7 +157,7 @@ def test_assign_ref_writes_to_receiver_dict(h):
     receiver = h.alloc_dict()
     h.rs_push(receiver)  # root across alloc_ref
     name = place_str(h, 0x8500, [0x6B])  # "k"
-    value = place_int(h, 0x6100, [0x99])
+    value = place_int(h, 0x9100, [0x99])
 
     ref = call_alloc_ref(h, receiver, name)
     h.rs_push(ref)  # root across the assign
@@ -173,8 +173,8 @@ def test_assign_sub_list_writes_at_index(h):
     """assign(SUB(list, 1), v) → list[1] = v."""
     # Build a 3-element list [a, b, c].
     a = place_int(h, 0x8500, [0x0A])
-    b = place_int(h, 0x6100, [0x0B])
-    c = place_int(h, 0x6200, [0x0C])
+    b = place_int(h, 0x9100, [0x0B])
+    c = place_int(h, 0x9200, [0x0C])
     lst = h.alloc_list(3)
     obj = h.read_word(lst + H_PTR)
     h.write_word(obj + O_HEADER + 0, a)
@@ -182,11 +182,11 @@ def test_assign_sub_list_writes_at_index(h):
     h.write_word(obj + O_HEADER + 4, c)
     h.rs_push(lst)
 
-    index = place_int(h, 0x6300, [0x01])
+    index = place_int(h, 0x9300, [0x01])
     sub = call_alloc_sub(h, lst, index)
     h.rs_push(sub)
 
-    new_b = place_int(h, 0x6400, [0xBB])
+    new_b = place_int(h, 0x9400, [0xBB])
     call_assign(h, sub, new_b)
 
     obj = h.read_word(lst + H_PTR)
@@ -203,7 +203,7 @@ def test_assign_sub_dict_inserts_pair(h):
     d = h.alloc_dict()
     h.rs_push(d)
     key = place_str(h, 0x8500, [0x6B])
-    value = place_int(h, 0x6100, [0x33])
+    value = place_int(h, 0x9100, [0x33])
     sub = call_alloc_sub(h, d, key)
     h.rs_push(sub)
 
@@ -217,19 +217,19 @@ def test_assign_sub_dict_inserts_pair(h):
 def test_assign_panics_on_unsupported_target_type(h):
     """An int as target → ERR_TYPE."""
     target = place_int(h, 0x8500, [0x00])
-    value = place_int(h, 0x6100, [0x01])
+    value = place_int(h, 0x9100, [0x01])
     call_assign_panics(h, target, value, ERR_TYPE)
 
 
 def test_assign_sub_panics_on_unsupported_container(h):
     """SUB(int, ...) is nonsensical — assign should ERR_TYPE."""
     container = place_int(h, 0x8500, [0x00])
-    index = place_int(h, 0x6100, [0x00])
+    index = place_int(h, 0x9100, [0x00])
     h.rs_push(container)
     sub = call_alloc_sub(h, container, index)
     h.rs_push(sub)
 
-    value = place_int(h, 0x6200, [0x05])
+    value = place_int(h, 0x9200, [0x05])
     call_assign_panics(h, sub, value, ERR_TYPE)
 
 
@@ -240,12 +240,12 @@ def test_assign_tuple_unpacks_flat(h):
     """assign((x, y), (1, 2)) — both names bound."""
     scope = setup_global_scope(h)
     nx = place_str(h, 0x8500, [0x78])  # "x"
-    ny = place_str(h, 0x6100, [0x79])  # "y"
-    target = place_tuple(h, 0x6200, [nx, ny])
+    ny = place_str(h, 0x9100, [0x79])  # "y"
+    target = place_tuple(h, 0x9200, [nx, ny])
 
-    v1 = place_int(h, 0x6300, [0x01])
-    v2 = place_int(h, 0x6400, [0x02])
-    value = place_tuple(h, 0x6500, [v1, v2])
+    v1 = place_int(h, 0x9300, [0x01])
+    v2 = place_int(h, 0x9400, [0x02])
+    value = place_tuple(h, 0x9500, [v1, v2])
 
     call_assign(h, target, value)
     assert call_dict_get(h, scope, nx) == v1
@@ -256,11 +256,11 @@ def test_assign_tuple_value_can_be_list(h):
     """assign((x, y), [1, 2]) — RHS is a list, also accepted."""
     scope = setup_global_scope(h)
     nx = place_str(h, 0x8500, [0x78])
-    ny = place_str(h, 0x6100, [0x79])
-    target = place_tuple(h, 0x6200, [nx, ny])
+    ny = place_str(h, 0x9100, [0x79])
+    target = place_tuple(h, 0x9200, [nx, ny])
 
-    v1 = place_int(h, 0x6300, [0x07])
-    v2 = place_int(h, 0x6400, [0x08])
+    v1 = place_int(h, 0x9300, [0x07])
+    v2 = place_int(h, 0x9400, [0x08])
     lst = h.alloc_list(2)
     obj = h.read_word(lst + H_PTR)
     h.write_word(obj + O_HEADER + 0, v1)
@@ -275,16 +275,16 @@ def test_assign_tuple_nested(h):
     """assign((a, (b, c)), (1, (2, 3))) — nested unpack reaches all leaves."""
     scope = setup_global_scope(h)
     na = place_str(h, 0x8500, [0x61])  # "a"
-    nb = place_str(h, 0x6100, [0x62])  # "b"
-    nc = place_str(h, 0x6200, [0x63])  # "c"
-    inner_tgt = place_tuple(h, 0x6300, [nb, nc])
-    target = place_tuple(h, 0x6400, [na, inner_tgt])
+    nb = place_str(h, 0x9100, [0x62])  # "b"
+    nc = place_str(h, 0x9200, [0x63])  # "c"
+    inner_tgt = place_tuple(h, 0x9300, [nb, nc])
+    target = place_tuple(h, 0x9400, [na, inner_tgt])
 
-    v1 = place_int(h, 0x6500, [0x01])
-    v2 = place_int(h, 0x6600, [0x02])
-    v3 = place_int(h, 0x6700, [0x03])
-    inner_val = place_tuple(h, 0x6800, [v2, v3])
-    value = place_tuple(h, 0x6900, [v1, inner_val])
+    v1 = place_int(h, 0x9500, [0x01])
+    v2 = place_int(h, 0x9600, [0x02])
+    v3 = place_int(h, 0x9700, [0x03])
+    inner_val = place_tuple(h, 0x9800, [v2, v3])
+    value = place_tuple(h, 0x9900, [v1, inner_val])
 
     call_assign(h, target, value)
     assert call_dict_get(h, scope, na) == v1
@@ -296,13 +296,13 @@ def test_assign_tuple_arity_mismatch_panics(h):
     """LHS and RHS must have the same length, else ERR_ARITY."""
     setup_global_scope(h)
     nx = place_str(h, 0x8500, [0x78])
-    ny = place_str(h, 0x6100, [0x79])
-    target = place_tuple(h, 0x6200, [nx, ny])
+    ny = place_str(h, 0x9100, [0x79])
+    target = place_tuple(h, 0x9200, [nx, ny])
 
-    v1 = place_int(h, 0x6300, [0x01])
-    v2 = place_int(h, 0x6400, [0x02])
-    v3 = place_int(h, 0x6500, [0x03])
-    value = place_tuple(h, 0x6600, [v1, v2, v3])
+    v1 = place_int(h, 0x9300, [0x01])
+    v2 = place_int(h, 0x9400, [0x02])
+    v3 = place_int(h, 0x9500, [0x03])
+    value = place_tuple(h, 0x9600, [v1, v2, v3])
 
     call_assign_panics(h, target, value, ERR_ARITY)
 
@@ -311,10 +311,10 @@ def test_assign_tuple_rhs_must_be_sequence(h):
     """RHS that isn't TYPE_TUPLE/LIST → ERR_TYPE."""
     setup_global_scope(h)
     nx = place_str(h, 0x8500, [0x78])
-    ny = place_str(h, 0x6100, [0x79])
-    target = place_tuple(h, 0x6200, [nx, ny])
+    ny = place_str(h, 0x9100, [0x79])
+    target = place_tuple(h, 0x9200, [nx, ny])
 
-    value = place_int(h, 0x6300, [0x42])  # int, not a sequence
+    value = place_int(h, 0x9300, [0x42])  # int, not a sequence
     call_assign_panics(h, target, value, ERR_TYPE)
 
 
@@ -325,16 +325,16 @@ def test_assign_mixed_lvalue_kinds(h):
 
     d = h.alloc_dict()
     h.rs_push(d)
-    key = place_str(h, 0x6100, [0x6B])  # "k"
+    key = place_str(h, 0x9100, [0x6B])  # "k"
     sub = call_alloc_sub(h, d, key)
     h.rs_push(sub)
 
-    target = place_tuple(h, 0x6200, [name, sub])
+    target = place_tuple(h, 0x9200, [name, sub])
     h.rs_push(target)
 
-    v1 = place_int(h, 0x6300, [0x11])
-    v2 = place_int(h, 0x6400, [0x22])
-    value = place_tuple(h, 0x6500, [v1, v2])
+    v1 = place_int(h, 0x9300, [0x11])
+    v2 = place_int(h, 0x9400, [0x22])
+    value = place_tuple(h, 0x9500, [v1, v2])
 
     call_assign(h, target, value)
     assert call_dict_get(h, scope, name) == v1

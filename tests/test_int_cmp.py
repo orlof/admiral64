@@ -8,7 +8,7 @@ from test_int_add import place_int
 def run_cmp(h, a_bytes: list[int], b_bytes: list[int]) -> int:
     rsp_initial = h.rsp
     a = place_int(h, 0x8500, a_bytes)
-    b = place_int(h, 0x6100, b_bytes)
+    b = place_int(h, 0x9100, b_bytes)
     h.rs_push(a)
     h.rs_push(b)
     h.call("int_cmp")

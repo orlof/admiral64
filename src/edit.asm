@@ -321,6 +321,22 @@ _ebol_to_gap_start:
     lda edit_gap_start+1
     sta W0+1
 _ebol_walk:
+    // Gap-transparent: if W0 == gap_end, hop to gap_start. The byte just
+    // before gap_start is the logical predecessor of the byte at gap_end;
+    // without this hop the dec below walks INTO the gap and reads stale
+    // bytes, producing a bogus line_ptr that _evf_window then chases
+    // forever (BS-then-RIGHT hang).
+    lda W0
+    cmp edit_gap_end
+    bne !+
+    lda W0+1
+    cmp edit_gap_end+1
+    bne !+
+    lda edit_gap_start
+    sta W0
+    lda edit_gap_start+1
+    sta W0+1
+!:
     // While W0 != buf_start AND *(W0-1) != '\n', W0--.
     lda W0
     cmp edit_buf_start

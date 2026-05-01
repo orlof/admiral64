@@ -64,11 +64,20 @@ gc_mark_root_loop:
     lda (W0),y
     sta W1+1
 
+    // Null roots are valid placeholders (e.g. _llp_str_call pushes a 0 in
+    // the `me` slot for non-method calls). Skip them — without this guard,
+    // `STA (W1),y` with W1=0 and Y=7 lands on ZP $07 (= FP+1) and silently
+    // corrupts the frame pointer mid-execution.
+    lda W1
+    ora W1+1
+    beq gc_mark_root_skip
+
     ldy #H_FLAGS
     lda (W1),y
     ora #FLAG_MARKED|FLAG_GRAY
     sta (W1),y
 
+gc_mark_root_skip:
     clc
     lda W0
     adc #2
@@ -159,9 +168,15 @@ _gc_trace_array:
     lda (W0),y
     sta W2+1
 
+    // 16-bit element count in B6:B7. (B0..B5 belong to gc_mark_phase2 /
+    // its callers — `inc B0` is its saw_gray flag and must not be touched.)
     ldy #O_LEN
     lda (W2),y
-    tax                          // X = element count
+    sta B6
+    iny
+    lda (W2),y
+    sta B7
+    ora B6
     beq _gtt_done
 
     clc
@@ -204,7 +219,14 @@ _gtt_advance:
     bcc !+
     inc W2+1
 !:
-    dex
+    // 16-bit dec on B6:B7; loop while non-zero.
+    lda B6
+    bne !+
+    dec B7
+!:
+    dec B6
+    lda B6
+    ora B7
     bne _gtt_loop
 _gtt_done:
     rts
@@ -489,9 +511,33 @@ _gmm_fixup:
 
 // -----------------------------------------------------------------------------
 // gc_collect — full mark + sweep + compact cycle.
+//
+// Around `gc_compact` we bracket with `_lex_to_offsets` / `_lex_from_offsets`
+// so the active lexer state survives a payload relocation. The pointer
+// fields LEX_PTR / LEX_END / LEX_TOKEN_* are the only program state that
+// holds raw addresses into a heap payload; every other pointer in the
+// program is either a handle (which never moves) or accessed via H_PTR
+// re-deref on demand. If LEX_SRC_HANDLE is null (no active lex, or the
+// fixture-style place_str source not in the GC'd heap) we skip the rebase —
+// it's a no-op.
 // -----------------------------------------------------------------------------
 gc_collect:
     jsr gc_mark
     jsr gc_sweep
+
+    lda LEX_SRC_HANDLE
+    ora LEX_SRC_HANDLE+1
+    beq _gcc_no_lex_pre
+    jsr _lex_load_base
+    jsr _lex_to_offsets
+_gcc_no_lex_pre:
+
     jsr gc_compact
+
+    lda LEX_SRC_HANDLE
+    ora LEX_SRC_HANDLE+1
+    beq _gcc_no_lex_post
+    jsr _lex_load_base
+    jsr _lex_from_offsets
+_gcc_no_lex_post:
     rts
