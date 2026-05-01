@@ -304,9 +304,7 @@ stmt_del:
     lda LEX_TOKEN_KIND
     cmp #TK_NAME
     beq _sd_have_name
-    lda #ERR_LEX
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_lex
 _sd_have_name:
     jsr lexer_get_token_as_string   // RV = name TYPE_STR
     rs_push(RV)                     // RS: [name]
@@ -326,9 +324,7 @@ _sd_have_name:
     cmp #0
     bne _sd_name_remove
     // Miss → name not bound in current scope.
-    lda #ERR_LEX
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_lex
 _sd_name_remove:
     lda RV
     sta W2
@@ -362,9 +358,7 @@ _sd_subscript:
     beq _sd_list_del
     cmp #TYPE_DICT
     beq _sd_dict_del
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 _sd_list_del:
     // Extract signed int index from int handle RV → 16-bit word (B5:B6).
@@ -435,9 +429,7 @@ _sd_dict_del:
     cmp #0
     bne _sd_dict_remove
     // Miss → KeyError.
-    lda #ERR_LEX
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_lex
 _sd_dict_remove:
     lda RV
     sta W2
@@ -983,9 +975,8 @@ _pft_done:
     bne _pft_build_tuple
 
     // Single atom — RV already holds it (last assignment from parse_for_atom).
-    rs_peek(RV)                     // re-load (defensive: postamble preserves RV
+    jmp postamble_peek_rv           // re-load (defensive: postamble preserves RV
                                     //  but rs_pop would shift RSP)
-    jmp postamble
 
 _pft_build_tuple:
     // Allocate a tuple of size B0 with the atoms as payload.
@@ -1038,8 +1029,7 @@ _pfa_name:
     ldy #H_TYPE
     lda #TYPE_NAME
     sta (RV),y
-    jsr lexer_next
-    jmp postamble
+    jmp _lex_next_post
 
 _pfa_paren:
     jsr lexer_next                  // consume `(`
@@ -1361,9 +1351,7 @@ _ccnt_done:
     rts
 
 _ccnt_type_error:
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 // -----------------------------------------------------------------------------
 // cast_common_number_type_optional — like cast_common_number_type, but
@@ -1547,8 +1535,7 @@ nud_hex:
     lda LEX_TOKEN_END
     sbc LEX_TOKEN_START
     jsr int_parse_hex
-    jsr lexer_next
-    jmp postamble
+    jmp _lex_next_post
 
 nud_bin:
     preamble_args(0, 0)
@@ -1560,8 +1547,7 @@ nud_bin:
     lda LEX_TOKEN_END
     sbc LEX_TOKEN_START
     jsr int_parse_bin
-    jsr lexer_next
-    jmp postamble
+    jmp _lex_next_post
 
 // -----------------------------------------------------------------------------
 // Binary arithmetic LEDs — each is one macro line. infix_eval reads the
@@ -1771,9 +1757,7 @@ nud_minus:
     beq _nm_int
     cmp #TYPE_BOOL
     beq _nm_int
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 _nm_int:
     jsr int_negate
     jmp postamble
@@ -1876,8 +1860,7 @@ _nlp_tclose:
     ldy #H_TYPE
     lda #TYPE_TUPLE
     sta (W0),y
-    rs_pop(RV)
-    jmp postamble
+    jmp postamble_pop_rv
 
 // -----------------------------------------------------------------------------
 // nud_dict_lt — dict literal `<key: value, ...>`.  `<>` is an empty dict.
@@ -2110,8 +2093,7 @@ nud_true:
     sta RV
     lda #>TRUE
     sta RV+1
-    jsr lexer_next
-    jmp postamble
+    jmp _lex_next_post
 
 nud_false:
     preamble_args(0, 0)
@@ -2119,8 +2101,7 @@ nud_false:
     sta RV
     lda #>FALSE
     sta RV+1
-    jsr lexer_next
-    jmp postamble
+    jmp _lex_next_post
 
 nud_none:
     preamble_args(0, 0)
@@ -2128,8 +2109,7 @@ nud_none:
     sta RV
     lda #>NONE
     sta RV+1
-    jsr lexer_next
-    jmp postamble
+    jmp _lex_next_post
 
 // -----------------------------------------------------------------------------
 // nud_tilde — prefix bitwise NOT `~x`.
@@ -2205,8 +2185,7 @@ _land_short:
     lda #LBP_AND
     sta B7
     jsr skip_expression
-    rs_peek(RV)                       // RV = LHS (still on RS)
-    jmp postamble
+    jmp postamble_peek_rv             // RV = LHS (still on RS)
 
 led_or:
     preamble_args(1, 0)
@@ -2233,8 +2212,7 @@ _lor_short:
     lda #LBP_OR
     sta B7
     jsr skip_expression
-    rs_peek(RV)
-    jmp postamble
+    jmp postamble_peek_rv
 
 // -----------------------------------------------------------------------------
 // led_is — handle identity `a is b` and `a is not b`.
@@ -2308,9 +2286,7 @@ led_in:
     beq _lin_seq
     cmp #TYPE_DICT
     beq _lin_dict
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 _lin_str:
     // For STR membership the needle must also be a TYPE_STR. (Python rejects
@@ -2320,9 +2296,7 @@ _lin_str:
     lda (W0),y
     cmp #TYPE_STR
     beq !ok+
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 !ok:
     // Full-range search: start=0:0, end=$FFFF (sentinel → haystack_len).
     lda #0
@@ -2378,8 +2352,7 @@ nud_lbrack:
     bne _nlb_loop
     // Empty list — consume ']' and return.
     jsr lexer_next
-    rs_pop(RV)
-    jmp postamble
+    jmp postamble_pop_rv
 
 _nlb_loop:
     // Parse element expression at LBP_COMMA so `,` doesn't bind to led_comma.
@@ -2414,8 +2387,7 @@ _nlb_check_close:
 
 _nlb_done:
     jsr lexer_next                    // consume ']'
-    rs_pop(RV)                        // RV = the assembled list
-    jmp postamble
+    jmp postamble_pop_rv              // RV = the assembled list
 
 _nlb_recover:
     jmp _lh_recover_parser
@@ -2443,9 +2415,7 @@ led_lparen:
     beq _llp_name_call
     cmp #TYPE_STR
     beq _llp_str_prefix
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 _llp_name_call:
     // Free-function builtin: try TST lookup. On hit, drop the name from RS
@@ -2465,9 +2435,7 @@ _llp_name_miss:
     lda (W0),y
     cmp #TYPE_STR
     beq _llp_str_prefix
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 _llp_str_prefix:
     jsr lexer_next                  // consume `(`
@@ -2690,9 +2658,7 @@ _llp_s_arg_loop:
     lda LEX_TOKEN_KIND
     cmp #TK_NAME
     beq _llp_s_have_name
-    lda #ERR_LEX
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_lex
 _llp_s_have_name:
     jsr lexer_get_token_as_string   // RV = name TYPE_STR
     rs_push(RV)                     // RS: [..., new, ..., name]
@@ -2804,9 +2770,7 @@ _llp_s_stmt_loop:
     cmp #2
     beq _llp_s_extract_return
     // Stray break/continue inside a function body — panic.
-    lda #ERR_LEX
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_lex
 
 _llp_s_extract_return:
     // Read the value handle from O_HEADER+0..1.
@@ -3041,9 +3005,7 @@ led_dot:
     lda LEX_TOKEN_KIND
     cmp #TK_NAME
     beq _ldot_have_name
-    lda #ERR_LEX
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_lex
 _ldot_have_name:
     jsr lexer_get_token_as_string   // RV = name TYPE_STR
     rs_push(RV)                     // RS: [..., receiver, name]
@@ -3090,9 +3052,7 @@ _ldot_method_prefix:
     beq _ldot_list_method
     cmp #TYPE_TUPLE
     beq _ldot_list_method
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 _ldot_dict_method:
     // Try user attribute chain first. RS: [..., dict, name]. dict_get_proto
@@ -3131,9 +3091,7 @@ _ldot_dict_user_hit:
     jmp postamble
 
 _ldot_dict_no_method:
-    lda #ERR_LEX
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_lex
 
 _ldot_str_method:
     lda #<str_methods
@@ -3161,9 +3119,7 @@ _ldot_table_method:
     jsr _call_dispatch
     jmp postamble
 _ldot_method_miss:
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 // -----------------------------------------------------------------------------
 // nud_float — parse a TK_FLOAT_LIT span into a TYPE_FLOAT handle.
@@ -3191,8 +3147,7 @@ nud_name:
     ldy #H_TYPE
     lda #TYPE_NAME
     sta (RV),y
-    jsr lexer_next
-    jmp postamble
+    jmp _lex_next_post
 
 // -----------------------------------------------------------------------------
 // led_assign — TK_ASSIGN binary LED. Right-associative.
@@ -3359,9 +3314,7 @@ nud_str:
 // -----------------------------------------------------------------------------
 nud_recover:
 led_recover:
-    lda #ERR_LEX
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_lex
 
 // -----------------------------------------------------------------------------
 // Token-kind dispatch tables. Indexed by TK_* (0..127).
@@ -3377,6 +3330,12 @@ led_recover:
 // forward pass.
 // -----------------------------------------------------------------------------
 .const TK_TABLE_SIZE = $4D    // TK_CLS + 1 = 77
+
+// _lex_next_post — `jsr lexer_next ; jmp postamble` shortcut. Saves 3 bytes
+// per use across the parser sites that consume one token then return.
+_lex_next_post:                              // shared tail (do not inline)
+    jsr lexer_next                           // [helper body — distinct comment]
+    jmp postamble
 
 // --- nud_lo / nud_hi ---------------------------------------------------------
 // Active NUDs: literals (INT/HEX/BIN/STR/TRUE/FALSE/NONE), unary +/-,

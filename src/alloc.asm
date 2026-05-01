@@ -122,9 +122,7 @@ alloc_oom:
     jmp alloc_check
 
 alloc_really_oom:
-    lda #ERR_OOM
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_oom
 
 alloc_ok:
     // 1. Acquire handle: reuse from free list, or carve from NEXT_HANDLE.
@@ -345,9 +343,7 @@ hcp_oom:
     jsr gc_collect
     jmp hcp_check
 hcp_really_oom:
-    lda #ERR_OOM
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_oom
 
 hcp_ok:
     // RV = NEXT_DATA (object header address).

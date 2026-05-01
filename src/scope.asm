@@ -70,9 +70,7 @@ _sg_loop:
     bne _sg_have_parent
 
     // No parent → name not found in any scope.
-    lda #ERR_LEX
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_lex
 
 _sg_have_parent:
     lda RV

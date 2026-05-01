@@ -114,9 +114,7 @@ lexer_init:
 lexer_advance:
     cmp LEX_TOKEN_KIND
     beq !ok+
-    lda #ERR_LEX
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_lex
 !ok:
     jmp lexer_next
 
@@ -287,9 +285,7 @@ _lex_peek_next:
 // error_handler. Used for illegal chars, unterminated strings, etc.
 // -----------------------------------------------------------------------------
 _lh_recover:
-    lda #ERR_LEX
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_lex
 
 // -----------------------------------------------------------------------------
 // _lh_eof — NUL byte at LEX_PTR. Set kind = TK_EOF, force indent target = 0.
@@ -1875,9 +1871,7 @@ _lex_set_indent_target:
     sta LEX_INDENT_TARGET
     rts
 _li_overflow:
-    lda #ERR_LEX
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_lex
 
 // -----------------------------------------------------------------------------
 // Keyword bucket pointer table — index by (length - 1).

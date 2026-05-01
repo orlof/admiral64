@@ -73,8 +73,7 @@ _ipd_loop:
     jmp _ipd_loop
 
 _ipd_done:
-    rs_pop(RV)
-    jmp postamble
+    jmp postamble_pop_rv
 
 // -----------------------------------------------------------------------------
 // int_parse_hex — parse "0xNN" or "0XNN". Span must include the "0x" prefix
@@ -141,8 +140,7 @@ _iph_have:
     jmp _iph_loop
 
 _iph_done:
-    rs_pop(RV)
-    jmp postamble
+    jmp postamble_pop_rv
 
 // -----------------------------------------------------------------------------
 // int_parse_bin — parse "0bNN" or "0BNN". Body chars must be '0' or '1'.
@@ -188,8 +186,7 @@ _ipb_loop:
     jmp _ipb_loop
 
 _ipb_done:
-    rs_pop(RV)
-    jmp postamble
+    jmp postamble_pop_rv
 
 // -----------------------------------------------------------------------------
 // Static int singletons used by the parsers above. Kept here (close to the

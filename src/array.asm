@@ -989,13 +989,9 @@ _amrg_b_done:
     jmp postamble
 
 _amrg_overflow:
-    lda #ERR_OOM
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_oom
 _amrg_type_err:
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 // -----------------------------------------------------------------------------
 // array_repeat — repeat a container's payload N times.
@@ -1218,13 +1214,9 @@ _arep_done:
     jmp postamble
 
 _arep_overflow:
-    lda #ERR_OOM
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_oom
 _arep_type_err:
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 // -----------------------------------------------------------------------------
 // array_find — linear scan for an element by value (`needle in container`).
@@ -1279,8 +1271,6 @@ _afind_loop:
     jmp _afind_loop
 
 _afind_found:
-    lda #1
-    jmp postamble
+    jmp postamble_a_one
 _afind_not_found:
-    lda #0
-    jmp postamble
+    jmp postamble_a_zero

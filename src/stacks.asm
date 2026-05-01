@@ -457,6 +457,22 @@ rs_peek_at_w1:
     rts
 
 // arg_get_xx — caller has staged Y = i*2; reads (W3,Y) into target ZP word.
+// arg0_w0_deref — common header for builtins that read arg 0 into W0 and
+// immediately deref to W2. Tail-jumps to deref_W0_to_W2 so its A:X = O_LEN
+// return propagates to the original caller. Saves 5 bytes per use vs the
+// inline `arg_get(0, W0) ; jsr deref_W0_to_W2` pair.
+arg0_w0_deref:
+    ldy #0
+    jsr arg_get_w0
+    jmp deref_W0_to_W2
+
+// arg0_w0_push — read arg 0 into W0 and push it onto RS. Tail-jumps to
+// rs_push_w0. Saves 5 bytes per use vs `arg_get(0, W0) ; rs_push(W0)`.
+arg0_w0_push:
+    ldy #0
+    jsr arg_get_w0
+    jmp rs_push_w0
+
 arg_get_w0:
     lda (W3),y
     sta W0

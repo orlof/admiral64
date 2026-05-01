@@ -39,9 +39,7 @@ str_to_float:
     cmp #STR2FLOAT_BUF_LEN
     bcc _s2f_size_ok
     // Token longer than buffer → panic. Real floats won't hit this.
-    lda #ERR_LEX
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_lex
 _s2f_size_ok:
     ldy #0
 _s2f_copy:

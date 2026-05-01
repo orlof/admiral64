@@ -114,8 +114,7 @@ val_eq:
     lda W0+1
     cmp W1+1
     bne _veq_not_same_handle
-    lda #1
-    jmp postamble
+    jmp postamble_a_one
 
 _veq_not_same_handle:
     // Read H_TYPE from each side, normalizing TYPE_NAME → TYPE_STR so a lazy
@@ -134,8 +133,7 @@ _veq_not_same_handle:
 !s:
     cmp B0
     beq _veq_types_match
-    lda #0
-    jmp postamble
+    jmp postamble_a_zero
 
 _veq_types_match:
     jsr deref_W0_to_W2           // A:X = O_LEN word of W0
@@ -175,12 +173,10 @@ _veq_loop:
     jmp _veq_loop
 
 _veq_equal:
-    lda #1
-    jmp postamble
+    jmp postamble_a_one
 
 _veq_not_equal:
-    lda #0
-    jmp postamble
+    jmp postamble_a_zero
 
     // Sequence/dict recursion: element-wise val_eq.
 _veq_array:
@@ -247,8 +243,7 @@ val_cmp:
     lda W0+1
     cmp W1+1
     bne _vc_diff_handles
-    lda #0
-    jmp postamble
+    jmp postamble_a_zero
 
 _vc_diff_handles:
     // 2. Different types → compare type tags numerically. Normalize TYPE_NAME
@@ -270,8 +265,7 @@ _vc_diff_handles:
     cmp B0
     beq _vc_same_type
     bcs _vc_pos
-    lda #$FF
-    jmp postamble
+    jmp postamble_a_ff
 
 _vc_same_type:
     // 3. Same type. Dispatch to per-type comparator. A still holds the type tag.
@@ -292,12 +286,10 @@ _vc_same_type:
     cmp #TYPE_DICT
     beq _vc_array
     // TYPE_NONE or unknown: equal-by-default.
-    lda #0
-    jmp postamble
+    jmp postamble_a_zero
 
 _vc_pos:
-    lda #1
-    jmp postamble
+    jmp postamble_a_one
 
 // --- TYPE_INT / TYPE_BOOL ---------------------------------------------------
 // int_cmp's preamble pops two handles from RS — exactly our args. Both
@@ -349,23 +341,19 @@ _vc_str_loop:
 
 _vc_str_byte_diff:
     bcs _vc_pos
-    lda #$FF
-    jmp postamble
+    jmp postamble_a_ff
 
 _vc_str_a_end:
     lda B2
     ora B3
     beq _vc_zero                 // both ended together → equal
-    lda #$FF                     // a shorter — a < b
-    jmp postamble
+    jmp postamble_a_ff           // a shorter — a < b
 
 _vc_str_b_end:
-    lda #1                       // b shorter — a > b
-    jmp postamble
+    jmp postamble_a_one          // b shorter — a > b
 
 _vc_zero:
-    lda #0
-    jmp postamble
+    jmp postamble_a_zero
 
 // --- Sequence (tuple/list/dict) — element-wise recursive val_cmp ------------
 // First mismatching element decides; if all common-prefix elements match,
@@ -437,9 +425,7 @@ _vc_array_a_end:
     lda B2
     ora B3
     beq _vc_zero                 // both ended together → equal
-    lda #$FF                     // a is shorter
-    jmp postamble
+    jmp postamble_a_ff           // a is shorter
 
 _vc_array_b_end:
-    lda #1
-    jmp postamble
+    jmp postamble_a_one

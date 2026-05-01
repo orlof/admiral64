@@ -74,49 +74,169 @@ _blen_2byte:
     jmp postamble
 
 // =============================================================================
-// builtin_range(n) — list of integers 0..n-1.
-//   in:   1 RS arg = n (TYPE_INT, low byte used; cap 255).
-//   out:  RV = TYPE_LIST.
+// builtin_range — Python-style range, bignum-aware.
+//   range(end)              → list of ints 0..end-1
+//   range(start, end)       → list of ints start..end-1
+//   range(start, end, step) → start, start+step, ... while in range
+//
+// All args must be TYPE_INT. step == 0 returns an empty list (no infinite
+// loop). Direction is taken from sgn(step): step > 0 continues while
+// current < end; step < 0 continues while current > end.
+//
+// Mirrors DCPU Admiral's `built_in_range` (builtin.dasm16:158). The loop
+// uses val_cmp + int_add so arbitrarily large ints work.
+//
+// Register plan during the loop:
+//   B0:B1 = current handle (re-set each iter to int_add's result)
+//   B2:B3 = end handle (constant)
+//   B4:B5 = step handle (constant)
+//   B6    = target val_cmp byte  ($FF for asc, $01 for desc)
+// `end`, `step`, `list` also live on RS so GC sees them; current rides
+// through preamble/postamble via B0:B1 (B regs are callee-saved).
 // =============================================================================
 builtin_range:
-    jsr preamble_call_1_1_w0
-    jsr deref_W0_to_W2
-    ldy #0
-    lda (W2),y
-    sta B0                       // B0 = n
+    preamble_call(1, 3)
 
-    // Empty list as the accumulator.
+    // --- Resolve start, end, step from argv based on count (B7) ---
+    lda B7
+    cmp #1
+    bne _br_args_2plus
+
+    // 1-arg form: start = INT_0, end = arg0, step = INT_1.
+    arg_get(0, B2)               // end = arg0  (writes B2:B3)
+    lda #<INT_0
+    sta B0
+    lda #>INT_0
+    sta B1
+    jmp _br_step_default
+
+_br_args_2plus:
+    arg_get(0, B0)               // start = arg0 (writes B0:B1)
+    arg_get(1, B2)               // end   = arg1 (writes B2:B3)
+    lda B7
+    cmp #3
+    bne _br_step_default
+    arg_get(2, B4)               // step  = arg2 (writes B4:B5)
+    jmp _br_typecheck
+
+_br_step_default:
+    lda #<INT_1
+    sta B4
+    lda #>INT_1
+    sta B5
+
+_br_typecheck:
+    // All three handles must be TYPE_INT.
+    lda B0
+    sta W0
+    lda B1
+    sta W0+1
+    jsr _br_check_int
+    lda B2
+    sta W0
+    lda B3
+    sta W0+1
+    jsr _br_check_int
+    lda B4
+    sta W0
+    lda B5
+    sta W0+1
+    jsr _br_check_int
+
+    // --- Determine target cmp byte from sgn(step) ---
+    lda B4
+    sta W0
+    lda B5
+    sta W0+1
+    jsr deref_W0_to_W2           // A = O_LEN (byte) of step's payload
+    sta B7                       // B7 free now (arity dispatch done)
+    cmp #0
+    beq _br_step_zero            // O_LEN==0 should never happen, treat as 0
+    tay
+_br_zero_check:
+    dey
+    lda (W2),y
+    bne _br_step_nonzero
+    cpy #0
+    bne _br_zero_check
+    // All bytes zero → step is 0; return empty list immediately.
+_br_step_zero:
     lda #0
     jsr list_alloc               // RV = empty list
-    rs_push(RV)                  // RS: [n_arg, list]
+    jmp postamble                // postamble preserves RV
 
+_br_step_nonzero:
+    // MSB sign bit at (W2)[O_LEN-1] determines direction.
+    ldy B7
+    dey
+    lda (W2),y
+    bmi _br_neg_step
+    lda #$FF                     // step > 0 → continue while curr < end
+    .byte $2C                    // BIT abs — skip the next `lda #$01`
+_br_neg_step:
+    lda #$01                     // step < 0 → continue while curr > end
+    sta B6
+
+    // --- Allocate empty list and enter the main loop ---
     lda #0
-    sta B1                       // B1 = i
+    jsr list_alloc               // RV = empty list
+    rs_push(RV)                  // RS: [args_tuple, list]
 
-_brange_loop:
+_br_loop:
+    // val_cmp(current, end) → A
+    lda B0
+    sta W0
     lda B1
-    cmp B0
-    beq _brange_done
+    sta W0+1
+    rs_push(W0)
+    lda B2
+    sta W0
+    lda B3
+    sta W0+1
+    rs_push(W0)
+    jsr val_cmp                  // consumes 2; A = $FF/$00/$01
+    cmp B6
+    bne _br_done
 
-    // Allocate int(i) — 1 byte payload.
-    lda #1
-    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
+    // list.append(list, current)
+    rs_peek(W0)                  // W0 = list (TOS)
+    rs_push(W0)
+    lda B0
+    sta W0
     lda B1
-    ldy #0
-    sta (W2),y
+    sta W0+1
+    rs_push(W0)
+    jsr list_append              // consumes 2
 
-    // Append: rs_peek(list); rs_push(list); rs_push(int); jsr list_append.
-    rs_peek(W0)                  // W0 = list (top)
-    rs_push(W0)                  // RS: [..., list, list_copy]
-    rs_push(RV)                  // RS: [..., list, list_copy, int]
-    jsr list_append              // consumes 2 → RS: [..., list]
+    // current = int_add(current, step)
+    lda B0
+    sta W0
+    lda B1
+    sta W0+1
+    rs_push(W0)
+    lda B4
+    sta W0
+    lda B5
+    sta W0+1
+    rs_push(W0)
+    jsr int_add                  // consumes 2; RV = new int
+    lda RV
+    sta B0
+    lda RV+1
+    sta B1
+    jmp _br_loop
 
-    inc B1
-    jmp _brange_loop
+_br_done:
+    jmp postamble_pop_rv         // RV = list
 
-_brange_done:
-    rs_pop(RV)                   // RV = the assembled list
-    jmp postamble
+_br_check_int:
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_INT
+    beq !ok+
+    jmp panic_type
+!ok:
+    rts
 
 // =============================================================================
 // builtin_bool(x) — coerce any value to TRUE/FALSE via val_truthy.
@@ -144,35 +264,28 @@ builtin_abs:
     beq _babs_passthrough        // bool is non-negative by construction
     cmp #TYPE_FLOAT
     beq _babs_float
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 _babs_int:
-    arg_get(0, W0)
-    jsr deref_W0_to_W2
+    jsr arg0_w0_deref
     jsr sign_byte_W2             // A = $00 if non-neg, $FF if neg
     cmp #$00
     beq _babs_passthrough
-    arg_get(0, W0)
-    rs_push(W0)
+    jsr arg0_w0_push
     jsr int_negate               // consumes pushed arg, RV = magnitude
     jmp postamble
 
 _babs_passthrough:
-    arg_get(0, RV)
-    jmp postamble
+    jmp postamble_arg0_rv
 
 _babs_float:
     // Packed MS-Basic float: byte 1 of payload holds (sign|mantissa-msb).
     // Bit 7 = sign. If clear, already non-negative.
-    arg_get(0, W0)
-    jsr deref_W0_to_W2
+    jsr arg0_w0_deref
     ldy #1
     lda (W2),y
     bpl _babs_passthrough
-    arg_get(0, W0)
-    rs_push(W0)
+    jsr arg0_w0_push
     jsr float_neg                // RV = -x (positive)
     jmp postamble
 
@@ -187,9 +300,7 @@ builtin_chr:
     beq _bchr_ok
     cmp #TYPE_BOOL
     beq _bchr_ok
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 _bchr_ok:
     jsr deref_W0_to_W2
     ldy #0
@@ -221,16 +332,12 @@ builtin_ord:
     lda (W0),y
     cmp #TYPE_STR
     beq _bord_ok
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 _bord_ok:
     jsr deref_W0_to_W2           // W2 = payload, A = O_LEN low
     cmp #1
     beq _bord_have
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 _bord_have:
     ldy #0
     lda (W2),y
@@ -273,31 +380,25 @@ builtin_int:
     beq _bint_from_float
     cmp #TYPE_STR
     beq _bint_from_str
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 _bint_passthrough:
-    arg_get(0, RV)
-    jmp postamble
+    jmp postamble_arg0_rv
 
 _bint_from_bool:
-    arg_get(0, W0)
-    jsr deref_W0_to_W2
+    jsr arg0_w0_deref
     ldy #0
     lda (W2),y
     sta B0
     jmp postamble_set_rv_int_b0
 
 _bint_from_float:
-    arg_get(0, W0)
-    rs_push(W0)
+    jsr arg0_w0_push
     jsr float_to_int                 // consumes pushed arg, RV = INT
     jmp postamble
 
 _bint_from_str:
-    arg_get(0, W0)
-    jsr deref_W0_to_W2               // W2 = payload, A = len
+    jsr arg0_w0_deref               // W2 = payload, A = len
     sta B1                           // B1 = len
     beq _bint_value_error            // empty string
 
@@ -331,9 +432,7 @@ _bint_str_done:
     jmp postamble
 
 _bint_value_error:
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 // =============================================================================
 // builtin_float(x) — coerce INT / BOOL / FLOAT / STR to TYPE_FLOAT.
@@ -353,23 +452,18 @@ builtin_float:
     beq _bflt_from_int                // bool's 1-byte payload reads correctly as int
     cmp #TYPE_STR
     beq _bflt_from_str
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 _bflt_passthrough:
-    arg_get(0, RV)
-    jmp postamble
+    jmp postamble_arg0_rv
 
 _bflt_from_int:
-    arg_get(0, W0)
-    rs_push(W0)
+    jsr arg0_w0_push
     jsr int_to_float
     jmp postamble
 
 _bflt_from_str:
-    arg_get(0, W0)
-    rs_push(W0)
+    jsr arg0_w0_push
     jsr str_to_float
     jmp postamble
 
@@ -429,26 +523,20 @@ builtin_str:
 !next:
     jmp _bstr_type_err
 _bstr_type_err:
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 _bstr_passthrough:
-    arg_get(0, RV)
-    jmp postamble
+    jmp postamble_arg0_rv
 _bstr_int:
-    arg_get(0, W0)
-    rs_push(W0)
+    jsr arg0_w0_push
     jsr int_to_str                   // consumes pushed arg, RV = STR
     jmp postamble
 _bstr_float:
-    arg_get(0, W0)
-    rs_push(W0)
+    jsr arg0_w0_push
     jsr float_to_str
     jmp postamble
 _bstr_bool:
-    arg_get(0, W0)
-    jsr deref_W0_to_W2
+    jsr arg0_w0_deref
     ldy #0
     lda (W2),y
     bne _bstr_bool_true
@@ -902,9 +990,7 @@ builtin_rnd:
     jmp postamble
 
 _brnd_panic_type:
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 _brnd_bounded:
     // Validate arg[0] type. INT or FLOAT only — BOOL / STR / etc. panic.
@@ -930,16 +1016,14 @@ _brnd_arg0_ok:
     beq _brnd_one_float
 
     // rnd(end) INT: random_of_size(end_payload_len + 1) % end.
-    arg_get(0, W0)
-    jsr deref_W0_to_W2
+    jsr arg0_w0_deref
     sta B0                            // B0 = end's payload byte length
     clc
     lda B0
     adc #1
     jsr _brnd_alloc_rand              // RV = rand INT, (B0+1) bytes
     rs_push(RV)                       // RS: [args, rand]
-    arg_get(0, W0)
-    rs_push(W0)                       // RS: [args, rand, end]
+    jsr arg0_w0_push                       // RS: [args, rand, end]
     jsr int_mod                       // RV = rand % end
     jmp postamble
 
@@ -947,8 +1031,7 @@ _brnd_one_float:
     // rnd(end) FLOAT: result = float_random() * end.
     jsr float_random
     rs_push(RV)                       // RS: [args, frnd]
-    arg_get(0, W0)
-    rs_push(W0)                       // RS: [args, frnd, end]
+    jsr arg0_w0_push                       // RS: [args, frnd, end]
     jsr float_mul
     jmp postamble
 
@@ -1100,14 +1183,11 @@ _bs_apply:
     bne !panic+
     jmp _bsort_list
 !panic:
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 _bsort_str:
     // Clone via `array_repeat` with n=1.
-    arg_get(0, W0)
-    rs_push(W0)
+    jsr arg0_w0_push
     rs_push_const(INT_1)
     jsr array_repeat                  // RV = clone (TYPE_STR)
     rs_push(RV)                       // RS: [args_tuple, clone]
@@ -1120,12 +1200,10 @@ _bsort_str:
     lda W2+1
     sta W3+1                          // W3 = clone payload
     jsr _bsort_bytes
-    rs_pop(RV)                        // RV = clone (sorted)
-    jmp postamble
+    jmp postamble_pop_rv              // RV = clone (sorted)
 
 _bsort_tuple:
-    arg_get(0, W0)
-    rs_push(W0)
+    jsr arg0_w0_push
     rs_push_const(INT_1)
     jsr array_repeat                  // RV = clone (TYPE_TUPLE preserved)
     rs_push(RV)
@@ -1137,21 +1215,18 @@ _bsort_tuple:
     lda W2+1
     sta W3+1
     jsr _bsort_handles
-    rs_pop(RV)
-    jmp postamble
+    jmp postamble_pop_rv
 
 _bsort_list:
     // In-place. Set up W3 = payload, B0 = count, then sort.
-    arg_get(0, W0)
-    jsr deref_W0_to_W2
+    jsr arg0_w0_deref
     sta B0
     lda W2
     sta W3
     lda W2+1
     sta W3+1
     jsr _bsort_handles
-    arg_get(0, RV)                    // return same list handle
-    jmp postamble
+    jmp postamble_arg0_rv             // return same list handle
 
 // Insertion sort over bytes at (W3),y for y in 0..B0-1.
 // Clobbers: A, X, Y, B1..B4.
@@ -1414,9 +1489,7 @@ builtin_hex:
     beq !ok+
     cmp #TYPE_BOOL
     beq !ok+
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 !ok:
 
     jsr deref_W0_to_W2                 // W2 = payload, A = O_LEN
@@ -1427,14 +1500,12 @@ builtin_hex:
     bmi _bhex_negative
 
     // Positive — magnitude IS the original. Push it for uniform re-deref below.
-    arg_get(0, W0)
-    rs_push(W0)                         // RS: [args_tuple, magnitude=orig]
+    jsr arg0_w0_push                         // RS: [args_tuple, magnitude=orig]
     jmp _bhex_have_mag
 
 _bhex_negative:
     // Negate to get magnitude, root it on RS for GC.
-    arg_get(0, W0)
-    rs_push(W0)
+    jsr arg0_w0_push
     jsr int_negate
     rs_push(RV)                         // RS: [args_tuple, magnitude]
     rs_peek(W0)
@@ -1634,9 +1705,7 @@ builtin_cursor:
     beq _bcur_get
     cmp #2
     beq _bcur_set
-    lda #ERR_ARITY
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_arity
 
 _bcur_set:
     arg_get(0, W0)
@@ -1684,8 +1753,7 @@ _bcur_get:
     lda #1
     jsr tuple_set_leaf           // tuple[1] = row
 
-    rs_peek(RV)                  // RV = tuple
-    jmp postamble
+    jmp postamble_peek_rv        // RV = tuple
 
 
 // _bcur_alloc_int_b0 — allocate a 1-byte INT containing B0.
@@ -1754,9 +1822,7 @@ builtin_format:
     bcs _bfmt_panic                   // convention); ≥20 is a real error
     jmp postamble_return_none
 _bfmt_panic:
-    lda #ERR_DISK
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_disk
 
 
 // =============================================================================
@@ -1800,13 +1866,9 @@ builtin_load:
     jmp postamble
 
 _bld_type_err:
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 _bld_disk_err:
-    lda #ERR_DISK
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_disk
 
 
 // =============================================================================
@@ -1853,13 +1915,9 @@ builtin_save:
     jmp postamble_return_none
 
 _bsv_type_err:
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 _bsv_disk_err:
-    lda #ERR_DISK
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_disk
 
 
 // =============================================================================
@@ -1913,14 +1971,10 @@ _brm_copy_done:
     jmp postamble_return_none
 
 _brm_type_err:
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 _brm_disk_err:
-    lda #ERR_DISK
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_disk
 
 
 // =============================================================================
@@ -1948,9 +2002,7 @@ builtin_dir:
     jmp postamble
 
 _bdir_disk_err:
-    lda #ERR_DISK
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_disk
 
 
 // =============================================================================
@@ -2024,12 +2076,9 @@ builtin_input:
     lda (W0),y
     cmp #TYPE_STR
     beq _bin_print_prompt
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 _bin_print_prompt:
-    arg_get(0, W0)
-    rs_push(W0)
+    jsr arg0_w0_push
     jsr print_str
 
 _bin_alloc_buf:
@@ -2123,8 +2172,7 @@ _bin_return:
     lda #$0D
     jsr screen_put_char
 
-    rs_peek(RV)
-    jmp postamble
+    jmp postamble_peek_rv
 
 
 // =============================================================================
@@ -2177,8 +2225,7 @@ builtin_edit:
     beq _bedit_arg_str_ok
     jmp _bedit_panic_type
 _bedit_arg_str_ok:
-    arg_get(0, W0)
-    jsr deref_W0_to_W2                // W2 = arg payload, A:X = O_LEN word
+    jsr arg0_w0_deref                // W2 = arg payload, A:X = O_LEN word
     sta B4                             // B4:B5 = remaining bytes (word)
     stx B5
     lda W2
@@ -2444,15 +2491,13 @@ _bedit_save_post_step:
     jmp _bedit_save_post_loop
 
 _bedit_finish:
-    rs_peek(RV)                        // RV = result (top of RS)
-    jmp postamble
+    jmp postamble_peek_rv              // RV = result (top of RS)
 
 _bedit_cancel:
     jsr screen_clear
     lda B7
     beq _bedit_cancel_empty
-    arg_get(0, RV)
-    jmp postamble
+    jmp postamble_arg0_rv
 _bedit_cancel_empty:
     lda #0
     sta ALLOC_SIZE
@@ -2461,9 +2506,7 @@ _bedit_cancel_empty:
     jmp postamble
 
 _bedit_panic_type:
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 
 // =============================================================================
@@ -2551,8 +2594,7 @@ builtin_str_find:
     preamble_call(2, 4)
 
     // Cache me's length first — needed for negative-index normalization.
-    arg_get(0, W0)
-    jsr deref_W0_to_W2                // A:X = me_len word
+    jsr arg0_w0_deref                // A:X = me_len word
     sta B0
     stx B1                            // B0:B1 = me_len
 
@@ -2790,8 +2832,7 @@ builtin_str_endswith:
 builtin_str_split:
     preamble_call(1, 2)
 
-    arg_get(0, W0)
-    rs_push(W0)                       // RS: [tuple, me]
+    jsr arg0_w0_push                       // RS: [tuple, me]
 
     lda B7
     cmp #1
@@ -2822,16 +2863,12 @@ _bsp_sep_body:
     jsr deref_W1_to_W3                // W3=sep payload, A:X = sep_len word
     cpx #0
     beq _bsp_sep_ok                   // sep < 256 — required (sep is short)
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 _bsp_sep_ok:
     tax                               // refresh N/Z from A (cpx above set Z=1)
     sta B2                            // B2 = sep_len byte
     bne !ok+
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 !ok:
 
     // Allocate empty list (capacity 0). _array_alloc_init clobbers B0,
@@ -2917,8 +2954,7 @@ _bsp_done:
     sta B5
     jsr _bsp_emit_segment
 
-    rs_peek(RV)
-    jmp postamble
+    jmp postamble_peek_rv
 
 // Helper: alloc TYPE_STR of (B4:B5)-(B6:B7) bytes, copy me[B6:B7..B4:B5]
 // into it, append to list. Caller's RS at entry: [args_tuple, me, sep, list].
@@ -3077,8 +3113,7 @@ _bsp_ws_emit:
     jmp _bsp_ws_skip
 
 _bsp_ws_done:
-    rs_peek(RV)                       // RV = list (TOS)
-    jmp postamble
+    jmp postamble_peek_rv             // RV = list (TOS)
 
 // --- str.replace(old, new) — replace all occurrences. ----------------------
 //   in:  args = (me, old, new)   all TYPE_STR
@@ -3095,8 +3130,7 @@ builtin_str_replace:
     // After this, RS: [args_tuple, me, old, new] — same depth scheme as v1's
     // [me, old, new], so the rest of the body reads each slot via familiar
     // peek_at offsets without any args-tuple awareness.
-    arg_get(0, W0)
-    rs_push(W0)
+    jsr arg0_w0_push
     arg_get(1, W0)
     rs_push(W0)
     arg_get(2, W0)
@@ -3117,24 +3151,18 @@ builtin_str_replace:
     jsr deref_W1_to_W3                // A:X = old_len, W3 = old payload
     cpx #0
     beq _bsr_old_len_ok
-    lda #ERR_OOM
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_oom
 _bsr_old_len_ok:
     tax                               // refresh N/Z from A (cpx above set Z=1)
     sta B2
     bne !ok+                          // empty old → ERR_TYPE
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 !ok:
     rs_peek(W0)                       // new
     jsr deref_W0_to_W2                // A:X = new_len, W2 = new payload
     cpx #0
     beq _bsr_new_len_ok
-    lda #ERR_OOM
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_oom
 _bsr_new_len_ok:
     sta B3
 
@@ -3355,8 +3383,7 @@ _bsr_p2byte:
     jmp _bsr_p2
 
 _bsr_p2d:
-    rs_peek(RV)
-    jmp postamble
+    jmp postamble_peek_rv
 
 
 // Leaf helper: compare (W2 + B4:B5)[0..B2-1] vs W3[0..B2-1].
@@ -3518,9 +3545,7 @@ builtin_list_pop:
     lda B0
     ora B1
     bne _bpop_have
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 _bpop_have:
     // 16-bit dec: B0:B1 = new O_LEN = idx of element to remove.
     lda B0
@@ -3683,8 +3708,7 @@ builtin_dict_create:
     rs_push(W0)                       // RS: [..., me, new, new, "_", me]
     jsr dict_set                      // consumes top 3; RS: [args_tuple, me, new]
 
-    rs_peek(RV)                       // RV = new (slot 0)
-    jmp postamble
+    jmp postamble_peek_rv             // RV = new (slot 0)
 
 // =============================================================================
 // try_builtin_lookup — TST-driven name → impl-address lookup for free-function
@@ -3825,8 +3849,7 @@ _mlu_match:
     iny
     lda (W0),y
     sta RV+1
-    lda #1
-    jmp postamble
+    jmp postamble_a_one
 
 // --- Per-type method tables -------------------------------------------------
 // Each entry: 2-byte name_handle + 2-byte impl_addr. _method_lookup matches

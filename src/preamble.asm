@@ -273,9 +273,7 @@ _pcs_done:
     rts
 
 _pcs_panic:
-    lda #ERR_ARITY
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_arity
 
 // -----------------------------------------------------------------------------
 // preamble_call_1_1_w0 — common opener for 1-arg builtins:
@@ -331,6 +329,41 @@ postamble_return_none:
 postamble_set_rv_ax:
     sta RV
     stx RV+1
+    jmp postamble
+
+// postamble_peek_rv — read top of RS into RV (without popping), then fall
+// through. Saves 3 bytes per use vs `rs_peek(RV) ; jmp postamble`.
+postamble_peek_rv:
+    jsr rs_peek_rv
+    jmp postamble
+
+// postamble_pop_rv — pop top of RS into RV, then fall through to postamble.
+// Saves 3 bytes per use vs `rs_pop(RV) ; jmp postamble`.
+postamble_pop_rv:
+    jsr rs_pop_rv
+    jmp postamble
+
+// postamble_arg0_rv — write the call's first arg into RV, then fall through.
+// Saves 5 bytes per use vs `arg_get(0, RV) ; jmp postamble`.
+postamble_arg0_rv:
+    ldy #0
+    jsr arg_get_rv          // A is left in arg-deref's terminal state, but
+                            // arg0_rv callers consume RV — the byte return
+                            // bag below pha's whatever lands here.
+
+// postamble_a_ff / _one / _zero — load a byte constant into A and fall through
+// to postamble. Used by val_eq / val_cmp / val_truthy to return $FF / $01 / $00
+// as a byte. The .byte $2C is `BIT abs` — it consumes the next 2 bytes (the
+// following `lda #N` opcode + operand) as a harmless absolute-address read,
+// leaving A untouched, so each upstream entry skips the lower entries.
+postamble_a_ff:
+    lda #$FF
+    .byte $2C
+postamble_a_one:
+    lda #1
+    .byte $2C
+postamble_a_zero:
+    lda #0
 
 // -----------------------------------------------------------------------------
 // postamble — restore caller state and return.

@@ -123,6 +123,33 @@ boot:
     jmp repl_main
 
 // -----------------------------------------------------------------------------
+// panic_<code> — load A with the ERR_* code, then fall through to a shared
+// `sta ERROR_CODE ; jmp error_handler` tail. Saves 4 bytes per use vs the
+// inline 3-instruction panic. The `.byte $2C` between entries is `BIT abs`
+// which consumes the next 2 bytes (`lda #N`) as a harmless absolute-address
+// read, leaving A untouched and threading control through to the tail.
+// -----------------------------------------------------------------------------
+panic_arity:
+    lda #ERR_ARITY
+    .byte $2C
+panic_disk:
+    lda #ERR_DISK
+    .byte $2C
+panic_div_zero:
+    lda #ERR_DIV_ZERO
+    .byte $2C
+panic_oom:
+    lda #ERR_OOM
+    .byte $2C
+panic_lex:
+    lda #ERR_LEX
+    .byte $2C
+panic_type:
+    lda #ERR_TYPE       // panic-helper terminal entry — fall through
+    sta ERROR_CODE
+    jmp error_handler
+
+// -----------------------------------------------------------------------------
 // error_handler — panic sink. Callers store an ERR_* code in ERROR_CODE then
 // JMP here. We recover by:
 //   1. Restoring HW SP, FP, RSP, FSP from the snapshot the REPL captured at

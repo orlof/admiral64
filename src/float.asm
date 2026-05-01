@@ -245,6 +245,12 @@ _fp_alloc_and_pack:
     jsr deref_RV_to_W2
     jmp _fp_pack_from_fac1   // tail-call: rts back to our caller
 
+// _fp_alloc_pack_post — `jsr _fp_alloc_and_pack ; jmp postamble` shortcut.
+// Saves 3 bytes per use across the 10 float builtins that pack and return.
+_fp_alloc_pack_post:
+    jsr _fp_alloc_and_pack
+    jmp postamble
+
 // -----------------------------------------------------------------------------
 // float_alloc — empty TYPE_FLOAT (5 zero bytes — canonical zero).
 //   in:  (none)
@@ -286,22 +292,19 @@ float_add:
     preamble_args(2, 0)
     jsr _fp_load_left_right
     basic_binop(BASIC_FADDT)
-    jsr _fp_alloc_and_pack
-    jmp postamble
+    jmp _fp_alloc_pack_post
 
 float_sub:
     preamble_args(2, 0)
     jsr _fp_load_left_right
     basic_binop(BASIC_FSUBT)
-    jsr _fp_alloc_and_pack
-    jmp postamble
+    jmp _fp_alloc_pack_post
 
 float_mul:
     preamble_args(2, 0)
     jsr _fp_load_left_right
     basic_binop(BASIC_FMULTT)
-    jsr _fp_alloc_and_pack
-    jmp postamble
+    jmp _fp_alloc_pack_post
 
 float_div:
     preamble_args(2, 0)
@@ -311,14 +314,11 @@ float_div:
     // before BASIC's own div-by-zero handler can take us to its error vector.
     lda FAC1
     bne _fdiv_ok
-    lda #ERR_DIV_ZERO
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_div_zero
 _fdiv_ok:
 
     basic_binop(BASIC_FDIVT)
-    jsr _fp_alloc_and_pack
-    jmp postamble
+    jmp _fp_alloc_pack_post
 
 // -----------------------------------------------------------------------------
 // _basic_zp_save / _basic_zp_restore — bracket every BASIC-ROM call so its
@@ -370,8 +370,7 @@ float_pow:
     preamble_args(2, 0)
     jsr _fp_load_left_right
     basic_binop(BASIC_FPWRT)
-    jsr _fp_alloc_and_pack
-    jmp postamble
+    jmp _fp_alloc_pack_post
 
 // -----------------------------------------------------------------------------
 // float_floordiv — FAC1 = floor(a/b). FDIVT alone is safe; INT does not call
@@ -388,14 +387,11 @@ float_floordiv:
     // Divisor is FAC1 here; reject zero up front.
     lda FAC1
     bne _ffd_ok
-    lda #ERR_DIV_ZERO
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_div_zero
 _ffd_ok:
     basic_binop(BASIC_FDIVT)         // FAC1 = a / b
     basic_call(BASIC_INT)            // FAC1 = floor(FAC1)
-    jsr _fp_alloc_and_pack
-    jmp postamble
+    jmp _fp_alloc_pack_post
 
 // -----------------------------------------------------------------------------
 // float_mod — Python-style float `%`: a - floor(a/b) * b. RS [a, b] is left
@@ -411,9 +407,7 @@ float_mod:
 
     lda FAC1
     bne _fmod_ok
-    lda #ERR_DIV_ZERO
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_div_zero
 _fmod_ok:
     basic_binop(BASIC_FDIVT)         // FAC1 = a / b
     basic_call(BASIC_INT)            // FAC1 = floor(a/b)
@@ -430,8 +424,7 @@ _fmod_ok:
     jsr _fp_unpack_to_fac2
     basic_binop(BASIC_FSUBT)         // FAC1 = a - floor(a/b)*b
 
-    jsr _fp_alloc_and_pack
-    jmp postamble
+    jmp _fp_alloc_pack_post
 
 // -----------------------------------------------------------------------------
 // float_neg — V4' negation. Uses BASIC NEGOP, which just toggles FAC1's
@@ -448,8 +441,7 @@ float_neg:
 
     basic_call(BASIC_NEGOP)
 
-    jsr _fp_alloc_and_pack
-    jmp postamble
+    jmp _fp_alloc_pack_post
 
 // -----------------------------------------------------------------------------
 // float_random — return a TYPE_FLOAT in [0, 1).
@@ -510,18 +502,15 @@ float_cmp:
 
     lda FAC1
     bne _fc_nonzero
-    lda #0
-    jmp postamble
+    jmp postamble_a_zero
 
 _fc_nonzero:
     lda FAC1+5
     bmi _fc_neg
-    lda #1
-    jmp postamble
+    jmp postamble_a_one
 
 _fc_neg:
-    lda #$FF
-    jmp postamble
+    jmp postamble_a_ff
 
 // -----------------------------------------------------------------------------
 // int_to_float — V4' conversion: TYPE_INT → TYPE_FLOAT.
@@ -621,8 +610,7 @@ _i2f_apply_sign:
     basic_call(BASIC_NEGOP)
 
 _i2f_pack:
-    jsr _fp_alloc_and_pack
-    jmp postamble
+    jmp _fp_alloc_pack_post
 
 _i2f_zero_input:
     // Length 0: produce zero float.
@@ -632,8 +620,7 @@ _i2f_zfac:
     sta FAC1,x
     dex
     bpl _i2f_zfac
-    jsr _fp_alloc_and_pack
-    jmp postamble
+    jmp _fp_alloc_pack_post
 
 // -----------------------------------------------------------------------------
 // float_to_int — V4' conversion: TYPE_FLOAT → TYPE_INT (truncated toward zero).

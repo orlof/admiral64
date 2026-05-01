@@ -34,9 +34,7 @@ int_divmod:
     ldy #0
     lda (W3),y
     bne div_b_nonzero
-    lda #ERR_DIV_ZERO
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_div_zero
 div_b_nonzero:
 
     // --- Signs of a and b ---

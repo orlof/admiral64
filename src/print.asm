@@ -136,8 +136,7 @@ print_value:
     bne !not_str+
     rs_peek(W0)
     rs_push(W0)
-    jsr print_str
-    jmp postamble
+    jmp _print_str_post
 !not_str:
     cmp #TYPE_BOOL
     bne !not_bool+
@@ -150,18 +149,15 @@ print_value:
     cmp #>TRUE
     bne !is_false+
     rs_push_const(STR_TRUE)
-    jsr print_str
-    jmp postamble
+    jmp _print_str_post
 !is_false:
     rs_push_const(STR_FALSE)
-    jsr print_str
-    jmp postamble
+    jmp _print_str_post
 !not_bool:
     cmp #TYPE_NONE
     bne !not_none+
     rs_push_const(STR_NONE)
-    jsr print_str
-    jmp postamble
+    jmp _print_str_post
 !not_none:
     cmp #TYPE_FLOAT
     bne !not_float+
@@ -169,8 +165,7 @@ print_value:
     rs_push(W0)
     jsr float_to_str
     rs_push(RV)
-    jsr print_str
-    jmp postamble
+    jmp _print_str_post
 !not_float:
     // Anything else (LIST, TUPLE, DICT) — render via builtin_str then print
     // the resulting STR. _str_w0 (in builtins.asm) handles the v2-convention
@@ -178,5 +173,10 @@ print_value:
     rs_peek(W0)
     jsr _str_w0
     rs_push(RV)
-    jsr print_str                    // consumes the rendered STR
+    jmp _print_str_post              // consumes the rendered STR
+
+// _print_str_post — `jsr print_str ; jmp postamble` shortcut. Saves 3 bytes
+// per use across the polymorphic-print dispatch sites.
+_print_str_post:                              // shared tail (do not inline)
+    jsr print_str                            // [helper body — distinct comment]
     jmp postamble

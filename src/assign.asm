@@ -115,8 +115,7 @@ eval:
     jmp _ev_tuple
 !next:
     // Already a value — return it unchanged.
-    rs_pop(RV)
-    jmp postamble
+    jmp postamble_pop_rv
 
 _ev_name:
     // RS top = name (TYPE_NAME, raw byte payload). scope_get takes RS
@@ -173,9 +172,7 @@ _ev_sub:
     beq _ev_sub_arr
     cmp #TYPE_STR
     beq _ev_sub_str
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 _ev_sub_dict:
     rs_push(W0)
@@ -418,8 +415,7 @@ _ev_tup_loop:
     jmp _ev_tup_loop
 
 _ev_tup_done:
-    rs_pop(RV)                        // RV = the tuple itself
-    jmp postamble
+    jmp postamble_pop_rv               // RV = the tuple itself
 
 // =============================================================================
 // assign — generic lvalue write. Dispatches on target's H_TYPE.
@@ -460,9 +456,7 @@ assign:
     bne !err+
     jmp _as_tuple
 !err:
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 _as_str:
     // RS already in scope_set order: [name, value].
@@ -517,9 +511,7 @@ _as_sub:
     beq _as_sub_list
     cmp #TYPE_DICT
     beq _as_sub_dict
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 _as_sub_list:
     // Read int subscript (W1) into signed 16-bit (B5:B6); negative → add
@@ -596,9 +588,7 @@ _as_tuple:
     beq _as_tup_lens
     cmp #TYPE_LIST
     beq _as_tup_lens
-    lda #ERR_TYPE
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_type
 
 _as_tup_lens:
     rs_peek_at(W0, 1)
@@ -608,9 +598,7 @@ _as_tup_lens:
     jsr deref_W0_to_W2
     cmp B0
     beq _as_tup_loop_init
-    lda #ERR_ARITY
-    sta ERROR_CODE
-    jmp error_handler
+    jmp panic_arity
 
 _as_tup_loop_init:
     lda #0

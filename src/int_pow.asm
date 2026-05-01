@@ -127,5 +127,4 @@ _ipow_skip:
 
     // Done. Pop p (discard), pop r into RV.
     rs_drop(1)
-    rs_pop(RV)
-    jmp postamble
+    jmp postamble_pop_rv
