@@ -183,6 +183,21 @@ _pex_done:
 // we add.
 // -----------------------------------------------------------------------------
 parser_stmt:
+    // Run/Stop polled at every statement boundary by reading STOP_REQUESTED,
+    // which the IRQ handler updates each ~16 ms by directly polling CIA1
+    // PRB row 7 bit 7. Bit 7 set in STOP_REQUESTED → user is holding RUN/
+    // STOP → ERR_BREAK lands in the panic chain and the REPL recovers via
+    // the existing snapshot. Long inner loops in builtins won't break here
+    // — they don't re-enter parser_stmt — but tight user-level loops do
+    // every iteration.
+    //
+    // The "bit 7 set = break" encoding is deliberate: py65 has RAM default
+    // $00 at STOP_REQUESTED so tests never see a false break despite never
+    // running our IRQ.
+    bit STOP_REQUESTED
+    bpl !nostop+
+    jmp panic_break
+!nostop:
     ldx LEX_TOKEN_KIND
     lda std_hi,x
     pha
@@ -772,9 +787,11 @@ _swh_done:
 // RS layout maintained throughout: [..., var_name, container]. Both are
 // rooted (var_name is a TYPE_STR, container is a LIST / TUPLE / DICT).
 //
-// Index counter lives in B5 (1-byte; max 255 iterations — fine).
-// B7 is set to 1 when iterating a dict (so the body extracts entry[KEY])
-// and 0 for list/tuple.
+// Index counter is 16-bit in B5 (lo) + B7 (hi). Containers can have up to
+// 65535 elements, and `range(N)` for any N>255 is a common case.
+// B4 selects iteration mode (0=LIST/TUPLE, 1=DICT, 2=STR).
+// B6 is a "body_entered" flag (1 once parser_suite has run, so _sfor_done
+// knows whether the lexer is past the body or still at its start).
 // -----------------------------------------------------------------------------
 stmt_for:
     preamble_args(0, 0)
@@ -826,24 +843,37 @@ _sfor_no_nl:
     // Save lexer state at start of body so each iteration re-lexes.
     jsr lexer_save
 
-    // Counters: B5 = index, B6 = "body_entered" flag (so we know whether
-    // the lexer is currently past-body vs at-body-start when exiting).
+    // Counters: B5:B7 = 16-bit index, B6 = "body_entered" flag (so we know
+    // whether the lexer is currently past-body vs at-body-start when exiting).
     lda #0
     sta B5
     sta B6
+    sta B7
 
 _sfor_loop:
-    // Bounds check: if index >= len(container), exit.
-    rs_peek_at(W0, 0)               // W0 = container
-    rs_push(W0)                     // for array_len
-    jsr array_len                   // A = length (low byte)
+    // Bounds check: if index >= len(container), exit. Read O_LEN as 16-bit
+    // directly from the container (array_len would only return the low byte
+    // and stop us at iteration 244 for range(500)).
+    rs_peek_at(W0, 0)               // W0 = container handle
+    ldy #H_PTR
+    lda (W0),y
+    sta W2
+    iny
+    lda (W0),y
+    sta W2+1                        // W2 = payload ptr
+    ldy #O_LEN+1
+    lda (W2),y                      // A = O_LEN hi
+    cmp B7
+    bcc !exit+                      // hi(len) < hi(idx) → exit
+    bne _sfor_in_bounds             // hi(len) > hi(idx) → continue
+    ldy #O_LEN
+    lda (W2),y                      // A = O_LEN lo
     cmp B5
-    bcs !ok+
-    jmp _sfor_done                  // length < index → exit
-!ok:
-    bne !go+
-    jmp _sfor_done                  // length == index → exit
-!go:
+    bcc !exit+                      // lo(len) < lo(idx) → exit
+    bne _sfor_in_bounds             // lo(len) > lo(idx) → continue
+!exit:
+    jmp _sfor_done                  // len == idx → exit
+_sfor_in_bounds:
 
     // Dispatch on container kind (B4).
     lda B4
@@ -857,19 +887,27 @@ _sfor_loop:
     rs_push(W0)
     lda B5
     sta W2
-    lda #0
+    lda B7
     sta W2+1
-    fs_push(W2)                     // index on FS
+    fs_push(W2)                     // 16-bit index on FS
     jsr array_get                   // RV = element
     jmp _sfor_bind
 
 _sfor_str_iter:
-    // String iteration: fetch container.payload[B5] (one byte), then alloc a
-    // fresh 1-char TYPE_STR with that byte as the payload. The container is
-    // RS-rooted so it survives any GC the alloc triggers.
+    // String iteration: fetch container.payload[B7:B5] (one byte), then alloc
+    // a fresh 1-char TYPE_STR with that byte as the payload. The container is
+    // RS-rooted so it survives any GC the alloc triggers. W2 is mutated as a
+    // scratch ptr; not reused after the read.
     rs_peek_at(W0, 0)
     jsr deref_W0_to_W2              // W2 = container payload
-    ldy B5
+    clc
+    lda W2
+    adc B5
+    sta W2
+    lda W2+1
+    adc B7
+    sta W2+1
+    ldy #0
     lda (W2),y
     pha                             // save char across alloc
 
@@ -932,6 +970,9 @@ _sfor_bind:
 
 _sfor_step:
     inc B5
+    bne !next+
+    inc B7
+!next:
     jmp _sfor_loop
 
 _sfor_done:

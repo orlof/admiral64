@@ -26,18 +26,45 @@ boot:
     // below work even with KERNAL still mapped for reads.
     sei
 
+    // IRQ dispatch — two paths, same as NMI:
+    //
+    //   $01=MEM_NORMAL/IO ($34/$35) → CPU reads RAM at $FFFE → irq_handler.
+    //   $01=MEM_KERNAL/FP  ($36/$37) → CPU reads KERNAL ROM $FFFE = $FF48.
+    //                       KERNAL pushes A/X/Y, then JMP ($0314) → our stub.
+    //
+    // The stub pops KERNAL's A/X/Y, then falls through to irq_handler so the
+    // unified body sees identical state regardless of path. Without the
+    // $0314 hook, IRQs that fire during a $36/$37 window land in KERNAL's
+    // $EA31 — that runs the cursor flash + jiffy clock + SCNKEY but doesn't
+    // touch our STOP_REQUESTED, so RUN/STOP detection misses ticks.
     lda #<irq_handler
     sta $FFFE
     lda #>irq_handler
     sta $FFFF
+    lda #<irq_kernal_stub
+    sta $0314
+    lda #>irq_kernal_stub
+    sta $0315
 
-    // NMI fires on RESTORE keypress — we don't handle it, but pointing it at
-    // an RTI stub keeps the machine alive. The stub is irq_handler+rts (the
-    // last byte of irq_handler is rti — close enough for a no-op NMI path).
+    // NMI dispatch — two paths because $01 may be MEM_NORMAL or MEM_KERNAL
+    // when NMI fires:
+    //
+    //   $01=MEM_NORMAL → CPU reads RAM at $FFFA → straight to nmi_handler.
+    //   $01=MEM_KERNAL → CPU reads KERNAL ROM $FFFA → KERNAL NMI start at
+    //                    $FE43: SEI / JMP ($0318) → nmi_handler.
+    //
+    // KERNAL does NOT push A/X/Y before JMP ($0318) — its default handler at
+    // $FE47 saves them itself. Both paths therefore arrive with identical
+    // stack state (just [PC_lo, PC_hi, P] from the NMI hardware push), so a
+    // single entry point works for both.
     lda #<nmi_handler
     sta $FFFA
     lda #>nmi_handler
     sta $FFFB
+    lda #<nmi_handler
+    sta $0318
+    lda #>nmi_handler
+    sta $0319
 
     // RESET: pointer to boot, so a soft-reset re-enters us.
     lda #<boot
@@ -45,9 +72,10 @@ boot:
     lda #>boot
     sta $FFFD
 
-    // $01 = MEM_NORMAL ($35): BASIC out, KERNAL out, I/O at $D000. Steady
-    // state. Kbd-getchar and the IRQ handler temporarily flip to $36; FP
-    // wrappers flip to $37.
+    // $01 = MEM_NORMAL ($34): BASIC out, KERNAL out, $D000-$DFFF is RAM
+    // (HIRAM=0 AND LORAM=0 makes CHAREN moot — full RAM). Steady state.
+    // Code that needs I/O temporarily flips to MEM_IO ($35); kbd-getchar
+    // and irq_handler use $36 (KERNAL+I/O); FP wrappers use $37 (full ROM).
     lda #MEM_NORMAL
     sta $01
 
@@ -129,6 +157,9 @@ boot:
 // which consumes the next 2 bytes (`lda #N`) as a harmless absolute-address
 // read, leaving A untouched and threading control through to the tail.
 // -----------------------------------------------------------------------------
+panic_break:
+    lda #ERR_BREAK
+    .byte $2C
 panic_arity:
     lda #ERR_ARITY
     .byte $2C
@@ -186,6 +217,13 @@ error_handler:
     jsr disk_close_data
     jsr disk_close_cmd
 
+    // Clear the NMI inhibit so the next RESTORE press shows the banner again
+    // even if the panic happened mid-save/load (between inc and dec). Also
+    // clear NMI_PAUSED in case the panic hit during a banner busy-wait.
+    lda #0
+    sta PAUSE_BLOCKED
+    sta NMI_PAUSED
+
     // Newline so the message starts on a fresh row regardless of how far
     // the panicking print got.
     lda #$0D
@@ -235,21 +273,29 @@ _err_nibble:
     jmp screen_put_char
 
 // -----------------------------------------------------------------------------
-// irq_handler — RAM-resident IRQ vector since KERNAL is normally banked out.
+// irq_handler — RAM-resident IRQ vector. Two entry paths:
 //
-// On entry the CPU has pushed PC + P; it has NOT pushed A/X/Y. We do that
-// ourselves, then flip $01 to MEM_KERNAL ($36) so KERNAL ROM at $E000-$FFFF
-// is mapped back in (writes to $01 stay valid since the underlying register
-// is not banked). Inside the bank, JSR KERNAL_SCNKEY ($EA87) does what
-// KERNAL's normal IRQ handler does for keyboard scan: read the matrix,
-// decode, push PETSCII into the $0277 ringbuf, update the modifier latch.
-// Then read $DC0D to ack the CIA1 timer-A IRQ source — without this, the
-// IRQ line stays asserted and we re-enter immediately.
+//   1. Direct, via $FFFE in RAM ($01 has HIRAM=0): hardware pushes only
+//      [PC, P]; A/X/Y still hold pre-IRQ values. Enter at irq_handler and
+//      our PHA/TXA/PHA/TYA/PHA saves them.
 //
-// We deliberately don't run KERNAL's full IRQ ($EA31): it ends with
-// JMP $EA81 → A/X/Y pull + RTI, which would skip our $01 restore. SCNKEY
-// is a normal JSR-RTS subroutine so we own the unwind.
+//   2. KERNAL, via $FFFE in ROM ($01 has HIRAM=1) → $FF48 → KERNAL pushes
+//      A/X/Y → JMP ($0314) → irq_kernal_stub. The stub pops KERNAL's saves
+//      back into the registers (so the values match path 1) and falls
+//      through to irq_handler, which then re-saves them. Net stack/reg
+//      state is identical for both paths past the fall-through.
+//
+// Body flips $01 to MEM_KERNAL ($36) so KERNAL ROM is mapped for the SCNKEY
+// call (and I/O is on for the direct CIA1 STOP poll + $DC0D ack). We
+// deliberately don't tail into KERNAL's full IRQ ($EA31): it ends with JMP
+// $EA81 → A/X/Y pull + RTI, which would skip our $01 restore.
 // -----------------------------------------------------------------------------
+irq_kernal_stub:
+    pla
+    tay                              // pop KERNAL's Y
+    pla
+    tax                              // pop KERNAL's X
+    pla                              // pop KERNAL's A — fall through with A live
 irq_handler:
     pha
     txa
@@ -258,9 +304,24 @@ irq_handler:
     pha
     lda $01
     pha
-    lda #MEM_KERNAL
+    lda #MEM_KERNAL                   // KERNAL+I/O for SCNKEY + CIA1 + $DC0D ack
     sta $01
-    jsr KERNAL_SCNKEY
+
+    // Direct STOP-key poll BEFORE SCNKEY (SCNKEY mutates PRA during its scan
+    // and KERNAL's $91 pipeline doesn't reliably reflect bare STOP holds in
+    // our context). Row 7 / col 7 of the keyboard matrix is RUN/STOP: with
+    // PRA = $7F (only row 7 driven low), PRB bit 7 is the STOP key — 0 if
+    // pressed. We latch the inverted bit at STOP_REQUESTED so parser_stmt
+    // can poll cheaply (a single ZP read) without re-entering CIA1 / KERNAL
+    // at every statement boundary.
+    lda #$7F
+    sta $DC00                         // PRA = select row 7
+    lda $DC01                         // PRB pin state
+    eor #$FF                          // invert: pressed-bit becomes 1
+    and #$80                          // keep only bit 7 → $80 if pressed, 0 if not
+    sta STOP_REQUESTED
+
+    jsr KERNAL_SCNKEY                 // populate $0277 buffer for kbd_getchar
     lda $DC0D                         // ack CIA1 timer-A IRQ source
     pla
     sta $01                           // restore prev bank
@@ -272,12 +333,203 @@ irq_handler:
     rti
 
 // -----------------------------------------------------------------------------
-// nmi_handler — bare RTI. RESTORE key fires NMI directly via hardware (CIA2
-// NMI mask doesn't gate it). We don't want any of KERNAL's NMI behavior
-// (which would BRK back to BASIC), so just dismiss the interrupt.
-// -----------------------------------------------------------------------------
+// nmi_handler — RESTORE key = pause + status banner. Press RESTORE once to
+// freeze execution and overlay a 4-word status line on row 0 (heap-free,
+// handle-table-bytes, FS depth, RS depth — each 4 hex chars in inverse video,
+// space-separated). Press RESTORE again to dismiss; row is restored from a
+// 40-byte scratch and execution resumes.
+//
+// Both entry paths ($FFFA direct via RAM, $0318 via KERNAL ROM's JMP) arrive
+// with identical stack state: only [PC_lo, PC_hi, P] from the NMI hardware
+// push. KERNAL's $FE43 entry is just SEI / JMP ($0318) — it does NOT push
+// A/X/Y, so we save them ourselves below.
+//
+// Second-press detection is a software flag, not CIA2: RESTORE on the C64
+// is wired directly to /NMI through a 555 monostable, bypassing CIA2 ICR
+// entirely — there is no flag bit that latches "RESTORE was pressed". So
+// the first invocation sets NMI_PAUSED=1 and busy-waits for it to flip;
+// the second invocation re-enters via NMI, sees NMI_PAUSED!=0, clears it
+// and RTIs, freeing the first instance's wait loop to restore the screen.
+//
+// PAUSE_BLOCKED guard: while a disk operation is in flight, $01 may be set
+// to MEM_KERNAL by a kjsr_* wrapper. Writing $D800 then hits RAM under the
+// bank, not color RAM — banner would be invisible. When PAUSE_BLOCKED != 0
+// we silently dismiss after $01 normalisation.
 nmi_handler:
+    pha
+    txa
+    pha
+    tya
+    pha
+    lda $01
+    pha
+    lda #MEM_IO                      // I/O at $D000 — steady-state $34 has no I/O
+    sta $01
+
+    lda NMI_PAUSED
+    beq _nmi_first                   // 0 → first press, draw banner & wait
+    // Second press while banner showing: clear flag and RTI; the first
+    // instance's wait loop will then exit and restore the screen.
+    lda #0
+    sta NMI_PAUSED
+    jmp _nmi_exit
+
+_nmi_first:
+    lda PAUSE_BLOCKED
+    beq _nmi_run                     // not blocked — show banner
+    jmp _nmi_exit                    // disk I/O in flight — silent dismiss
+_nmi_run:
+
+    // Save row 0 (40 chars).
+    ldy #39
+_nmi_save:
+    lda $0400,y
+    sta NMI_SCRATCH,y
+    dey
+    bpl _nmi_save
+
+    // Build banner: "nnnn nnnn nnnn nnnn" at cols 0-18, spaces 19-39.
+    sec
+    lda NEXT_HANDLE
+    sbc NEXT_DATA
+    sta W0
+    lda NEXT_HANDLE+1
+    sbc NEXT_DATA+1
+    sta W0+1
+    ldx #0
+    jsr _nmi_word_at_x
+    lda #$20
+    sta $0400+4
+
+    sec
+    lda #<HEAP_HANDLE_START
+    sbc NEXT_HANDLE
+    sta W0
+    lda #>HEAP_HANDLE_START
+    sbc NEXT_HANDLE+1
+    sta W0+1
+    ldx #5
+    jsr _nmi_word_at_x
+    lda #$20
+    sta $0400+9
+
+    // FS_END = $8400, RS_END = $8800 (literals — defined in stacks.asm but
+    // .const forward refs from admiral.asm can't resolve at this point in the
+    // single-segment build; the real defs live there for everyone else).
+    sec
+    lda #$00
+    sbc FSP
+    sta W0
+    lda #$84
+    sbc FSP+1
+    sta W0+1
+    ldx #10
+    jsr _nmi_word_at_x
+    lda #$20
+    sta $0400+14
+
+    sec
+    lda #$00
+    sbc RSP
+    sta W0
+    lda #$88
+    sbc RSP+1
+    sta W0+1
+    ldx #15
+    jsr _nmi_word_at_x
+
+    // Pad cols 19..39 with spaces.
+    ldy #19
+    lda #$20
+_nmi_pad:
+    sta $0400,y
+    iny
+    cpy #40
+    bne _nmi_pad
+
+    // Inverse-video colour overlay on row 0 (red, COLOR_RED=2).
+    lda #2
+    ldy #39
+_nmi_red:
+    sta $D800,y
+    dey
+    bpl _nmi_red
+
+    // Mark paused, then busy-wait for second RESTORE press. The second NMI
+    // re-enters this handler, clears NMI_PAUSED, and RTIs back here.
+    lda #1
+    sta NMI_PAUSED
+_nmi_wait:
+    lda NMI_PAUSED
+    bne _nmi_wait
+
+    // Restore row 0 chars and default colour.
+    ldy #39
+_nmi_restore:
+    lda NMI_SCRATCH,y
+    sta $0400,y
+    dey
+    bpl _nmi_restore
+
+    lda #COLOR_FG
+    ldy #39
+_nmi_uncolor:
+    sta $D800,y
+    dey
+    bpl _nmi_uncolor
+
+_nmi_exit:
+    pla
+    sta $01
+    pla
+    tay
+    pla
+    tax
+    pla
     rti
+
+// Helper: write 4 hex screen-codes from W0 starting at column X on row 0.
+_nmi_word_at_x:
+    lda W0+1
+    pha
+    lsr
+    lsr
+    lsr
+    lsr
+    jsr _nmi_nib
+    sta $0400,x
+    inx
+    pla
+    and #$0F
+    jsr _nmi_nib
+    sta $0400,x
+    inx
+    lda W0
+    pha
+    lsr
+    lsr
+    lsr
+    lsr
+    jsr _nmi_nib
+    sta $0400,x
+    inx
+    pla
+    and #$0F
+    jsr _nmi_nib
+    sta $0400,x
+    rts
+
+// Convert nibble 0..15 in A to screen code in upper-case charset.
+//   0..9  → $30..$39 (digits)
+//   A..F  → $01..$06 (uppercase letters)
+_nmi_nib:
+    cmp #10
+    bcc !+
+    sbc #9                           // carry already set
+    rts
+!:
+    adc #$30                         // carry clear from cmp
+    rts
 
 #import "stacks.asm"
 #import "preamble.asm"

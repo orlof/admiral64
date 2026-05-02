@@ -1833,6 +1833,7 @@ _bfmt_panic:
 // =============================================================================
 builtin_load:
     jsr preamble_call_1_1_w0          // W0 = name handle
+    inc PAUSE_BLOCKED                 // suppress NMI banner during disk op
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_STR
@@ -1863,6 +1864,7 @@ builtin_load:
     sta RV
     lda W0+1
     sta RV+1
+    dec PAUSE_BLOCKED                 // happy-path balance
     jmp postamble
 
 _bld_type_err:
@@ -1884,6 +1886,7 @@ _bld_disk_err:
 // =============================================================================
 builtin_save:
     jsr preamble_call_2_2_w0_w1       // W0 = name, W1 = obj
+    inc PAUSE_BLOCKED                 // suppress NMI banner during disk op
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_STR
@@ -1912,6 +1915,7 @@ builtin_save:
     bcs _bsv_disk_err
 
     rs_pop(W0)                        // discard obj root
+    dec PAUSE_BLOCKED                 // happy-path balance; panic paths reset via error_handler
     jmp postamble_return_none
 
 _bsv_type_err:

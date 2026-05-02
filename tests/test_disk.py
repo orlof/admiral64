@@ -271,14 +271,14 @@ def test_save_flat_string(hd):
 
 
 def test_save_flat_bool(hd):
-    records = _save_and_parse(hd, 'save("FILE", True)')
+    records = _save_and_parse(hd, 'save("FILE", true)')
     assert len(records) == 1
     assert records[0]["type"] == SS_TYPE_BOOL
     assert records[0]["data"] == b"\x01"
 
 
 def test_save_flat_none(hd):
-    records = _save_and_parse(hd, 'save("FILE", None)')
+    records = _save_and_parse(hd, 'save("FILE", none)')
     assert len(records) == 1
     assert records[0]["type"] == SS_TYPE_NONE
     assert records[0]["size"] == 0
@@ -446,13 +446,13 @@ def test_load_round_trip_empty_string(hd):
 
 def test_load_round_trip_bool(hd):
     """True/False round-trip as TYPE_BOOL with the right payload byte."""
-    h_true = _eval_handle(hd, 'save("F", True)\nload("F")')
+    h_true = _eval_handle(hd, 'save("F", true)\nload("F")')
     assert hd.mpu.memory[h_true + H_TYPE] == 0x22  # TYPE_BOOL
     obj = hd.read_word(h_true + H_PTR)
     # Bool payload is a single byte: 1 = True, 0 = False.
     assert hd.mpu.memory[obj + O_HEADER] == 1
 
-    h_false = _eval_handle(hd, 'save("F", False)\nload("F")')
+    h_false = _eval_handle(hd, 'save("F", false)\nload("F")')
     assert hd.mpu.memory[h_false + H_TYPE] == 0x22
     obj = hd.read_word(h_false + H_PTR)
     assert hd.mpu.memory[obj + O_HEADER] == 0
@@ -460,7 +460,7 @@ def test_load_round_trip_bool(hd):
 
 def test_load_round_trip_none(hd):
     """None as the root: after load, identity must equal the global NONE."""
-    handle = _eval_handle(hd, 'save("F", None)\nload("F")')
+    handle = _eval_handle(hd, 'save("F", none)\nload("F")')
     # Verify it's TYPE_NONE.
     assert hd.mpu.memory[handle + H_TYPE] == 0x23  # TYPE_NONE
 

@@ -182,7 +182,7 @@ STR_TRUE:
     .byte 0
 STR_TRUE_OBJ:
     .word 4
-    .byte $54, $72, $75, $65  // "True"
+    .byte $74, $72, $75, $65  // "true"
 
 STR_FALSE:
     .word STR_FALSE_OBJ
@@ -192,7 +192,7 @@ STR_FALSE:
     .byte 0
 STR_FALSE_OBJ:
     .word 5
-    .byte $46, $61, $6C, $73, $65  // "False"
+    .byte $66, $61, $6C, $73, $65  // "false"
 
 STR_NONE:
     .word STR_NONE_OBJ
@@ -202,7 +202,7 @@ STR_NONE:
     .byte 0
 STR_NONE_OBJ:
     .word 4
-    .byte $4E, $6F, $6E, $65  // "None"
+    .byte $6E, $6F, $6E, $65  // "none"
 
 // Built-in functions and methods are not first-class values in admiral —
 // they're never stored, passed as arguments, or returned from expressions.

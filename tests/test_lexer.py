@@ -355,7 +355,7 @@ ALL_KEYWORDS = [
     ("try", TK_TRY), ("except", TK_EXCEPT), ("finally", TK_FINALLY),
     ("raise", TK_RAISE), ("del", TK_DEL),
     ("and", TK_AND), ("or", TK_OR), ("not", TK_NOT), ("is", TK_IS),
-    ("True", TK_TRUE), ("False", TK_FALSE), ("None", TK_NONE_KW),
+    ("true", TK_TRUE), ("false", TK_FALSE), ("none", TK_NONE_KW),
 ]
 
 

@@ -209,15 +209,15 @@ def test_comparison_with_arithmetic(h):
 # --- bool / none literals ---------------------------------------------------
 
 def test_true_literal(h):
-    assert _eval_bool(h, "True") is True
+    assert _eval_bool(h, "true") is True
 
 
 def test_false_literal(h):
-    assert _eval_bool(h, "False") is False
+    assert _eval_bool(h, "false") is False
 
 
 def test_none_literal_returns_none_handle(h):
-    payload = list("None".encode("ascii"))
+    payload = list("none".encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
@@ -266,15 +266,15 @@ def test_str_plus_negative_int(h):
 
 
 def test_str_plus_bool_true(h):
-    assert _eval_str(h, '"f=" + True') == b"f=True"
+    assert _eval_str(h, '"f=" + true') == b"f=true"
 
 
 def test_str_plus_bool_false(h):
-    assert _eval_str(h, '"f=" + False') == b"f=False"
+    assert _eval_str(h, '"f=" + false') == b"f=false"
 
 
 def test_str_plus_none(h):
-    assert _eval_str(h, '"v=" + None') == b"v=None"
+    assert _eval_str(h, '"v=" + none') == b"v=none"
 
 
 def test_str_plus_list(h):
@@ -299,13 +299,13 @@ def test_str_plus_chained(h):
 # --- boolean: not / and / or ------------------------------------------------
 
 @pytest.mark.parametrize("text,expected", [
-    ("not True", False),
-    ("not False", True),
-    ("not None", True),
+    ("not true", False),
+    ("not false", True),
+    ("not none", True),
     ("not 0", True),
     ("not 1", False),
     ("not -1", False),
-    ("not not True", True),
+    ("not not true", True),
     ("not (1 < 2)", False),
     ("not 1 < 2", False),         # `not (1<2)` per std precedence
 ])
@@ -338,13 +338,13 @@ def test_or_returns_rhs_when_lhs_falsy(h):
 
 
 @pytest.mark.parametrize("text,expected", [
-    ("True and True", True),
-    ("True and False", False),
-    ("False and True", False),
-    ("True or False", True),
-    ("False or False", False),
-    ("True and True and True", True),
-    ("False or True or False", True),
+    ("true and true", True),
+    ("true and false", False),
+    ("false and true", False),
+    ("true or false", True),
+    ("false or false", False),
+    ("true and true and true", True),
+    ("false or true or false", True),
 ])
 def test_bool_chains(h, text, expected):
     assert _eval_bool(h, text) is expected
@@ -352,28 +352,28 @@ def test_bool_chains(h, text, expected):
 
 def test_and_or_precedence(h):
     """`a or b and c` is `a or (b and c)` — and binds tighter than or."""
-    assert _eval_bool(h, "True or False and False") is True
-    assert _eval_bool(h, "False or True and True") is True
-    assert _eval_bool(h, "False or True and False") is False
+    assert _eval_bool(h, "true or false and false") is True
+    assert _eval_bool(h, "false or true and true") is True
+    assert _eval_bool(h, "false or true and false") is False
 
 
 def test_not_with_and_or(h):
     """`not x and y` is `(not x) and y`."""
-    assert _eval_bool(h, "not False and True") is True
-    assert _eval_bool(h, "not True and True") is False
+    assert _eval_bool(h, "not false and true") is True
+    assert _eval_bool(h, "not true and true") is False
 
 
 # --- is / is not -----------------------------------------------------------
 
 @pytest.mark.parametrize("text,expected", [
-    ("None is None", True),
-    ("True is True", True),
-    ("False is False", True),
-    ("True is False", False),
-    ("None is True", False),
-    ("None is not None", False),
-    ("True is not False", True),
-    ("None is not True", True),
+    ("none is none", True),
+    ("true is true", True),
+    ("false is false", True),
+    ("true is false", False),
+    ("none is true", False),
+    ("none is not none", False),
+    ("true is not false", True),
+    ("none is not true", True),
 ])
 def test_is(h, text, expected):
     assert _eval_bool(h, text) is expected
@@ -1137,14 +1137,14 @@ def test_pass_alone(h):
 
 
 def test_if_truthy_runs_body(h):
-    """`if True: x = 5` sets x."""
-    src = "x = 0\nif True:\n    x = 5\nx"
+    """`if true: x = 5` sets x."""
+    src = "x = 0\nif true:\n    x = 5\nx"
     assert _eval(h, src) == 5
 
 
 def test_if_falsy_skips_body(h):
-    """`if False: x = 5` leaves x unchanged."""
-    src = "x = 0\nif False:\n    x = 5\nx"
+    """`if false: x = 5` leaves x unchanged."""
+    src = "x = 0\nif false:\n    x = 5\nx"
     assert _eval(h, src) == 0
 
 
@@ -1160,27 +1160,27 @@ def test_if_int_condition_falsy(h):
 
 
 def test_if_else_truthy(h):
-    src = "x = 0\nif True:\n    x = 1\nelse:\n    x = 2\nx"
+    src = "x = 0\nif true:\n    x = 1\nelse:\n    x = 2\nx"
     assert _eval(h, src) == 1
 
 
 def test_if_else_falsy(h):
-    src = "x = 0\nif False:\n    x = 1\nelse:\n    x = 2\nx"
+    src = "x = 0\nif false:\n    x = 1\nelse:\n    x = 2\nx"
     assert _eval(h, src) == 2
 
 
 def test_if_elif_first_branch(h):
-    src = "x = 0\nif True:\n    x = 1\nelif True:\n    x = 2\nelse:\n    x = 3\nx"
+    src = "x = 0\nif true:\n    x = 1\nelif true:\n    x = 2\nelse:\n    x = 3\nx"
     assert _eval(h, src) == 1
 
 
 def test_if_elif_second_branch(h):
-    src = "x = 0\nif False:\n    x = 1\nelif True:\n    x = 2\nelse:\n    x = 3\nx"
+    src = "x = 0\nif false:\n    x = 1\nelif true:\n    x = 2\nelse:\n    x = 3\nx"
     assert _eval(h, src) == 2
 
 
 def test_if_elif_else_branch(h):
-    src = "x = 0\nif False:\n    x = 1\nelif False:\n    x = 2\nelse:\n    x = 3\nx"
+    src = "x = 0\nif false:\n    x = 1\nelif false:\n    x = 2\nelse:\n    x = 3\nx"
     assert _eval(h, src) == 3
 
 
@@ -1205,7 +1205,7 @@ def test_if_with_complex_condition(h):
 
 
 def test_if_with_and_or(h):
-    src = "x = 0\nif True and 5 > 2:\n    x = 9\nx"
+    src = "x = 0\nif true and 5 > 2:\n    x = 9\nx"
     assert _eval(h, src) == 9
 
 
@@ -1213,8 +1213,8 @@ def test_nested_if(h):
     """Nested if-statements work — skip_suite handles INDENT depth."""
     src = (
         "x = 0\n"
-        "if True:\n"
-        "    if True:\n"
+        "if true:\n"
+        "    if true:\n"
         "        x = 5\n"
         "x"
     )
@@ -1224,8 +1224,8 @@ def test_nested_if(h):
 def test_nested_if_inner_skipped(h):
     src = (
         "x = 0\n"
-        "if True:\n"
-        "    if False:\n"
+        "if true:\n"
+        "    if false:\n"
         "        x = 5\n"
         "    else:\n"
         "        x = 10\n"
@@ -1239,8 +1239,8 @@ def test_nested_if_outer_skipped(h):
     nested if."""
     src = (
         "x = 100\n"
-        "if False:\n"
-        "    if True:\n"
+        "if false:\n"
+        "    if true:\n"
         "        x = 1\n"
         "    else:\n"
         "        x = 2\n"
@@ -1252,7 +1252,7 @@ def test_nested_if_outer_skipped(h):
 
 def test_if_body_multiple_statements(h):
     src = (
-        "if True:\n"
+        "if true:\n"
         "    x = 1\n"
         "    y = 2\n"
         "    z = x + y\n"
@@ -1262,22 +1262,22 @@ def test_if_body_multiple_statements(h):
 
 
 def test_pass_in_block(h):
-    """`pass` is fine as a body — `if False: pass` shouldn't crash."""
-    src = "x = 5\nif False:\n    pass\nx"
+    """`pass` is fine as a body — `if false: pass` shouldn't crash."""
+    src = "x = 5\nif false:\n    pass\nx"
     assert _eval(h, src) == 5
 
 
 def test_if_after_assignment_in_chain(h):
     """if-statement followed by another statement at top level."""
-    src = "x = 1\nif True:\n    x = 2\ny = x + 100\ny"
+    src = "x = 1\nif true:\n    x = 2\ny = x + 100\ny"
     assert _eval(h, src) == 102
 
 
 # --- while loops -----------------------------------------------------------
 
 def test_while_zero_iterations(h):
-    """`while False: ...` — body never runs."""
-    src = "x = 0\nwhile False:\n    x = 99\nx"
+    """`while false: ...` — body never runs."""
+    src = "x = 0\nwhile false:\n    x = 99\nx"
     assert _eval(h, src) == 0
 
 
@@ -1367,7 +1367,7 @@ def test_while_break_simple(h):
     """`break` exits the while loop."""
     src = (
         "i = 0\n"
-        "while True:\n"
+        "while true:\n"
         "    i = i + 1\n"
         "    if i == 5:\n"
         "        break\n"
@@ -1380,7 +1380,7 @@ def test_while_break_at_start(h):
     """`break` as first statement in body — runs zero times."""
     src = (
         "i = 0\n"
-        "while True:\n"
+        "while true:\n"
         "    break\n"
         "    i = 99\n"
         "i"
@@ -1621,21 +1621,21 @@ def test_print_string(h):
 
 
 def test_print_true(h):
-    screen = _eval_with_screen(h, "print True")
-    # "True" → screen codes for T,r,u,e
-    expected = bytes(petscii_to_screen_code(ord(c)) for c in "True")
+    screen = _eval_with_screen(h, "print true")
+    # "true" → screen codes for t,r,u,e
+    expected = bytes(petscii_to_screen_code(ord(c)) for c in "true")
     assert screen[:4] == expected
 
 
 def test_print_false(h):
-    screen = _eval_with_screen(h, "print False")
-    expected = bytes(petscii_to_screen_code(ord(c)) for c in "False")
+    screen = _eval_with_screen(h, "print false")
+    expected = bytes(petscii_to_screen_code(ord(c)) for c in "false")
     assert screen[:5] == expected
 
 
 def test_print_none(h):
-    screen = _eval_with_screen(h, "print None")
-    expected = bytes(petscii_to_screen_code(ord(c)) for c in "None")
+    screen = _eval_with_screen(h, "print none")
+    expected = bytes(petscii_to_screen_code(ord(c)) for c in "none")
     assert screen[:4] == expected
 
 
@@ -2659,7 +2659,7 @@ def test_short_circuit_in_if_condition(h):
     """`if 0 and side(): ...` — side not called even though `if` evaluates."""
     src = (
         'tracker = <"n": 0>\n'
-        'side = "tracker.n = 1\\nreturn True"\n'
+        'side = "tracker.n = 1\\nreturn true"\n'
         'if 0 and side():\n'
         '    pass\n'
         'tracker.n'
@@ -2884,7 +2884,7 @@ def test_short_circuit_in_while_condition(h):
     src = (
         'tracker = <"n": 0>\n'
         'side = "tracker.n = tracker.n + 1\\nreturn tracker.n < 3"\n'
-        'while False or side():\n'
+        'while false or side():\n'
         '    pass\n'
         'tracker.n'
     )
@@ -3491,11 +3491,11 @@ def test_repr_int_unchanged(h):
 
 
 def test_repr_bool_unchanged(h):
-    assert _eval_str(h, 'repr(True)') == b"True"
+    assert _eval_str(h, 'repr(true)') == b"true"
 
 
 def test_repr_none_unchanged(h):
-    assert _eval_str(h, 'repr(None)') == b"None"
+    assert _eval_str(h, 'repr(none)') == b"none"
 
 
 def test_str_list_quotes_inner_strings(h):
@@ -3867,7 +3867,7 @@ def test_rnd_mixed_int_float_promotes_to_float(hfp):
 def test_rnd_bool_arg_panics(hfp):
     """rnd(True) — admiral rejects BOOL with ERR_TYPE; the C64 port matches."""
     from conftest import ERROR_CODE_ZP
-    payload = list('rnd(True)'.encode('ascii'))
+    payload = list('rnd(true)'.encode('ascii'))
     handle = place_str(hfp, 0x8500, payload)
     hfp.rs_push(handle)
     hfp.call('parser_eval', expect_panic=True, max_steps=2_000_000)
@@ -3877,7 +3877,7 @@ def test_rnd_bool_arg_panics(hfp):
 def test_rnd_bool_second_arg_panics(hfp):
     """rnd(0, True) also panics — BOOL reject applies to either position."""
     from conftest import ERROR_CODE_ZP
-    payload = list('rnd(0, True)'.encode('ascii'))
+    payload = list('rnd(0, true)'.encode('ascii'))
     handle = place_str(hfp, 0x8500, payload)
     hfp.rs_push(handle)
     hfp.call('parser_eval', expect_panic=True, max_steps=2_000_000)

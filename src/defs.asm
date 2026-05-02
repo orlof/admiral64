@@ -115,6 +115,36 @@
 // 256 allocs; counter wraps naturally and triggers every 256th alloc forever.
 .const GC_COUNTER = $48         // byte: alloc → mark+sweep throttle
 
+// --- NMI / Run-Stop pause infrastructure ------------------------------------
+// PAUSE_BLOCKED is a counter (inc on disk-op entry, dec on exit). When non-
+// zero, the NMI handler dismisses RESTORE silently — a banner + busy-wait
+// while $01=MEM_KERNAL would re-enter into KERNAL ROM unpredictably. The
+// counter form lets nested disk calls balance correctly. error_handler resets
+// it to 0 so a panicking save/load doesn't leave it stuck.
+.const PAUSE_BLOCKED = $49      // byte: NMI inhibit counter (0 = banner OK)
+
+// NMI re-entry flag. RESTORE on the C64 is wired directly to /NMI through a
+// 555 monostable, NOT through CIA2 — there is no CIA flag bit that latches
+// "RESTORE was pressed". Detection of the second press is therefore purely
+// software: first NMI entry sets NMI_PAUSED=1 and busy-waits for it to flip;
+// second NMI entry sees NMI_PAUSED!=0, clears it, RTIs, and the first
+// instance's wait loop exits and restores the screen.
+.const NMI_PAUSED = $4A         // byte: 0 = idle, !0 = banner showing
+
+// RUN/STOP latch. The IRQ handler polls CIA1 PRB row-7 directly each tick
+// and writes bit 7 here: $80 = STOP held, $00 = not held. parser_stmt then
+// reads this byte and panics ERR_BREAK when bit 7 is set. We don't go via
+// KERNAL's $91/SCNKEY pipeline because that mechanism turned out to be
+// unreliable mid-loop. Encoding "break = bit 7 set" (rather than = $7F)
+// means py65 RAM-default $00 reads as "no break" → tests don't see false
+// stops despite never running our IRQ.
+.const STOP_REQUESTED = $4B     // byte: bit 7 set → user pressed RUN/STOP
+
+// 40-byte scratch for saving screen row 0 across the NMI pause. Lives in
+// unused KERNAL workspace at $02A7-$02CE (free during pause since we're not
+// running disk I/O — see PAUSE_BLOCKED guard).
+.label NMI_SCRATCH = $02A7
+
 // --- Panic error codes -------------------------------------------------------
 // Written to ERROR_CODE immediately before jmp error_handler.
 .const ERR_OOM      = $01  // Out of memory — alloc could not satisfy a request
@@ -124,6 +154,7 @@
 .const ERR_TYPE     = $05  // Type mismatch — operator/builtin received an unsupported operand type
 .const ERR_ARITY    = $06  // Wrong number of arguments to a builtin or user function
 .const ERR_DISK     = $07  // 1541/IEC error — DOS error channel reported a non-zero code
+.const ERR_BREAK    = $08  // User pressed Run/Stop — interpreter aborted at a parser_stmt boundary
 
 // --- Handle struct -----------------------------------------------------------
 .const H_PTR         = 0   // 2 bytes — pointer to heap object (header + payload)

@@ -1919,12 +1919,12 @@ kw_bucket_4:
     .byte $65,$6C,$69,$66, TK_ELIF      // "elif"
     .byte $65,$6C,$73,$65, TK_ELSE      // "else"
     .byte $70,$61,$73,$73, TK_PASS      // "pass"
-    .byte $54,$72,$75,$65, TK_TRUE      // "True"
-    .byte $4E,$6F,$6E,$65, TK_NONE_KW   // "None"
+    .byte $74,$72,$75,$65, TK_TRUE      // "true"
+    .byte $6E,$6F,$6E,$65, TK_NONE_KW   // "none"
     .byte 0
 
 kw_bucket_5:
-    .byte $46,$61,$6C,$73,$65, TK_FALSE  // "False"
+    .byte $66,$61,$6C,$73,$65, TK_FALSE  // "false"
     .byte $77,$68,$69,$6C,$65, TK_WHILE  // "while"
     .byte $62,$72,$65,$61,$6B, TK_BREAK  // "break"
     .byte $72,$61,$69,$73,$65, TK_RAISE  // "raise"

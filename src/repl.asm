@@ -93,6 +93,8 @@ repl_main:
     lda #0
     sta METHOD_RECEIVER
     sta METHOD_RECEIVER+1
+    sta PAUSE_BLOCKED                // ensure NMI banner enabled at boot
+    sta NMI_PAUSED                   // 0 = no banner showing
 
     tsx
     stx repl_rec_s
