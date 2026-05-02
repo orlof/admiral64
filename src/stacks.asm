@@ -65,7 +65,7 @@ rs_init:
 // rs_push: dispatch to a shared subroutine for the common ZP-word sources
 // (W0, W1, W2, W3, RV). Each call site shrinks from ~17 bytes inline to 3
 // bytes (`jsr rs_push_xxx`). Unusual sources (absolute addresses like
-// GLOBAL_SCOPE) fall through to inline expansion.
+// CURRENT_SCOPE) fall through to inline expansion.
 .macro rs_push(src) {
     .if (src == W0)      { jsr rs_push_w0 }
     else .if (src == W1) { jsr rs_push_w1 }

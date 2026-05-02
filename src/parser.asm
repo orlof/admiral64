@@ -54,7 +54,7 @@
 //         source. Multiple newline-separated statements are evaluated in
 //         order; the result of the last one is returned.
 //
-// Sets up a fresh global scope (TYPE_DICT) at start. Both source and scope
+// Sets up a fresh root scope (TYPE_DICT) at start. Both source and scope
 // are RS-rooted for the duration of the body so neither is reaped by GC
 // triggered by intermediate allocations.
 // V4' wrapper.
@@ -67,16 +67,16 @@ parser_eval:
     jsr lexer_init
 
     // Allocate the program's root scope and push it on RS as the second
-    // root. Cache the handle in BOTH GLOBAL_SCOPE (current) and ROOT_SCOPE
-    // (immutable parent target). Function calls below will swap GLOBAL_SCOPE
+    // root. Cache the handle in BOTH CURRENT_SCOPE (current) and ROOT_SCOPE
+    // (immutable parent target). Function calls below will swap CURRENT_SCOPE
     // but always use ROOT_SCOPE as the new local scope's parent.
     jsr dict_alloc                // RV = empty dict
     rs_push(RV)                   // RS: [source, root_scope]
     lda RV
-    sta GLOBAL_SCOPE
+    sta CURRENT_SCOPE
     sta ROOT_SCOPE
     lda RV+1
-    sta GLOBAL_SCOPE+1
+    sta CURRENT_SCOPE+1
     sta ROOT_SCOPE+1
 
     // Method-call side channel starts cleared.
@@ -85,8 +85,7 @@ parser_eval:
     sta METHOD_RECEIVER+1
 
     // Free-function builtins are resolved through `try_builtin_lookup`'s
-    // hard-coded name table (Admiral-style). No global-scope registration
-    // needed.
+    // hard-coded name table (Admiral-style). No scope registration needed.
 
     // Default result if source is empty: NONE.
     lda #<NONE
@@ -127,7 +126,7 @@ _pe_done:
 //
 // Caller contract (REPL):
 //   1. Has allocated a TYPE_DICT and rs_push'd it as a permanent root.
-//   2. Has set GLOBAL_SCOPE / ROOT_SCOPE to that handle.
+//   2. Has set CURRENT_SCOPE / ROOT_SCOPE to that handle.
 //   3. rs_push'd the source TYPE_STR for this turn.
 //   4. jsr parser_exec.
 //
@@ -305,7 +304,7 @@ _sret_have_value:
 // -----------------------------------------------------------------------------
 // stmt_del — `del NAME` or `del NAME[expr]`.
 //   Plain `del NAME`: removes the binding from the current scope dict
-//   (GLOBAL_SCOPE). Subsequent reads of NAME walk the parent chain.
+//   (CURRENT_SCOPE). Subsequent reads of NAME walk the parent chain.
 //   `del NAME[expr]`: scope_get(NAME) → container, then remove `expr` from
 //   it. LIST → array_del at integer index. DICT → binary-search the key,
 //   then array_del. Other types (TUPLE etc.) panic ERR_TYPE.
@@ -330,10 +329,10 @@ _sd_have_name:
     cmp #TK_LBRACK
     beq _sd_subscript
 
-    // Plain `del NAME`: bin-search GLOBAL_SCOPE for the name handle, then
+    // Plain `del NAME`: bin-search CURRENT_SCOPE for the name handle, then
     // array_del that slot. Name is currently at RS top.
     rs_pop(W1)                      // W1 = name; RS: []
-    rs_push(GLOBAL_SCOPE)           // RS: [scope_dict]
+    rs_push(CURRENT_SCOPE)           // RS: [scope_dict]
     rs_peek(W0)                     // W0 = scope_dict
     jsr _dict_bin_search            // A = hit/miss; RV = index on hit
     cmp #0
@@ -2656,22 +2655,22 @@ _cd_jsr:
 // --- TYPE_STR: kwargs, body re-lex in fresh scope ---------------------------
 //
 // Algorithm:
-//   1. Save current GLOBAL_SCOPE on RS (root).
-//   2. Allocate new scope dict, set GLOBAL_SCOPE.
+//   1. Save current CURRENT_SCOPE on RS (root).
+//   2. Allocate new scope dict, set CURRENT_SCOPE.
 //   3. Parse `(name=value, ...)`, scope_set each name→value (now into new scope).
 //   4. Save outer lexer state on FS.
 //   5. Push body string handle on RS, lexer_init on it.
 //   6. Run statement loop until EOF or CTRL_RETURN.
 //   7. If CTRL_RETURN, extract its payload as the call's result.
-//   8. Pop body-handle copy. lexer_restore. Restore GLOBAL_SCOPE.
+//   8. Pop body-handle copy. lexer_restore. Restore CURRENT_SCOPE.
 //
 // RS layout during body execution:
 //   [..., LHS, old_scope, new_scope, body_handle_for_lexer]
 _llp_str_call:
-    // Save current global scope onto RS for restoration after the call.
-    lda GLOBAL_SCOPE
+    // Save current scope onto RS for restoration after the call.
+    lda CURRENT_SCOPE
     sta W0
-    lda GLOBAL_SCOPE+1
+    lda CURRENT_SCOPE+1
     sta W0+1
     rs_push(W0)                     // RS: [LHS, old_scope]
 
@@ -2686,7 +2685,7 @@ _llp_str_call:
     rs_push(ROOT_SCOPE)
     jsr dict_set                    // consumes 3 → RS: [LHS, old, new]
 
-    // Parse kwargs in CALLER's scope (GLOBAL_SCOPE unchanged), pushing each
+    // Parse kwargs in CALLER's scope (CURRENT_SCOPE unchanged), pushing each
     // (name, value) pair on RS for later binding. Track the count in B0.
     lda #0
     sta B0
@@ -2724,7 +2723,7 @@ _llp_s_args_done:
     lda #TK_RPAREN
     jsr lexer_advance               // consume `)`
 
-    // All kwargs evaluated. Switch GLOBAL_SCOPE = new_scope. With B0 kwargs
+    // All kwargs evaluated. Switch CURRENT_SCOPE = new_scope. With B0 kwargs
     // (2 words each) plus the unchanged me push, new_scope is at slot index
     // 2*B0 from RS top; byte offset = 4*B0.
     lda B0
@@ -2732,10 +2731,10 @@ _llp_s_args_done:
     asl
     tay
     lda (RSP),y
-    sta GLOBAL_SCOPE
+    sta CURRENT_SCOPE
     iny
     lda (RSP),y
-    sta GLOBAL_SCOPE+1
+    sta CURRENT_SCOPE+1
 
     // Bind: call scope_set B0 times. Each call consumes the (name, value)
     // pair on top — pushes were name-then-value, so RS top = value, slot 1
@@ -2836,13 +2835,13 @@ _llp_s_done:
     rs_drop(1)                       // pop body_src (was rooting source)
     jsr lexer_restore                // pops 28 bytes from FS
 
-    // Pop new_scope, then old_scope into GLOBAL_SCOPE.
+    // Pop new_scope, then old_scope into CURRENT_SCOPE.
     rs_drop(1)                       // discard new_scope
     rs_pop(W0)                       // W0 = old_scope
     lda W0
-    sta GLOBAL_SCOPE
+    sta CURRENT_SCOPE
     lda W0+1
-    sta GLOBAL_SCOPE+1
+    sta CURRENT_SCOPE+1
 
     jmp postamble                    // postamble cleans LHS off RS
 

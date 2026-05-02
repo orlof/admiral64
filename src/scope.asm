@@ -1,14 +1,16 @@
 // -----------------------------------------------------------------------------
 // scope.asm — variable scope primitives.
 //
-// For Stage 9a, all variables live in a single global scope dict held by
-// the GLOBAL_SCOPE ZP cell. The dict's keys are TYPE_STR (variable names);
-// values are arbitrary handles. parser_eval allocates the dict at start of
-// evaluation, pushes it on RS for GC rooting, and caches the handle in
-// GLOBAL_SCOPE for fast access from scope_get / scope_set.
+// Variables live in a scope dict held by the CURRENT_SCOPE ZP cell. The
+// dict's keys are TYPE_STR (variable names); values are arbitrary handles.
+// parser_eval allocates the root scope at start of evaluation, pushes it on
+// RS for GC rooting, and caches the handle in CURRENT_SCOPE for fast access
+// from scope_get / scope_set. Function calls swap CURRENT_SCOPE for a fresh
+// dict and restore on return; ROOT_SCOPE keeps a reference to the REPL
+// dict so error_handler can reset CURRENT_SCOPE on panic.
 //
 // Stage 9c will add nested scopes via the `_` parent-link convention from
-// DCPU Admiral. For now, every name resolves through the global dict.
+// DCPU Admiral.
 // -----------------------------------------------------------------------------
 
 #importonce
@@ -23,7 +25,7 @@
 //   out:  RV = value handle.
 //
 // Algorithm:
-//   1. Start at GLOBAL_SCOPE (the current scope; "global" is a misnomer
+//   1. Start at CURRENT_SCOPE (the current scope; "global" is a misnomer
 //      since it's actually the innermost scope in our flat naming).
 //   2. dict_get(scope, name); if found (RV != NONE), return.
 //   3. Otherwise dict_get(scope, "_") for parent link.
@@ -40,9 +42,9 @@ scope_get:
     preamble_args(1, 0)
 
     rs_pop(W0)                       // W0 = name (caller's arg, consumed)
-    lda GLOBAL_SCOPE
+    lda CURRENT_SCOPE
     sta W1
-    lda GLOBAL_SCOPE+1
+    lda CURRENT_SCOPE+1
     sta W1+1                          // W1 = current scope walker
 
 _sg_loop:
@@ -91,7 +93,7 @@ _sg_done:
     jmp postamble
 
 // -----------------------------------------------------------------------------
-// scope_set — bind a name to a value in the global scope.
+// scope_set — bind a name to a value in the current scope.
 //   in:   2 handles on RS — name (deeper), value (top).
 //   out:  RV unchanged. dict_set has the side effect; both args consumed.
 // V4' wrapper.
@@ -103,7 +105,7 @@ scope_set:
     // need to insert global_dict UNDER name. Pop both, push dict, push back.
     rs_pop(W1)                       // W1 = value; RS: [name]
     rs_pop(W0)                       // W0 = name;  RS: []
-    rs_push(GLOBAL_SCOPE)            // RS: [global_dict]
+    rs_push(CURRENT_SCOPE)            // RS: [global_dict]
     rs_push(W0)                      // RS: [global_dict, name]
     rs_push(W1)                      // RS: [global_dict, name, value]
     jsr dict_set                     // consumes 3 args

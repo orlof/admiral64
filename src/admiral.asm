@@ -217,10 +217,22 @@ error_handler:
     jsr disk_close_data
     jsr disk_close_cmd
 
+    // Restore current scope to root. A panic mid-function-call (TYPE_STR
+    // call via _llp_str_call) leaves CURRENT_SCOPE pointing at the leaked
+    // function-local dict; without this reset, subsequent REPL turns can't
+    // find names defined at top level. Also clear METHOD_RECEIVER in case
+    // the panic hit between led_dot setting it and the call consuming it.
+    lda ROOT_SCOPE
+    sta CURRENT_SCOPE
+    lda ROOT_SCOPE+1
+    sta CURRENT_SCOPE+1
+    lda #0
+    sta METHOD_RECEIVER
+    sta METHOD_RECEIVER+1
+
     // Clear the NMI inhibit so the next RESTORE press shows the banner again
     // even if the panic happened mid-save/load (between inc and dec). Also
     // clear NMI_PAUSED in case the panic hit during a banner busy-wait.
-    lda #0
     sta PAUSE_BLOCKED
     sta NMI_PAUSED
 

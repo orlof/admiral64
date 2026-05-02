@@ -93,7 +93,7 @@
 
 // --- Runtime scope (Stage 9) ------------------------------------------------
 // Two scope pointers:
-//   GLOBAL_SCOPE  — the *current* scope (changes on function entry/exit).
+//   CURRENT_SCOPE  — the *current* scope (changes on function entry/exit).
 //                   Reads/writes by scope_get/scope_set go through here.
 //   ROOT_SCOPE    — the program's top-level scope (set once at parser_eval
 //                   start, never changes). Used as the parent-link target
@@ -101,7 +101,7 @@
 //                   functions see globals + their own kwargs but NOT the
 //                   caller's locals (Python lexical scoping). Mirrors
 //                   Admiral's parser.dasm16:2024 invariant.
-.const GLOBAL_SCOPE = $42       // word: current scope (a TYPE_DICT handle)
+.const CURRENT_SCOPE = $42       // word: current scope (a TYPE_DICT handle)
 .const ROOT_SCOPE   = $44       // word: program-level scope (immutable)
 .const METHOD_RECEIVER = $46    // word: side-channel set by `led_dot` when
                                 // a method-call follows (`obj.method(`).

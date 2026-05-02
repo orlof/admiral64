@@ -30,7 +30,7 @@ from test_str import place_str
 from test_tuple import place_tuple, read_tuple_slot
 
 
-GLOBAL_SCOPE_ZP = 0x42  # must match src/defs.asm
+CURRENT_SCOPE_ZP = 0x42  # must match src/defs.asm
 
 
 # --- helpers ----------------------------------------------------------------
@@ -39,7 +39,7 @@ GLOBAL_SCOPE_ZP = 0x42  # must match src/defs.asm
 def setup_global_scope(h) -> int:
     """Allocate a fresh dict and bind it as the current scope."""
     scope = h.alloc_dict()
-    h.write_word(GLOBAL_SCOPE_ZP, scope)
+    h.write_word(CURRENT_SCOPE_ZP, scope)
     return scope
 
 

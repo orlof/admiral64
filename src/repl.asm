@@ -81,11 +81,11 @@ repl_main:
     jsr dict_alloc                   // RV = empty dict handle
 
     lda RV
-    sta GLOBAL_SCOPE
+    sta CURRENT_SCOPE
     sta ROOT_SCOPE
     sta W0
     lda RV+1
-    sta GLOBAL_SCOPE+1
+    sta CURRENT_SCOPE+1
     sta ROOT_SCOPE+1
     sta W0+1
     rs_push(W0)                      // permanent root — never popped

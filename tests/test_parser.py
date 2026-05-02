@@ -4774,12 +4774,12 @@ def test_error_handler_recovers_to_repl_loop(hd):
     Uses `hd` because error_handler now closes any leaked disk channels via
     KERNAL CLOSE — the kernal_mock traps those calls (which would otherwise
     branch into uninitialized RAM at $FFC3)."""
-    GLOBAL_SCOPE = 0x42
+    CURRENT_SCOPE = 0x42
     ROOT_SCOPE = 0x44
     hd.call("screen_init")
     hd.call("dict_alloc")
     scope = hd.read_word(RV)
-    hd.write_word(GLOBAL_SCOPE, scope)
+    hd.write_word(CURRENT_SCOPE, scope)
     hd.write_word(ROOT_SCOPE, scope)
     hd.rs_push(scope)
 
@@ -4822,12 +4822,12 @@ def test_parser_exec_prints_int_expression(h):
     """`print 1+2` writes '3' to screen RAM via parser_exec — the REPL's
     smoke test, mirroring the exact source bytes repl_loop builds for
     `PRINT 1+2` typed on the keyboard (after the lowercase fold)."""
-    GLOBAL_SCOPE = 0x42
+    CURRENT_SCOPE = 0x42
     ROOT_SCOPE = 0x44
     h.call("screen_init")
     h.call("dict_alloc")
     scope = h.read_word(RV)
-    h.write_word(GLOBAL_SCOPE, scope)
+    h.write_word(CURRENT_SCOPE, scope)
     h.write_word(ROOT_SCOPE, scope)
     h.rs_push(scope)
 
@@ -4845,12 +4845,12 @@ def test_parser_exec_prints_list(h):
     """`print [1,2,3]` must render via builtin_str — produces the literal
     `[1, 2, 3]` on screen, NOT a `?` placeholder. Regression: print_value
     used to emit a hardcoded '?' for any container type."""
-    GLOBAL_SCOPE = 0x42
+    CURRENT_SCOPE = 0x42
     ROOT_SCOPE = 0x44
     h.call("screen_init")
     h.call("dict_alloc")
     scope = h.read_word(RV)
-    h.write_word(GLOBAL_SCOPE, scope)
+    h.write_word(CURRENT_SCOPE, scope)
     h.write_word(ROOT_SCOPE, scope)
     h.rs_push(scope)
 
@@ -4872,8 +4872,8 @@ def test_parser_exec_persists_vars_across_calls(h):
     calls can see each other's bindings. This is the REPL's reason-to-exist:
     `x = 5` in turn N must be visible as `x` in turn N+1.
     """
-    # GLOBAL_SCOPE / ROOT_SCOPE are .const ZP addresses (defs.asm), not labels.
-    GLOBAL_SCOPE = 0x42
+    # CURRENT_SCOPE / ROOT_SCOPE are .const ZP addresses (defs.asm), not labels.
+    CURRENT_SCOPE = 0x42
     ROOT_SCOPE = 0x44
 
     # Caller-side setup (what repl_main does once at boot): allocate a root
@@ -4881,7 +4881,7 @@ def test_parser_exec_persists_vars_across_calls(h):
     # scope-pointer ZP cells.
     h.call("dict_alloc")
     scope = h.read_word(RV)
-    h.write_word(GLOBAL_SCOPE, scope)
+    h.write_word(CURRENT_SCOPE, scope)
     h.write_word(ROOT_SCOPE, scope)
     h.rs_push(scope)
 

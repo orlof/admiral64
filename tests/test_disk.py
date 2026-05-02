@@ -606,7 +606,7 @@ def test_error_handler_closes_data_lfn_after_panic(hd):
     hd.call("screen_init")
     hd.call("dict_alloc")
     scope = hd.read_word(RV)
-    hd.write_word(0x42, scope)           # GLOBAL_SCOPE
+    hd.write_word(0x42, scope)           # CURRENT_SCOPE
     hd.write_word(0x44, scope)           # ROOT_SCOPE
     hd.rs_push(scope)
     hd.mpu.memory[hd.sym["repl_rec_s"]] = hd.mpu.sp

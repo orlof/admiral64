@@ -18,7 +18,7 @@
 //   2. A static TYPE_BUILTIN handle whose 2-byte payload IS the impl
 //      address (read by `led_lparen` and JSR'd via SMC).
 //   3. A static TYPE_STR holding the name; `parser_eval` binds the
-//      builtin into `global_scope` at start so `range` / `len` resolve
+//      builtin into the root scope at start so `range` / `len` resolve
 //      via normal scope lookup.
 //
 // To add a new built-in:
@@ -1377,7 +1377,7 @@ builtin_id:
 // =============================================================================
 // builtin_globals() / builtin_locals() — return a scope dict.
 //   globals() = ROOT_SCOPE (program-level, set once at parser_eval start)
-//   locals()  = GLOBAL_SCOPE (current; differs from ROOT_SCOPE only inside a
+//   locals()  = CURRENT_SCOPE (current; differs from ROOT_SCOPE only inside a
 //              string-call lambda where led_lparen swaps to a per-call scope)
 //
 // Mirrors Admiral's `built_in_globals` / `built_in_locals`
@@ -1387,7 +1387,7 @@ builtin_id:
 // falls into the BIT prefix, which then eats locals's `ldx #$FE` (= -2) as
 // its operand. Both entry points end up at the shared `lda ROOT_SCOPE,x`
 // where the indexed ZP read targets either ROOT_SCOPE ($44) when X=0 or
-// GLOBAL_SCOPE ($42) when X=$FE (lda zp,x wraps within $00-$FF). RV and
+// CURRENT_SCOPE ($42) when X=$FE (lda zp,x wraps within $00-$FF). RV and
 // B0..B6 are preserved across preamble_call, so we stash the result before
 // the call instead of after — saving the dance through B0/B1.
 //
@@ -1398,7 +1398,7 @@ builtin_globals:
     ldx #0
     .byte $2C                    // BIT abs — eats next 2 bytes
 builtin_locals:
-    ldx #$FE                     // -2: shifts ZP base from ROOT_SCOPE to GLOBAL_SCOPE
+    ldx #$FE                     // -2: shifts ZP base from ROOT_SCOPE to CURRENT_SCOPE
     lda ROOT_SCOPE,x
     sta RV
     lda ROOT_SCOPE+1,x
