@@ -44,7 +44,13 @@
 .const REPL_HIST_SLOT_SZ = 1 + REPL_LINE_CAP   // 1 length byte + chars
 
 // --- static state -----------------------------------------------------------
-repl_line_buf:    .fill REPL_LINE_CAP, 0
+// repl_line_buf and repl_hist_slots live in the unused datasette buffer
+// region ($033C-$03FD). Saves 194 bytes from the code segment. We don't
+// drive tape, so this RAM is otherwise idle. Reads are always preceded by
+// a write (line buf) or gated by repl_hist_count (slots), so no init needed.
+.label repl_hist_slots = $033C       // 156 bytes — ends at $03D7
+.label repl_line_buf   = $03D8       // 38 bytes  — ends at $03FD
+
 repl_line_len:    .byte 0
 repl_line_pos:    .byte 0           // cursor index within line, 0..len
 repl_line_anchor_row: .byte 0       // screen row the prompt lives on
@@ -52,7 +58,6 @@ repl_line_anchor_row: .byte 0       // screen row the prompt lives on
 // History ring. `head` is the index of the newest stored entry; `count`
 // caps at REPL_HIST_SLOTS. `view` walks the recall depth: 0 = the current
 // (in-progress) line, 1..count = history depths back from newest.
-repl_hist_slots:  .fill REPL_HIST_SLOTS * REPL_HIST_SLOT_SZ, 0
 repl_hist_count:  .byte 0
 repl_hist_head:   .byte 0
 repl_hist_view:   .byte 0
@@ -157,7 +162,13 @@ _rpl_copy_done:
     sta W0+1
     rs_push(W0)
 
-    jsr parser_exec                  // consumes source on return
+    jsr parser_exec                  // consumes source on return; RV = result
+
+    // Bind `_` in ROOT_SCOPE to the last expression result. The scope-walk
+    // type check in scope_get keeps this from poisoning parent-link lookups.
+    rs_push_const(STR_UNDERSCORE)
+    jsr rs_push_rv
+    jsr scope_set
 
     jmp repl_loop
 

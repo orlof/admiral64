@@ -108,6 +108,13 @@
                                 // Read+cleared by led_lparen at call time.
                                 // 0 = not a method call.
 
+// --- GC throttle (Stage 9c) -------------------------------------------------
+// Decremented once per alloc; on Z=1 we run mark+sweep (no compact) so dead
+// handles return to FREE_HEAD before NEXT_HANDLE has to carve more. Mirrors
+// DCPU's `heap_counter` (memory.dasm16:118). Init = 0 → first trigger after
+// 256 allocs; counter wraps naturally and triggers every 256th alloc forever.
+.const GC_COUNTER = $48         // byte: alloc → mark+sweep throttle
+
 // --- Panic error codes -------------------------------------------------------
 // Written to ERROR_CODE immediately before jmp error_handler.
 .const ERR_OOM      = $01  // Out of memory — alloc could not satisfy a request

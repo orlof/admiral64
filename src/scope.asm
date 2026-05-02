@@ -77,7 +77,15 @@ _sg_have_parent:
     sta W1
     lda RV+1
     sta W1+1
-    jmp _sg_loop
+    // Defensive: `_` is the parent-link key, but the REPL also binds `_` in
+    // ROOT_SCOPE to the last expression result (a non-dict). If we follow
+    // a non-dict here, dict_get below would dereference it as a dict and
+    // crash. Treat non-dict `_` as "no parent" → name-not-found.
+    ldy #H_TYPE
+    lda (W1),y
+    cmp #TYPE_DICT
+    beq _sg_loop
+    jmp panic_lex
 
 _sg_done:
     jmp postamble

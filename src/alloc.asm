@@ -58,6 +58,7 @@ alloc_init:
     sta RESERVED_HEAD+1
     sta RESERVED_TAIL
     sta RESERVED_TAIL+1
+    sta GC_COUNTER
     rts
 
 // -----------------------------------------------------------------------------
@@ -69,6 +70,14 @@ alloc:
     preamble_args(0, 0)
     lda #0
     sta ALLOC_GC_TRIED            // reset per-call retry marker
+
+    // Periodic GC: every 256th alloc, run mark+sweep (skip compact — that's
+    // reserved for OOM and `mem()`). Keeps the handle peak close to live-set
+    // size. Mirrors DCPU's heap_counter trigger (memory.dasm16:118).
+    dec GC_COUNTER
+    bne alloc_check
+    jsr gc_mark
+    jsr gc_sweep
 
 alloc_check:
     // 0a. W1 = need_data = ALLOC_SIZE + O_HEADER.
