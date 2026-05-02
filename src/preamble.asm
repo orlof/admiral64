@@ -429,15 +429,29 @@ postamble:
 // builtin_type, builtin_ord positive case, builtin_int from BOOL, etc.).
 //
 // Caller: stash the byte in B0, then `jmp postamble_set_rv_int_b0`.
+//
+// postamble_set_rv_uint8_b0 — same idea but B0 is unsigned 0..255: bytes
+// 128..255 land in a 2-byte INT with high byte 0 so the result stays
+// non-negative. Used by builtin_ord and builtin_peek.
 // -----------------------------------------------------------------------------
+postamble_set_rv_uint8_b0:
+    lda B0
+    bpl postamble_set_rv_int_b0
+    lda #2
+    jsr alloc_int_a_deref_w2     // Y = 0 at exit
+    lda B0
+    sta (W2),y
+    iny
+    lda #0
+    sta (W2),y
+    jmp postamble
 postamble_set_rv_int_b0:
     lda #1
     sta ALLOC_SIZE
     lda #0
     sta ALLOC_SIZE+1
     jsr alloc_int
-    jsr deref_RV_to_W2
+    jsr deref_RV_to_W2           // Y = 0 at exit
     lda B0
-    ldy #0
     sta (W2),y
     jmp postamble

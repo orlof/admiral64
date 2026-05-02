@@ -52,7 +52,6 @@ BUILTINS = [
     ("wset",    "builtin_wset"),
     ("wget",    "builtin_wget"),
     ("cursor",  "builtin_cursor"),
-    ("scroll",  "builtin_scroll"),
     ("format",  "builtin_format"),
     ("rm",      "builtin_rm"),
     ("dir",     "builtin_dir"),
@@ -62,6 +61,8 @@ BUILTINS = [
     ("key",     "builtin_key"),
     ("input",   "builtin_input"),
     ("edit",    "builtin_edit"),
+    ("peek",    "builtin_peek"),
+    ("poke",    "builtin_poke"),
 ]
 
 

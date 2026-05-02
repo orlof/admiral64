@@ -302,8 +302,7 @@ builtin_chr:
     beq _bchr_ok
     jmp panic_type
 _bchr_ok:
-    jsr deref_W0_to_W2
-    ldy #0
+    jsr deref_W0_to_W2           // Y = 0 at exit
     lda (W2),y
     sta B0                       // B0 = char byte
 
@@ -315,9 +314,8 @@ _bchr_ok:
     sta ALLOC_TYPE
     jsr alloc                    // RV = new 1-byte STR
 
-    jsr deref_RV_to_W2
+    jsr deref_RV_to_W2           // Y = 0 at exit
     lda B0
-    ldy #0
     sta (W2),y
     jmp postamble
 
@@ -339,25 +337,9 @@ _bord_ok:
     beq _bord_have
     jmp panic_type
 _bord_have:
-    ldy #0
-    lda (W2),y
+    lda (W2),y                   // Y = 0 from deref_W0_to_W2
     sta B0
-    bmi _bord_2byte
-
-    // 0..127: 1-byte int (fits as positive).
-    jmp postamble_set_rv_int_b0
-
-_bord_2byte:
-    // 128..255: 2-byte int with high byte 0 keeps it positive.
-    lda #2
-    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
-    lda B0
-    ldy #0
-    sta (W2),y
-    iny
-    lda #0
-    sta (W2),y
-    jmp postamble
+    jmp postamble_set_rv_uint8_b0
 
 // =============================================================================
 // builtin_int(x) — coerce STR / BOOL / FLOAT / INT to TYPE_INT.
@@ -1693,6 +1675,67 @@ _bwg_oob:
 
 
 // =============================================================================
+// builtin_peek(addr) / builtin_poke(addr, val) — shared body. The two TYPE_BUILTIN
+// entry points pre-load X = arity (1 / 2), then strict-arity preamble_call(N, N)
+// caches it in B7 — that becomes the read-vs-write switch in the body.
+//
+// addr: TYPE_INT — payload[0] = addr lo, payload[1] = addr hi when O_LEN >= 2,
+//   else 0. No type-check.
+// val (poke only): TYPE_INT — payload[0] = byte value; high bytes ignored.
+//
+// MEM_IO ($35) is banked across the byte access so VIC/SID/CIA registers are
+// reachable. peek returns TYPE_INT 0..255 (1-byte if <128, 2-byte if >=128).
+// poke returns NONE.
+// =============================================================================
+builtin_peek:
+    ldx #1
+    .byte $2C                           // BIT abs — eats `ldx #2`
+builtin_poke:
+    ldx #2
+    txa
+    tay                                 // X = Y = arity for strict preamble_call
+    jsr _preamble_call                  // B7 = argc (1 = peek, 2 = poke)
+
+    arg_get(0, W0)
+    jsr deref_W0_to_W2                  // A = addr len, Y = O_LEN = 0 at exit
+    tax                                 // X = len
+    sty W1+1                            // default addr hi = 0 (Y still 0)
+    lda (W2),y
+    sta W1
+    dex
+    beq !lo+
+    iny
+    lda (W2),y
+    sta W1+1
+!lo:
+    dec B7                              // 1 (peek) → 0; 2 (poke) → 1
+    bne _bpkp_poke
+
+    // peek path — bank MEM_IO only across the user-addr read; heap can lie
+    // under BASIC ROM ($A000-$BFFF) so heap accesses must stay in MEM_NORMAL.
+    ldx $01
+    ldy #MEM_IO
+    sty $01
+    ldy #0
+    lda (W1),y
+    sta B0
+    stx $01
+    jmp postamble_set_rv_uint8_b0
+
+_bpkp_poke:
+    arg_get(1, W0)
+    jsr deref_W0_to_W2                  // Y = 0 at exit
+    lda (W2),y                          // A = val byte
+    ldx $01
+    ldy #MEM_IO
+    sty $01
+    ldy #0
+    sta (W1),y
+    stx $01
+    jmp postamble_return_none
+
+
+// =============================================================================
 // builtin_cursor([col, row]) — get/set cursor.
 //   0 args : returns (col, row) tuple of two 1-byte INTs.
 //   2 args : sets cursor (clamped to screen bounds), returns None.
@@ -1767,40 +1810,6 @@ _bcur_alloc_int_b0:
     ldy #0
     sta (W2),y
     rts
-
-
-// =============================================================================
-// builtin_scroll([n]) — scroll the screen up by `n` lines (default 1).
-// `n` is clamped to [0, SCREEN_ROWS]: 0 is a no-op; SCREEN_ROWS or more
-// blanks the entire screen. Other types / bad values pass through as 1.
-// Returns None.
-// =============================================================================
-builtin_scroll:
-    preamble_call(0, 1)
-    ldx #1                       // default n
-    lda B7
-    beq _bsc_have_n
-    arg_get(0, W0)
-    jsr int_to_unsigned_byte_W0
-    bcc _bsc_have_n              // bad arg → keep default
-    cmp #SCREEN_ROWS
-    bcc _bsc_n_in_range
-    lda #SCREEN_ROWS
-_bsc_n_in_range:
-    tax
-_bsc_have_n:
-    cpx #0
-    beq _bsc_done
-_bsc_loop:
-    txa
-    pha                          // save counter — screen_scroll_up clobbers X
-    jsr screen_scroll_up
-    pla
-    tax
-    dex
-    bne _bsc_loop
-_bsc_done:
-    jmp postamble_return_none
 
 
 // =============================================================================
@@ -2114,7 +2123,17 @@ _bin_loop:
     cmp #$14
     beq _bin_del
 
-    // Append (if room).
+    // Append (if room). Lowercase-fold A-Z ($41..$5A → $61..$7A) so the
+    // stored bytes match the canonical lowercase encoding that the lexer and
+    // REPL line reader use; without this, `input()` returns bytes no source
+    // literal can express, breaking `==` / `find` / dict keys.
+    cmp #$41
+    bcc !skip+
+    cmp #$5B
+    bcs !skip+
+    clc
+    adc #$20
+!skip:
     sta B1                         // save char
     lda B0
     cmp #INPUT_CAP

@@ -4456,51 +4456,13 @@ def test_cursor_arity_one_panics(h):
     assert h.mpu.memory[ERROR_CODE_ZP] == ERR_ARITY
 
 
-# --- scroll ----------------------------------------------------------------
+# --- cls -------------------------------------------------------------------
 
 def _fill_screen_row(h, row: int, value: int) -> None:
     base = SCREEN_BASE + row * SCREEN_COLS
     for col in range(SCREEN_COLS):
         h.mpu.memory[base + col] = value
 
-
-def test_scroll_default_one_line(h):
-    """scroll() with no arg moves rows up by 1 (row 1 → row 0)."""
-    _fill_screen_row(h, 0, 0xAA)
-    _fill_screen_row(h, 1, 0xBB)
-    _eval_no_result(h, 'scroll()')
-    assert h.mpu.memory[SCREEN_BASE] == 0xBB
-    # row 24 (last) is blanked.
-    assert h.mpu.memory[SCREEN_BASE + 24 * SCREEN_COLS] == 0x20
-
-
-def test_scroll_two_lines(h):
-    """scroll(2) shifts rows up by 2 (row 2 → row 0)."""
-    _fill_screen_row(h, 0, 0x11)
-    _fill_screen_row(h, 1, 0x22)
-    _fill_screen_row(h, 2, 0x33)
-    _eval_no_result(h, 'scroll(2)')
-    assert h.mpu.memory[SCREEN_BASE] == 0x33
-
-
-def test_scroll_zero_is_noop(h):
-    """scroll(0) leaves the screen alone."""
-    _fill_screen_row(h, 0, 0x77)
-    _eval_no_result(h, 'scroll(0)')
-    assert h.mpu.memory[SCREEN_BASE] == 0x77
-
-
-def test_scroll_full_blanks_screen(h):
-    """scroll(SCREEN_ROWS) (=25) blanks every row."""
-    for row in range(25):
-        _fill_screen_row(h, row, 0x42)
-    _eval_no_result(h, 'scroll(25)')
-    # Every cell should be screen-code space ($20).
-    for i in range(25 * SCREEN_COLS):
-        assert h.mpu.memory[SCREEN_BASE + i] == 0x20, f"cell {i} not blanked"
-
-
-# --- cls -------------------------------------------------------------------
 
 def test_cls_blanks_screen(h):
     """`cls` keyword fills every cell with screen-code space."""
@@ -4621,9 +4583,11 @@ def _stub_getin_queue(h, bytes_in: bytes) -> None:
 
 
 def test_input_no_prompt_returns_buffer(h):
-    """input() reads chars until $0D, returns them as STR (no newline)."""
+    """input() reads chars until $0D, returns them as STR (no newline).
+    A-Z are lowercase-folded to match the lexer/REPL convention so input
+    bytes are comparable to source-code string literals."""
     _stub_getin_queue(h, b'HELLO\r')
-    assert _eval_to_str(h, 'input()') == b'HELLO'
+    assert _eval_to_str(h, 'input()') == b'hello'
 
 
 def test_input_empty_returns_empty_str(h):
@@ -4635,13 +4599,13 @@ def test_input_empty_returns_empty_str(h):
 def test_input_del_removes_last_char(h):
     """DEL ($14) removes the last buffered char before RETURN."""
     _stub_getin_queue(h, b'CAB\x14\r')
-    assert _eval_to_str(h, 'input()') == b'CA'
+    assert _eval_to_str(h, 'input()') == b'ca'
 
 
 def test_input_del_on_empty_is_noop(h):
     """DEL with empty buffer is ignored, doesn't underflow."""
     _stub_getin_queue(h, b'\x14\x14X\r')
-    assert _eval_to_str(h, 'input()') == b'X'
+    assert _eval_to_str(h, 'input()') == b'x'
 
 
 def test_input_echoes_to_screen(h):
