@@ -2129,17 +2129,8 @@ _bin_loop:
     cmp #$14
     beq _bin_del
 
-    // Append (if room). Lowercase-fold A-Z ($41..$5A → $61..$7A) so the
-    // stored bytes match the canonical lowercase encoding that the lexer and
-    // REPL line reader use; without this, `input()` returns bytes no source
-    // literal can express, breaking `==` / `find` / dict keys.
-    cmp #$41
-    bcc !skip+
-    cmp #$5B
-    bcs !skip+
-    clc
-    adc #$20
-!skip:
+    // Append (if room). Storage is PETSCII uppercase ($41-$5A), which is
+    // exactly what KERNAL_GETIN returns from the keyboard — no fold needed.
     sta B1                         // save char
     lda B0
     cmp #INPUT_CAP
@@ -2378,18 +2369,6 @@ _bedit_check_high_printable:
     jmp _bedit_loop
 
 _bedit_insert:
-    // Lowercase-fold ASCII A-Z so the lexer recognizes keywords (its keyword
-    // table is lowercase-only). The REPL's read_line does the same fold;
-    // edit() needs to match so a buffer typed in the editor and exec'd as
-    // a string call (`a = edit()` then `a()`) parses identically to a line
-    // typed at the prompt.
-    cmp #$41                           // 'A'
-    bcc _bedit_insert_do
-    cmp #$5B                           // 'Z'+1
-    bcs _bedit_insert_do
-    clc
-    adc #$20                           // A-Z → a-z
-_bedit_insert_do:
     jsr edit_insert_char
     jmp _bedit_after_key
 _bedit_newline:

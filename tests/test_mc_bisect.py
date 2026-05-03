@@ -16,9 +16,9 @@ def test_string_call_decr_only(hfp, n):
     h = hfp
     src = (
         f't1 = "n = {n}\\n'
-        'while n > 0:\\n'
+        'WHILE n > 0:\\n'
         '    n -= 1\\n'
-        'return n"\n'
+        'RETURN n"\n'
         't1()'
     )
     assert tp._eval(h, src) == 0
@@ -30,10 +30,10 @@ def test_string_call_with_rnd(hfp, n):
     h = hfp
     src = (
         f't1 = "n = {n}\\n'
-        'while n > 0:\\n'
-        '    x = rnd()\\n'
+        'WHILE n > 0:\\n'
+        '    x = RND()\\n'
         '    n -= 1\\n'
-        'return n"\n'
+        'RETURN n"\n'
         't1()'
     )
     tp._eval(h, src)
@@ -46,12 +46,12 @@ def test_string_call_compound_only(hfp, n):
     h = hfp
     src = (
         f't1 = "n = {n}\\n'
-        'while n > 0:\\n'
-        '    x = rnd()\\n'
-        '    y = rnd()\\n'
+        'WHILE n > 0:\\n'
+        '    x = RND()\\n'
+        '    y = RND()\\n'
         '    z = x*x + y*y\\n'
         '    n -= 1\\n'
-        'return n"\n'
+        'RETURN n"\n'
         't1()'
     )
     tp._eval(h, src)

@@ -23,16 +23,12 @@ _PTSC_TABLE = [0x80, 0x00, 0xC0, 0xE0, 0x40, 0xC0, 0x80, 0x80]
 def petscii_to_screen_code(b: int) -> int:
     """Mirror screen.asm's full PETSCII → screen-code lookup. Top 3 bits of
     the byte index a fixed offset table; result is `(table[b >> 5] + b) & 0xFF`.
-    Special cases:
-      - PETSCII $FF (π) → screen $5E (also π).
-      - PETSCII $61..$7A (lowercase ASCII letters) → screen-codes $01..$1A
-        (A..Z in the unshifted charset), so `print "hello"` displays as
-        `HELLO` rather than as a row of graphics.
+    The single special case is PETSCII $FF (π) → screen $5E (also π).
+    Internal storage is PETSCII uppercase ($41-$5A), which the general formula
+    maps to screen codes $01-$1A directly (A..Z in the unshifted charset).
     """
     if b == 0xFF:
         return 0x5E
-    if 0x61 <= b <= 0x7A:
-        return b - 0x60
     return (_PTSC_TABLE[b >> 5] + b) & 0xFF
 
 

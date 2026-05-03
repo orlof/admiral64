@@ -200,7 +200,7 @@ def test_append_within_capacity_no_grow(h):
     new_child = place_int(h, 0x9300, [0x33])
     _call_list_append(h, L, new_child)
 
-    assert h.read_word(L + H_PTR) == h_ptr_before, "should not have grown"
+    assert h.read_word(L + H_PTR) == h_ptr_before, "should NOT have grown"
     assert h.read_word(L + H_SIZE) == h_size_before
     obj = h.read_word(L + H_PTR)
     assert h.read_word(obj + O_LEN) == 3

@@ -280,17 +280,16 @@ def _read_screen_row(h, row: int) -> bytes:
 
 def test_draw_line_short_pads_blanks(h):
     """A 3-char line on row 0 → first 3 cells are screen codes, rest are $20."""
-    _setup_buffer(h, b"abc", cursor=3, capacity=20)
+    _setup_buffer(h, b"ABC", cursor=3, capacity=20)
     # Pre-paint row 0 with junk so we see real writes.
     for i in range(SCREEN_COLS):
         h.mpu.memory[SCREEN_BASE + i] = 0xEE
     h.write_word(W0, h.read_word(_addrs(h)["edit_buf_start"]))
     h.call("edit_draw_line", a=0)
     row = _read_screen_row(h, 0)
-    # PETSCII 'a'=$61 → screen code $01 (the $61..$7A range special-cases
-    # to $01..$1A so lowercase ASCII renders as uppercase glyphs in the
-    # unshifted charset).
-    assert row[0:3] == bytes([0x01, 0x02, 0x03])  # a/b/c → A/B/C
+    # PETSCII 'A'=$41 → screen code $01 via the general octant-table formula
+    # ($41 + $C0 = $01 mod 256).
+    assert row[0:3] == bytes([0x01, 0x02, 0x03])  # A/B/C
     assert all(b == 0x20 for b in row[3:])
 
 

@@ -227,30 +227,16 @@ screen_row_hi:
 //
 // Strategy: use the top 3 bits of the PETSCII byte (P >> 5, range 0..7) to
 // index an 8-byte offset table; the screen code is `table[P >> 5] + P`
-// (mod 256). Two special cases short-circuit the table lookup:
+// (mod 256). The general formula maps PETSCII uppercase $41..$5A to screen
+// codes $01..$1A directly via `table[2] = $C0`. Single special case:
 //   - PETSCII $FF is the π glyph; the formula would map to $7F (✓ check),
 //     so we route it to $5E (π in screen codes).
-//   - PETSCII $61..$7A (lowercase ASCII letters) → screen-codes $01..$1A,
-//     which render as A..Z in the unshifted charset. Without this, printing
-//     a lowercase string like "hello" in unshifted mode would emit the
-//     graphic block at screen-code $48..$4F. Since admiral source is
-//     internally lowercase ASCII (lexer/keyword convention) but the C64
-//     boots in unshifted mode for the BASIC look, this remap is what makes
-//     `print "hello"` display as HELLO.
 // Mirrors common C64 BASIC editor practice.
 // -----------------------------------------------------------------------------
 petscii_to_screen_code:
     cmp #$FF
-    bne _ptsc_not_pi
+    bne _ptsc_convert
     lda #$5E                     // π → π
-    rts
-_ptsc_not_pi:
-    cmp #$61
-    bcc _ptsc_convert
-    cmp #$7B
-    bcs _ptsc_convert
-    sec
-    sbc #$60                     // $61..$7A → $01..$1A
     rts
 _ptsc_convert:
     pha

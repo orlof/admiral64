@@ -14,7 +14,7 @@ def run_normalize(h, a_bytes: list[int]) -> list[int]:
     assert h.rsp == rsp_initial, "int_normalize violated stack discipline"
     # int_normalize returns the SAME handle (mutated in place).
     result_handle = h.read_word(RV)
-    assert result_handle == a, "int_normalize should return the same handle"
+    assert result_handle == a, "int_normalize should RETURN the same handle"
     return read_int(h, result_handle)
 
 

@@ -124,11 +124,12 @@ def test_typing_appends_to_buffer(h):
     assert _len(h) == 2
 
 
-def test_uppercase_letters_fold_to_lowercase(h):
-    """Typing PRINT (uppercase PETSCII) must arrive as `print` so the lexer
-    matches the lowercase keyword. Non-letter PETSCII passes through."""
+def test_keyboard_bytes_pass_through_unchanged(h):
+    """Internal storage is PETSCII uppercase ($41-$5A), which is exactly what
+    the keyboard produces in the default unshifted mode. The line reader does
+    no case fold — bytes pass through verbatim."""
     _drive_read_line(h, [ord(c) for c in "PrInT 1"])
-    assert _line(h) == b"print 1"
+    assert _line(h) == b"PrInT 1"
 
 
 def test_shift_space_normalizes_to_plain_space(h):
@@ -216,13 +217,13 @@ def test_finish_parks_cursor_at_end(h):
 # --- mid-line insert ---------------------------------------------------------
 
 def test_typing_mid_line_inserts(h):
-    """`abc` then HOME then RIGHT then `X` → `aXbc`."""
+    """`ABC` then HOME then RIGHT then `X` → `AXBC`."""
     _drive_read_line(h, [
-        ord("a"), ord("b"), ord("c"),
+        ord("A"), ord("B"), ord("C"),
         PET_HOME, PET_RIGHT,            # pos = 1
-        ord("X"),                        # 'X' folds to 'x'
+        ord("X"),
     ])
-    assert _line(h) == b"axbc"
+    assert _line(h) == b"AXBC"
     assert _pos(h) == 2
 
 
@@ -259,22 +260,22 @@ def test_insert_blank_full_buffer_noop(h):
 def test_redraw_paints_buffer(h):
     """After typing, screen row 0 col 1.. should hold the screen-codes for
     the buffer. A trailing space pads col len+1."""
-    _drive_read_line(h, [ord("h"), ord("i")])
-    # 'h'/'i' = lowercase ASCII → screen-codes $08/$09 in the unshifted
-    # charset (per petscii_to_screen_code's $61..$7A special case).
-    assert h.mpu.memory[SCREEN_BASE + 1] == 0x08    # 'h'
-    assert h.mpu.memory[SCREEN_BASE + 2] == 0x09    # 'i'
+    _drive_read_line(h, [ord("H"), ord("I")])
+    # PETSCII $48/$49 → screen-codes $08/$09 via petscii_to_screen_code's
+    # general octant table.
+    assert h.mpu.memory[SCREEN_BASE + 1] == 0x08    # 'H'
+    assert h.mpu.memory[SCREEN_BASE + 2] == 0x09    # 'I'
     assert h.mpu.memory[SCREEN_BASE + 3] == 0x20    # trailing pad
 
 
 def test_delete_erases_trailing_cell(h):
     """A delete at the end of the line must blank the cell where the
     deleted char used to be, not leave the old glyph behind."""
-    _drive_read_line(h, [ord("a"), ord("b"), ord("c"), PET_DEL])
-    # 'a','b' remain at cols 1,2; col 3 must be the trailing pad ($20),
-    # NOT the old 'c' screen-code.
-    assert h.mpu.memory[SCREEN_BASE + 1] == 0x01    # 'a'
-    assert h.mpu.memory[SCREEN_BASE + 2] == 0x02    # 'b'
+    _drive_read_line(h, [ord("A"), ord("B"), ord("C"), PET_DEL])
+    # 'A','B' remain at cols 1,2; col 3 must be the trailing pad ($20),
+    # NOT the old 'C' screen-code.
+    assert h.mpu.memory[SCREEN_BASE + 1] == 0x01    # 'A'
+    assert h.mpu.memory[SCREEN_BASE + 2] == 0x02    # 'B'
     assert h.mpu.memory[SCREEN_BASE + 3] == 0x20    # erased
 
 
@@ -284,21 +285,21 @@ def test_redraw_clears_to_end_of_row(h):
     one cell past `len`. Otherwise `UP` onto a short entry leaves the old
     line's tail visible past the new content."""
     # First drive: type a 6-char line. screen row 0 ends up holding the
-    # screen-codes for 'a'..'f' at cols 1..6.
-    _drive_read_line(h, [ord(c) for c in "abcdef"])
-    assert h.mpu.memory[SCREEN_BASE + 4] == 0x04    # 'd'
-    assert h.mpu.memory[SCREEN_BASE + 6] == 0x06    # 'f'
+    # screen-codes for 'A'..'F' at cols 1..6.
+    _drive_read_line(h, [ord(c) for c in "ABCDEF"])
+    assert h.mpu.memory[SCREEN_BASE + 4] == 0x04    # 'D'
+    assert h.mpu.memory[SCREEN_BASE + 6] == 0x06    # 'F'
 
     # Seed history with a shorter entry.
-    _save_to_history(h, b"xyz")
+    _save_to_history(h, b"XYZ")
 
-    # Second drive on the same anchor row — UP recalls "xyz", redraw must
+    # Second drive on the same anchor row — UP recalls "XYZ", redraw must
     # blank cells 4..39 even though only cells 4..6 held stale glyphs.
     _drive_read_line(h, [PET_UP])
-    assert h.mpu.memory[SCREEN_BASE + 1] == 0x18    # 'x'
-    assert h.mpu.memory[SCREEN_BASE + 2] == 0x19    # 'y'
-    assert h.mpu.memory[SCREEN_BASE + 3] == 0x1A    # 'z'
-    # Critical: the trailing 'd','e','f' must be erased.
+    assert h.mpu.memory[SCREEN_BASE + 1] == 0x18    # 'X'
+    assert h.mpu.memory[SCREEN_BASE + 2] == 0x19    # 'Y'
+    assert h.mpu.memory[SCREEN_BASE + 3] == 0x1A    # 'Z'
+    # Critical: the trailing 'D','E','F' must be erased.
     assert h.mpu.memory[SCREEN_BASE + 4] == 0x20
     assert h.mpu.memory[SCREEN_BASE + 5] == 0x20
     assert h.mpu.memory[SCREEN_BASE + 6] == 0x20

@@ -1894,54 +1894,57 @@ kw_bucket_hi:
 
 // Keyword bytes are written as raw ASCII hex because Kick Assembler's char
 // literals run through its current encoding (screen codes by default), and
-// none of the available encodings match ASCII for the lowercase range. The
+// none of the available encodings match ASCII for the uppercase range. The
 // inline ASCII spelling appears in the trailing comment for readability.
+//
+// Bytes are PETSCII uppercase ($41-$5A) — matches what the C64 keyboard
+// produces in the default unshifted mode, and what disk PETSCII text uses.
 kw_bucket_1:
     .byte 0                          // no 1-char keywords
 
 kw_bucket_2:
-    .byte $69,$66, TK_IF             // "if"
-    .byte $6F,$72, TK_OR             // "or"
-    .byte $69,$73, TK_IS             // "is"
-    .byte $69,$6E, TK_IN             // "in"
+    .byte $49,$46, TK_IF             // "IF"
+    .byte $4F,$52, TK_OR             // "OR"
+    .byte $49,$53, TK_IS             // "IS"
+    .byte $49,$4E, TK_IN             // "IN"
     .byte 0
 
 kw_bucket_3:
-    .byte $61,$6E,$64, TK_AND        // "and"
-    .byte $6E,$6F,$74, TK_NOT        // "not"
-    .byte $66,$6F,$72, TK_FOR        // "for"
-    .byte $64,$65,$6C, TK_DEL        // "del"
-    .byte $74,$72,$79, TK_TRY        // "try"
-    .byte $63,$6C,$73, TK_CLS        // "cls"
+    .byte $41,$4E,$44, TK_AND        // "AND"
+    .byte $4E,$4F,$54, TK_NOT        // "NOT"
+    .byte $46,$4F,$52, TK_FOR        // "FOR"
+    .byte $44,$45,$4C, TK_DEL        // "DEL"
+    .byte $54,$52,$59, TK_TRY        // "TRY"
+    .byte $43,$4C,$53, TK_CLS        // "CLS"
     .byte 0
 
 kw_bucket_4:
-    .byte $65,$6C,$69,$66, TK_ELIF      // "elif"
-    .byte $65,$6C,$73,$65, TK_ELSE      // "else"
-    .byte $70,$61,$73,$73, TK_PASS      // "pass"
-    .byte $74,$72,$75,$65, TK_TRUE      // "true"
-    .byte $6E,$6F,$6E,$65, TK_NONE_KW   // "none"
+    .byte $45,$4C,$49,$46, TK_ELIF      // "ELIF"
+    .byte $45,$4C,$53,$45, TK_ELSE      // "ELSE"
+    .byte $50,$41,$53,$53, TK_PASS      // "PASS"
+    .byte $54,$52,$55,$45, TK_TRUE      // "TRUE"
+    .byte $4E,$4F,$4E,$45, TK_NONE_KW   // "NONE"
     .byte 0
 
 kw_bucket_5:
-    .byte $66,$61,$6C,$73,$65, TK_FALSE  // "false"
-    .byte $77,$68,$69,$6C,$65, TK_WHILE  // "while"
-    .byte $62,$72,$65,$61,$6B, TK_BREAK  // "break"
-    .byte $72,$61,$69,$73,$65, TK_RAISE  // "raise"
-    .byte $70,$72,$69,$6E,$74, TK_PRINT  // "print"
+    .byte $46,$41,$4C,$53,$45, TK_FALSE  // "FALSE"
+    .byte $57,$48,$49,$4C,$45, TK_WHILE  // "WHILE"
+    .byte $42,$52,$45,$41,$4B, TK_BREAK  // "BREAK"
+    .byte $52,$41,$49,$53,$45, TK_RAISE  // "RAISE"
+    .byte $50,$52,$49,$4E,$54, TK_PRINT  // "PRINT"
     .byte 0
 
 kw_bucket_6:
-    .byte $72,$65,$74,$75,$72,$6E, TK_RETURN  // "return"
-    .byte $65,$78,$63,$65,$70,$74, TK_EXCEPT  // "except"
+    .byte $52,$45,$54,$55,$52,$4E, TK_RETURN  // "RETURN"
+    .byte $45,$58,$43,$45,$50,$54, TK_EXCEPT  // "EXCEPT"
     .byte 0
 
 kw_bucket_7:
-    .byte $66,$69,$6E,$61,$6C,$6C,$79, TK_FINALLY  // "finally"
+    .byte $46,$49,$4E,$41,$4C,$4C,$59, TK_FINALLY  // "FINALLY"
     .byte 0
 
 kw_bucket_8:
-    .byte $63,$6F,$6E,$74,$69,$6E,$75,$65, TK_CONTINUE  // "continue"
+    .byte $43,$4F,$4E,$54,$49,$4E,$55,$45, TK_CONTINUE  // "CONTINUE"
     .byte 0
 
 // -----------------------------------------------------------------------------

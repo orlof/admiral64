@@ -9,10 +9,10 @@ def test_inline_montecarlo_small(hfp):
         'n = 20\n'
         'hits = 0\n'
         'i = 0\n'
-        'while i < n:\n'
-        '    x = rnd()\n'
-        '    y = rnd()\n'
-        '    if x*x + y*y < 1.0:\n'
+        'WHILE i < n:\n'
+        '    x = RND()\n'
+        '    y = RND()\n'
+        '    IF x*x + y*y < 1.0:\n'
         '        hits = hits + 1\n'
         '    i = i + 1\n'
         '4 * hits'  # final expression
@@ -31,10 +31,10 @@ def test_inline_montecarlo_full(hfp):
         'n = 200\n'
         'hits = 0\n'
         'i = 0\n'
-        'while i < n:\n'
-        '    x = rnd()\n'
-        '    y = rnd()\n'
-        '    if x*x + y*y < 1.0:\n'
+        'WHILE i < n:\n'
+        '    x = RND()\n'
+        '    y = RND()\n'
+        '    IF x*x + y*y < 1.0:\n'
         '        hits += 1\n'
         '    i += 1\n'
         '4 * hits'
@@ -46,7 +46,7 @@ def test_string_call_with_rnd(hfp):
     """Minimal string-call lambda calling rnd()."""
     h = hfp
     src = (
-        't1 = "return rnd()"\n'
+        't1 = "RETURN RND()"\n'
         't1()'
     )
     tp._eval(h, src)
@@ -56,7 +56,7 @@ def test_string_call_with_int_arith(hfp):
     """Minimal string-call lambda doing pure int arithmetic."""
     h = hfp
     src = (
-        't1 = "return 1 + 2"\n'
+        't1 = "RETURN 1 + 2"\n'
         't1()'
     )
     assert tp._eval(h, src) == 3
@@ -66,7 +66,7 @@ def test_string_call_with_float_arith(hfp):
     """Minimal string-call lambda doing FP arithmetic."""
     h = hfp
     src = (
-        't1 = "return 1.0 + 2.0"\n'
+        't1 = "RETURN 1.0 + 2.0"\n'
         't1()'
     )
     tp._eval(h, src)
@@ -75,7 +75,7 @@ def test_string_call_with_float_arith(hfp):
 def test_string_call_one_iter_loop(hfp):
     h = hfp
     src = (
-        't1 = "i = 0\\nwhile i < 5: i = i + 1\\nreturn i"\n'
+        't1 = "i = 0\\nWHILE i < 5: i = i + 1\\nRETURN i"\n'
         't1()'
     )
     assert tp._eval(h, src) == 5
@@ -85,7 +85,7 @@ def test_string_call_augass(hfp):
     """Augmented assignment inside a string-call lambda."""
     h = hfp
     src = (
-        't1 = "i = 0\\ni += 5\\nreturn i"\n'
+        't1 = "i = 0\\ni += 5\\nRETURN i"\n'
         't1()'
     )
     assert tp._eval(h, src) == 5
@@ -94,7 +94,7 @@ def test_string_call_augass(hfp):
 def test_string_call_if_inside_while(hfp):
     h = hfp
     src = (
-        't1 = "n = 5\\nh = 0\\ni = 0\\nwhile i < n:\\n    if i < 3:\\n        h = h + 1\\n    i = i + 1\\nreturn h"\n'
+        't1 = "n = 5\\nh = 0\\ni = 0\\nWHILE i < n:\\n    IF i < 3:\\n        h = h + 1\\n    i = i + 1\\nRETURN h"\n'
         't1()'
     )
     assert tp._eval(h, src) == 3
@@ -103,7 +103,7 @@ def test_string_call_if_inside_while(hfp):
 def test_string_call_float_compare_in_if(hfp):
     h = hfp
     src = (
-        't1 = "x = 0.5\\nif x*x < 1.0:\\n    return 1\\nreturn 0"\n'
+        't1 = "x = 0.5\\nIF x*x < 1.0:\\n    RETURN 1\\nRETURN 0"\n'
         't1()'
     )
     assert tp._eval(h, src) == 1
@@ -116,13 +116,13 @@ def test_montecarlo_string_call_n5(hfp):
         't1 = "n = 5\\n'
         'hits = 0\\n'
         'i = 0\\n'
-        'while i < n:\\n'
-        '    x = rnd()\\n'
-        '    y = rnd()\\n'
-        '    if x*x + y*y < 1.0:\\n'
+        'WHILE i < n:\\n'
+        '    x = RND()\\n'
+        '    y = RND()\\n'
+        '    IF x*x + y*y < 1.0:\\n'
         '        hits += 1\\n'
         '    i += 1\\n'
-        'return 4 * hits"\n'
+        'RETURN 4 * hits"\n'
         't1()'
     )
     tp._eval(h, src)
@@ -134,13 +134,13 @@ def test_montecarlo_string_call_n20(hfp):
         't1 = "n = 20\\n'
         'hits = 0\\n'
         'i = 0\\n'
-        'while i < n:\\n'
-        '    x = rnd()\\n'
-        '    y = rnd()\\n'
-        '    if x*x + y*y < 1.0:\\n'
+        'WHILE i < n:\\n'
+        '    x = RND()\\n'
+        '    y = RND()\\n'
+        '    IF x*x + y*y < 1.0:\\n'
         '        hits += 1\\n'
         '    i += 1\\n'
-        'return 4 * hits"\n'
+        'RETURN 4 * hits"\n'
         't1()'
     )
     tp._eval(h, src)
@@ -156,13 +156,13 @@ def test_mc_string_call_bisect_n(hfp, n):
         f't1 = "n = {n}\\n'
         'hits = 0\\n'
         'i = 0\\n'
-        'while i < n:\\n'
-        '    x = rnd()\\n'
-        '    y = rnd()\\n'
-        '    if x*x + y*y < 1.0:\\n'
+        'WHILE i < n:\\n'
+        '    x = RND()\\n'
+        '    y = RND()\\n'
+        '    IF x*x + y*y < 1.0:\\n'
         '        hits += 1\\n'
         '    i += 1\\n'
-        'return 4 * hits"\n'
+        'RETURN 4 * hits"\n'
         't1()'
     )
     tp._eval(h, src)
@@ -177,10 +177,10 @@ def test_mc_inline_bisect_n(hfp, n):
         f'n = {n}\n'
         'hits = 0\n'
         'i = 0\n'
-        'while i < n:\n'
-        '    x = rnd()\n'
-        '    y = rnd()\n'
-        '    if x*x + y*y < 1.0:\n'
+        'WHILE i < n:\n'
+        '    x = RND()\n'
+        '    y = RND()\n'
+        '    IF x*x + y*y < 1.0:\n'
         '        hits += 1\n'
         '    i += 1\n'
         '4 * hits'
@@ -195,13 +195,13 @@ def test_montecarlo_via_string_call(hfp):
         't1 = "n = 20\\n'
         'hits = 0\\n'
         'i = 0\\n'
-        'while i < n:\\n'
-        '    x = rnd()\\n'
-        '    y = rnd()\\n'
-        '    if x*x + y*y < 1.0:\\n'
+        'WHILE i < n:\\n'
+        '    x = RND()\\n'
+        '    y = RND()\\n'
+        '    IF x*x + y*y < 1.0:\\n'
         '        hits += 1\\n'
         '    i += 1\\n'
-        'return 4 * hits"\n'
+        'RETURN 4 * hits"\n'
         't1()'
     )
     tp._eval(h, src)

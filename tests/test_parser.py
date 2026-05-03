@@ -209,15 +209,15 @@ def test_comparison_with_arithmetic(h):
 # --- bool / none literals ---------------------------------------------------
 
 def test_true_literal(h):
-    assert _eval_bool(h, "true") is True
+    assert _eval_bool(h, "TRUE") is True
 
 
 def test_false_literal(h):
-    assert _eval_bool(h, "false") is False
+    assert _eval_bool(h, "FALSE") is False
 
 
 def test_none_literal_returns_none_handle(h):
-    payload = list("none".encode("ascii"))
+    payload = list("NONE".encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
@@ -266,15 +266,15 @@ def test_str_plus_negative_int(h):
 
 
 def test_str_plus_bool_true(h):
-    assert _eval_str(h, '"f=" + true') == b"f=true"
+    assert _eval_str(h, '"f=" + TRUE') == b"f=TRUE"
 
 
 def test_str_plus_bool_false(h):
-    assert _eval_str(h, '"f=" + false') == b"f=false"
+    assert _eval_str(h, '"f=" + FALSE') == b"f=FALSE"
 
 
 def test_str_plus_none(h):
-    assert _eval_str(h, '"v=" + none') == b"v=none"
+    assert _eval_str(h, '"v=" + NONE') == b"v=NONE"
 
 
 def test_str_plus_list(h):
@@ -299,15 +299,15 @@ def test_str_plus_chained(h):
 # --- boolean: not / and / or ------------------------------------------------
 
 @pytest.mark.parametrize("text,expected", [
-    ("not true", False),
-    ("not false", True),
-    ("not none", True),
-    ("not 0", True),
-    ("not 1", False),
-    ("not -1", False),
-    ("not not true", True),
-    ("not (1 < 2)", False),
-    ("not 1 < 2", False),         # `not (1<2)` per std precedence
+    ("NOT TRUE", False),
+    ("NOT FALSE", True),
+    ("NOT NONE", True),
+    ("NOT 0", True),
+    ("NOT 1", False),
+    ("NOT -1", False),
+    ("NOT NOT TRUE", True),
+    ("NOT (1 < 2)", False),
+    ("NOT 1 < 2", False),         # `not (1<2)` per std precedence
 ])
 def test_not(h, text, expected):
     assert _eval_bool(h, text) is expected
@@ -319,32 +319,32 @@ def _eval_int(h, source: str) -> int:
 
 def test_and_returns_lhs_when_falsy(h):
     """Python: `0 and 5` returns 0, not False."""
-    assert _eval_int(h, "0 and 5") == 0
+    assert _eval_int(h, "0 AND 5") == 0
 
 
 def test_and_returns_rhs_when_lhs_truthy(h):
     """Python: `7 and 5` returns 5."""
-    assert _eval_int(h, "7 and 5") == 5
+    assert _eval_int(h, "7 AND 5") == 5
 
 
 def test_or_returns_lhs_when_truthy(h):
     """Python: `7 or 5` returns 7."""
-    assert _eval_int(h, "7 or 5") == 7
+    assert _eval_int(h, "7 OR 5") == 7
 
 
 def test_or_returns_rhs_when_lhs_falsy(h):
     """Python: `0 or 5` returns 5."""
-    assert _eval_int(h, "0 or 5") == 5
+    assert _eval_int(h, "0 OR 5") == 5
 
 
 @pytest.mark.parametrize("text,expected", [
-    ("true and true", True),
-    ("true and false", False),
-    ("false and true", False),
-    ("true or false", True),
-    ("false or false", False),
-    ("true and true and true", True),
-    ("false or true or false", True),
+    ("TRUE AND TRUE", True),
+    ("TRUE AND FALSE", False),
+    ("FALSE AND TRUE", False),
+    ("TRUE OR FALSE", True),
+    ("FALSE OR FALSE", False),
+    ("TRUE AND TRUE AND TRUE", True),
+    ("FALSE OR TRUE OR FALSE", True),
 ])
 def test_bool_chains(h, text, expected):
     assert _eval_bool(h, text) is expected
@@ -352,28 +352,28 @@ def test_bool_chains(h, text, expected):
 
 def test_and_or_precedence(h):
     """`a or b and c` is `a or (b and c)` — and binds tighter than or."""
-    assert _eval_bool(h, "true or false and false") is True
-    assert _eval_bool(h, "false or true and true") is True
-    assert _eval_bool(h, "false or true and false") is False
+    assert _eval_bool(h, "TRUE OR FALSE AND FALSE") is True
+    assert _eval_bool(h, "FALSE OR TRUE AND TRUE") is True
+    assert _eval_bool(h, "FALSE OR TRUE AND FALSE") is False
 
 
 def test_not_with_and_or(h):
     """`not x and y` is `(not x) and y`."""
-    assert _eval_bool(h, "not false and true") is True
-    assert _eval_bool(h, "not true and true") is False
+    assert _eval_bool(h, "NOT FALSE AND TRUE") is True
+    assert _eval_bool(h, "NOT TRUE AND TRUE") is False
 
 
 # --- is / is not -----------------------------------------------------------
 
 @pytest.mark.parametrize("text,expected", [
-    ("none is none", True),
-    ("true is true", True),
-    ("false is false", True),
-    ("true is false", False),
-    ("none is true", False),
-    ("none is not none", False),
-    ("true is not false", True),
-    ("none is not true", True),
+    ("NONE IS NONE", True),
+    ("TRUE IS TRUE", True),
+    ("FALSE IS FALSE", True),
+    ("TRUE IS FALSE", False),
+    ("NONE IS TRUE", False),
+    ("NONE IS NOT NONE", False),
+    ("TRUE IS NOT FALSE", True),
+    ("NONE IS NOT TRUE", True),
 ])
 def test_is(h, text, expected):
     assert _eval_bool(h, text) is expected
@@ -383,7 +383,7 @@ def test_is_with_int_literals_returns_false_for_separate_handles(h):
     """Each int literal allocates a fresh handle, so `1 is 1` is False
     here (in CPython it's True due to small-int caching, but we don't
     intern). This documents our actual semantics."""
-    assert _eval_bool(h, "1 is 1") is False
+    assert _eval_bool(h, "1 IS 1") is False
 
 
 # --- list literal ----------------------------------------------------------
@@ -539,36 +539,36 @@ def test_dict_lt_dict_value_false(h):
 
 def test_globals_returns_dict(h):
     from conftest import TYPE_DICT
-    assert _eval_container_type_and_len(h, 'globals()')[0] == TYPE_DICT
+    assert _eval_container_type_and_len(h, 'GLOBALS()')[0] == TYPE_DICT
 
 
 def test_locals_returns_dict(h):
     from conftest import TYPE_DICT
-    assert _eval_container_type_and_len(h, 'locals()')[0] == TYPE_DICT
+    assert _eval_container_type_and_len(h, 'LOCALS()')[0] == TYPE_DICT
 
 
 def test_print_globals_with_assigned_var(h):
     """`a = 1; print globals()` — scope dict's TYPE_NAME keys must render."""
-    _eval(h, 'a = 1\nprint globals()')
+    _eval(h, 'a = 1\nPRINT GLOBALS()')
 
 
 def test_print_globals_with_dict_var(h):
     """REPL idiom: assign a dict, then print globals()."""
-    _eval(h, 'd = <"ADMIRAL": 114>\nprint globals()')
+    _eval(h, 'd = <"ADMIRAL": 114>\nPRINT GLOBALS()')
 
 
 def test_print_self_referential_dict(h):
     """`g = globals(); print g` — cycle in dict; recursion guard emits `<...>`
     instead of looping forever."""
-    _eval(h, 'g = globals()\nprint g')
+    _eval(h, 'g = GLOBALS()\nPRINT g')
 
 
 def test_print_self_referential_list(h):
     """List that contains itself — guard emits `[...]`."""
     src = (
         'a = []\n'
-        'a.append(a)\n'
-        'print a'
+        'a.APPEND(a)\n'
+        'PRINT a'
     )
     _eval(h, src)
 
@@ -580,7 +580,7 @@ def test_del_name_removes_binding(h):
     src = (
         'a = 7\n'
         'b = 1\n'
-        'del a\n'
+        'DEL a\n'
         'b'
     )
     assert _eval(h, src) == 1
@@ -588,7 +588,7 @@ def test_del_name_removes_binding(h):
 
 def test_del_name_then_lookup_panics(h):
     """After `del a`, looking up `a` panics (no fallback to parent here)."""
-    src = 'a = 7\ndel a\na'
+    src = 'a = 7\nDEL a\na'
     payload = list(src.encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
@@ -597,7 +597,7 @@ def test_del_name_then_lookup_panics(h):
 
 def test_del_name_missing_panics(h):
     """`del a` when `a` is unbound is an error."""
-    payload = list(b'del a')
+    payload = list(b'DEL a')
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000, expect_panic=True)
@@ -607,7 +607,7 @@ def test_del_name_then_reassign(h):
     """After `del a`, `a = ...` re-introduces the binding cleanly."""
     src = (
         'a = 1\n'
-        'del a\n'
+        'DEL a\n'
         'a = 99\n'
         'a'
     )
@@ -620,7 +620,7 @@ def test_del_name_does_not_affect_other_bindings(h):
         'a = 10\n'
         'b = 20\n'
         'c = 30\n'
-        'del b\n'
+        'DEL b\n'
         'a + c'
     )
     assert _eval(h, src) == 40
@@ -746,7 +746,7 @@ def test_float_int_mix_through_assignments(hfp):
 
 def test_three_rnd_calls_via_assignments(hfp):
     """Original Phase-4 workaround test, now without the workaround."""
-    src = "a = rnd()\nb = rnd()\nc = rnd()\na + b + c"
+    src = "a = RND()\nb = RND()\nc = RND()\na + b + c"
     # Each rnd() consumes 4 rand8 bytes; sum across 3 calls.
     assert _eval_float(hfp, src) == pytest.approx(0.8532366217, rel=1e-6)
 
@@ -1128,7 +1128,7 @@ def test_assignment_with_float(hfp):
 def test_pass_alone(h):
     """`pass` is a no-op statement."""
     from conftest import TYPE_NONE
-    payload = list("pass".encode("ascii"))
+    payload = list("PASS".encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
@@ -1138,49 +1138,49 @@ def test_pass_alone(h):
 
 def test_if_truthy_runs_body(h):
     """`if true: x = 5` sets x."""
-    src = "x = 0\nif true:\n    x = 5\nx"
+    src = "x = 0\nIF TRUE:\n    x = 5\nx"
     assert _eval(h, src) == 5
 
 
 def test_if_falsy_skips_body(h):
     """`if false: x = 5` leaves x unchanged."""
-    src = "x = 0\nif false:\n    x = 5\nx"
+    src = "x = 0\nIF FALSE:\n    x = 5\nx"
     assert _eval(h, src) == 0
 
 
 def test_if_int_condition_truthy(h):
     """Non-zero ints are truthy."""
-    src = "x = 0\nif 1:\n    x = 7\nx"
+    src = "x = 0\nIF 1:\n    x = 7\nx"
     assert _eval(h, src) == 7
 
 
 def test_if_int_condition_falsy(h):
-    src = "x = 0\nif 0:\n    x = 7\nx"
+    src = "x = 0\nIF 0:\n    x = 7\nx"
     assert _eval(h, src) == 0
 
 
 def test_if_else_truthy(h):
-    src = "x = 0\nif true:\n    x = 1\nelse:\n    x = 2\nx"
+    src = "x = 0\nIF TRUE:\n    x = 1\nELSE:\n    x = 2\nx"
     assert _eval(h, src) == 1
 
 
 def test_if_else_falsy(h):
-    src = "x = 0\nif false:\n    x = 1\nelse:\n    x = 2\nx"
+    src = "x = 0\nIF FALSE:\n    x = 1\nELSE:\n    x = 2\nx"
     assert _eval(h, src) == 2
 
 
 def test_if_elif_first_branch(h):
-    src = "x = 0\nif true:\n    x = 1\nelif true:\n    x = 2\nelse:\n    x = 3\nx"
+    src = "x = 0\nIF TRUE:\n    x = 1\nELIF TRUE:\n    x = 2\nELSE:\n    x = 3\nx"
     assert _eval(h, src) == 1
 
 
 def test_if_elif_second_branch(h):
-    src = "x = 0\nif false:\n    x = 1\nelif true:\n    x = 2\nelse:\n    x = 3\nx"
+    src = "x = 0\nIF FALSE:\n    x = 1\nELIF TRUE:\n    x = 2\nELSE:\n    x = 3\nx"
     assert _eval(h, src) == 2
 
 
 def test_if_elif_else_branch(h):
-    src = "x = 0\nif false:\n    x = 1\nelif false:\n    x = 2\nelse:\n    x = 3\nx"
+    src = "x = 0\nIF FALSE:\n    x = 1\nELIF FALSE:\n    x = 2\nELSE:\n    x = 3\nx"
     assert _eval(h, src) == 3
 
 
@@ -1189,23 +1189,23 @@ def test_if_elif_chain_long(h):
     src = (
         "n = 3\n"
         "x = -1\n"
-        "if n == 1:\n    x = 100\n"
-        "elif n == 2:\n    x = 200\n"
-        "elif n == 3:\n    x = 300\n"
-        "elif n == 4:\n    x = 400\n"
-        "else:\n    x = 999\n"
+        "IF n == 1:\n    x = 100\n"
+        "ELIF n == 2:\n    x = 200\n"
+        "ELIF n == 3:\n    x = 300\n"
+        "ELIF n == 4:\n    x = 400\n"
+        "ELSE:\n    x = 999\n"
         "x"
     )
     assert _eval(h, src) == 300
 
 
 def test_if_with_complex_condition(h):
-    src = "x = 0\nif 1 + 2 == 3:\n    x = 42\nx"
+    src = "x = 0\nIF 1 + 2 == 3:\n    x = 42\nx"
     assert _eval(h, src) == 42
 
 
 def test_if_with_and_or(h):
-    src = "x = 0\nif true and 5 > 2:\n    x = 9\nx"
+    src = "x = 0\nIF TRUE AND 5 > 2:\n    x = 9\nx"
     assert _eval(h, src) == 9
 
 
@@ -1213,8 +1213,8 @@ def test_nested_if(h):
     """Nested if-statements work — skip_suite handles INDENT depth."""
     src = (
         "x = 0\n"
-        "if true:\n"
-        "    if true:\n"
+        "IF TRUE:\n"
+        "    IF TRUE:\n"
         "        x = 5\n"
         "x"
     )
@@ -1224,10 +1224,10 @@ def test_nested_if(h):
 def test_nested_if_inner_skipped(h):
     src = (
         "x = 0\n"
-        "if true:\n"
-        "    if false:\n"
+        "IF TRUE:\n"
+        "    IF FALSE:\n"
         "        x = 5\n"
-        "    else:\n"
+        "    ELSE:\n"
         "        x = 10\n"
         "x"
     )
@@ -1239,10 +1239,10 @@ def test_nested_if_outer_skipped(h):
     nested if."""
     src = (
         "x = 100\n"
-        "if false:\n"
-        "    if true:\n"
+        "IF FALSE:\n"
+        "    IF TRUE:\n"
         "        x = 1\n"
-        "    else:\n"
+        "    ELSE:\n"
         "        x = 2\n"
         "    x = 3\n"
         "x"
@@ -1252,7 +1252,7 @@ def test_nested_if_outer_skipped(h):
 
 def test_if_body_multiple_statements(h):
     src = (
-        "if true:\n"
+        "IF TRUE:\n"
         "    x = 1\n"
         "    y = 2\n"
         "    z = x + y\n"
@@ -1263,13 +1263,13 @@ def test_if_body_multiple_statements(h):
 
 def test_pass_in_block(h):
     """`pass` is fine as a body — `if false: pass` shouldn't crash."""
-    src = "x = 5\nif false:\n    pass\nx"
+    src = "x = 5\nIF FALSE:\n    PASS\nx"
     assert _eval(h, src) == 5
 
 
 def test_if_after_assignment_in_chain(h):
     """if-statement followed by another statement at top level."""
-    src = "x = 1\nif true:\n    x = 2\ny = x + 100\ny"
+    src = "x = 1\nIF TRUE:\n    x = 2\ny = x + 100\ny"
     assert _eval(h, src) == 102
 
 
@@ -1277,18 +1277,18 @@ def test_if_after_assignment_in_chain(h):
 
 def test_while_zero_iterations(h):
     """`while false: ...` — body never runs."""
-    src = "x = 0\nwhile false:\n    x = 99\nx"
+    src = "x = 0\nWHILE FALSE:\n    x = 99\nx"
     assert _eval(h, src) == 0
 
 
 def test_while_simple_count(h):
     """Count up to 5."""
-    src = "i = 0\nwhile i < 5:\n    i = i + 1\ni"
+    src = "i = 0\nWHILE i < 5:\n    i = i + 1\ni"
     assert _eval(h, src) == 5
 
 
 def test_while_count_to_10(h):
-    src = "i = 0\nwhile i < 10:\n    i = i + 1\ni"
+    src = "i = 0\nWHILE i < 10:\n    i = i + 1\ni"
     assert _eval(h, src) == 10
 
 
@@ -1297,7 +1297,7 @@ def test_while_accumulator(h):
     src = (
         "i = 1\n"
         "s = 0\n"
-        "while i <= 10:\n"
+        "WHILE i <= 10:\n"
         "    s = s + i\n"
         "    i = i + 1\n"
         "s"
@@ -1310,7 +1310,7 @@ def test_while_factorial(h):
     src = (
         "n = 5\n"
         "f = 1\n"
-        "while n > 1:\n"
+        "WHILE n > 1:\n"
         "    f = f * n\n"
         "    n = n - 1\n"
         "f"
@@ -1323,8 +1323,8 @@ def test_while_with_if_inside(h):
     src = (
         "i = 0\n"
         "s = 0\n"
-        "while i <= 10:\n"
-        "    if i % 2 == 0:\n"
+        "WHILE i <= 10:\n"
+        "    IF i % 2 == 0:\n"
         "        s = s + i\n"
         "    i = i + 1\n"
         "s"
@@ -1339,9 +1339,9 @@ def test_nested_while(h):
         "b = 4\n"
         "result = 0\n"
         "i = 0\n"
-        "while i < a:\n"
+        "WHILE i < a:\n"
         "    j = 0\n"
-        "    while j < b:\n"
+        "    WHILE j < b:\n"
         "        result = result + 1\n"
         "        j = j + 1\n"
         "    i = i + 1\n"
@@ -1354,7 +1354,7 @@ def test_while_with_complex_condition(h):
     """Loop until two conditions both fail."""
     src = (
         "i = 0\n"
-        "while i < 10 and i != 7:\n"
+        "WHILE i < 10 AND i != 7:\n"
         "    i = i + 1\n"
         "i"
     )
@@ -1367,10 +1367,10 @@ def test_while_break_simple(h):
     """`break` exits the while loop."""
     src = (
         "i = 0\n"
-        "while true:\n"
+        "WHILE TRUE:\n"
         "    i = i + 1\n"
-        "    if i == 5:\n"
-        "        break\n"
+        "    IF i == 5:\n"
+        "        BREAK\n"
         "i"
     )
     assert _eval(h, src) == 5
@@ -1380,8 +1380,8 @@ def test_while_break_at_start(h):
     """`break` as first statement in body — runs zero times."""
     src = (
         "i = 0\n"
-        "while true:\n"
-        "    break\n"
+        "WHILE TRUE:\n"
+        "    BREAK\n"
         "    i = 99\n"
         "i"
     )
@@ -1393,10 +1393,10 @@ def test_while_continue_simple(h):
     src = (
         "i = 0\n"
         "s = 0\n"
-        "while i < 10:\n"
+        "WHILE i < 10:\n"
         "    i = i + 1\n"
-        "    if i == 5:\n"
-        "        continue\n"
+        "    IF i == 5:\n"
+        "        CONTINUE\n"
         "    s = s + i\n"
         "s"
     )
@@ -1409,11 +1409,11 @@ def test_break_only_breaks_inner_loop(h):
     src = (
         "outer = 0\n"
         "inner_total = 0\n"
-        "while outer < 3:\n"
+        "WHILE outer < 3:\n"
         "    j = 0\n"
-        "    while j < 10:\n"
-        "        if j == 2:\n"
-        "            break\n"
+        "    WHILE j < 10:\n"
+        "        IF j == 2:\n"
+        "            BREAK\n"
         "        inner_total = inner_total + 1\n"
         "        j = j + 1\n"
         "    outer = outer + 1\n"
@@ -1427,12 +1427,12 @@ def test_continue_only_continues_inner_loop(h):
     src = (
         "outer = 0\n"
         "skipped = 0\n"
-        "while outer < 2:\n"
+        "WHILE outer < 2:\n"
         "    j = 0\n"
-        "    while j < 5:\n"
+        "    WHILE j < 5:\n"
         "        j = j + 1\n"
-        "        if j == 3:\n"
-        "            continue\n"
+        "        IF j == 3:\n"
+        "            CONTINUE\n"
         "        skipped = skipped + 1\n"
         "    outer = outer + 1\n"
         "skipped"
@@ -1448,7 +1448,7 @@ def test_for_over_list_simple(h):
     """Sum elements of a list."""
     src = (
         "s = 0\n"
-        "for x in [1, 2, 3, 4, 5]:\n"
+        "FOR x IN [1, 2, 3, 4, 5]:\n"
         "    s = s + x\n"
         "s"
     )
@@ -1458,7 +1458,7 @@ def test_for_over_list_simple(h):
 def test_for_over_tuple(h):
     src = (
         "s = 0\n"
-        "for x in (10, 20, 30):\n"
+        "FOR x IN (10, 20, 30):\n"
         "    s = s + x\n"
         "s"
     )
@@ -1467,7 +1467,7 @@ def test_for_over_tuple(h):
 
 def test_for_over_empty_list(h):
     """Empty list — body never runs."""
-    src = "s = 99\nfor x in []:\n    s = 0\ns"
+    src = "s = 99\nFOR x IN []:\n    s = 0\ns"
     assert _eval(h, src) == 99
 
 
@@ -1475,9 +1475,9 @@ def test_for_with_break(h):
     """`break` exits the for loop."""
     src = (
         "s = 0\n"
-        "for x in [1, 2, 3, 4, 5]:\n"
-        "    if x == 4:\n"
-        "        break\n"
+        "FOR x IN [1, 2, 3, 4, 5]:\n"
+        "    IF x == 4:\n"
+        "        BREAK\n"
         "    s = s + x\n"
         "s"
     )
@@ -1488,9 +1488,9 @@ def test_for_with_continue(h):
     """`continue` skips to next element."""
     src = (
         "s = 0\n"
-        "for x in [1, 2, 3, 4, 5]:\n"
-        "    if x == 3:\n"
-        "        continue\n"
+        "FOR x IN [1, 2, 3, 4, 5]:\n"
+        "    IF x == 3:\n"
+        "        CONTINUE\n"
         "    s = s + x\n"
         "s"
     )
@@ -1502,7 +1502,7 @@ def test_for_via_variable(h):
     src = (
         "xs = [10, 20, 30]\n"
         "s = 0\n"
-        "for x in xs:\n"
+        "FOR x IN xs:\n"
         "    s = s + x\n"
         "s"
     )
@@ -1513,8 +1513,8 @@ def test_nested_for(h):
     """Cross product of two lists."""
     src = (
         "s = 0\n"
-        "for a in [1, 2, 3]:\n"
-        "    for b in [10, 20]:\n"
+        "FOR a IN [1, 2, 3]:\n"
+        "    FOR b IN [10, 20]:\n"
         "        s = s + a * b\n"
         "s"
     )
@@ -1526,8 +1526,8 @@ def test_for_inside_while(h):
     src = (
         "i = 0\n"
         "total = 0\n"
-        "while i < 3:\n"
-        "    for x in [1, 2]:\n"
+        "WHILE i < 3:\n"
+        "    FOR x IN [1, 2]:\n"
         "        total = total + x\n"
         "    i = i + 1\n"
         "total"
@@ -1537,7 +1537,7 @@ def test_for_inside_while(h):
 
 def test_for_loop_var_outlives_loop(h):
     """After the loop, the loop variable still holds the last value."""
-    src = "for x in [10, 20, 30]:\n    pass\nx"
+    src = "FOR x IN [10, 20, 30]:\n    PASS\nx"
     assert _eval(h, src) == 30
 
 
@@ -1563,7 +1563,7 @@ def _eval_with_screen(h, source: str) -> bytes:
 
 
 def test_print_int(h):
-    screen = _eval_with_screen(h, "print 5")
+    screen = _eval_with_screen(h, "PRINT 5")
     # Screen code for '5' = 0x35 (same as ASCII).
     assert screen[0] == 0x35
     # '5' alone, then space-fill afterwards.
@@ -1571,37 +1571,37 @@ def test_print_int(h):
 
 
 def test_print_multi_digit(h):
-    screen = _eval_with_screen(h, "print 1234")
+    screen = _eval_with_screen(h, "PRINT 1234")
     assert screen[:4] == bytes([0x31, 0x32, 0x33, 0x34])  # '1','2','3','4'
 
 
 def test_print_negative(h):
-    screen = _eval_with_screen(h, "print -42")
+    screen = _eval_with_screen(h, "PRINT -42")
     # '-' = 0x2D, '4' = 0x34, '2' = 0x32
     assert screen[:3] == bytes([0x2D, 0x34, 0x32])
 
 
 def test_print_arithmetic(h):
-    screen = _eval_with_screen(h, "print 1 + 2 * 3")
+    screen = _eval_with_screen(h, "PRINT 1 + 2 * 3")
     assert screen[0] == 0x37  # '7'
 
 
 def test_print_two_args_space_separated(h):
     """`print a, b` — space-separated, like Python 2 / DCPU std_print."""
-    screen = _eval_with_screen(h, "print 1, 2")
+    screen = _eval_with_screen(h, "PRINT 1, 2")
     # '1', ' ', '2', then space fill.
     assert screen[:3] == bytes([0x31, 0x20, 0x32])
     assert screen[3] == 0x20
 
 
 def test_print_three_args(h):
-    screen = _eval_with_screen(h, "print 1, 2, 3")
+    screen = _eval_with_screen(h, "PRINT 1, 2, 3")
     assert screen[:5] == bytes([0x31, 0x20, 0x32, 0x20, 0x33])
 
 
 def test_print_paren_tuple_renders_as_tuple(h):
     """`print (1, 2)` — explicit parens → single tuple value, repr-rendered."""
-    screen = _eval_with_screen(h, "print (1, 2)")
+    screen = _eval_with_screen(h, "PRINT (1, 2)")
     # Renders as "(1,2)" — uses STR_LPAREN, STR_COMMA_SPACE, STR_RPAREN; the
     # comma renderer omits the trailing space (statics.asm note).
     assert screen[:5] == bytes([0x28, 0x31, 0x2C, 0x32, 0x29])
@@ -1609,40 +1609,39 @@ def test_print_paren_tuple_renders_as_tuple(h):
 
 def test_print_no_args(h):
     """Bare `print` — just emits a newline (cursor advances)."""
-    _eval_with_screen(h, "print")
+    _eval_with_screen(h, "PRINT")
 
 
 def test_print_string(h):
-    screen = _eval_with_screen(h, 'print "Hi"')
-    # 'H' (0x48) → screen code 0x08; 'i' (0x69) → 0x69 (lowercase outside the
-    # subtract-$40 range, passes through).
+    screen = _eval_with_screen(h, 'PRINT "HI"')
+    # PETSCII $48/$49 → screen codes $08/$09.
     assert screen[0] == petscii_to_screen_code(ord("H"))
-    assert screen[1] == petscii_to_screen_code(ord("i"))
+    assert screen[1] == petscii_to_screen_code(ord("I"))
 
 
 def test_print_true(h):
-    screen = _eval_with_screen(h, "print true")
+    screen = _eval_with_screen(h, "PRINT TRUE")
     # "true" → screen codes for t,r,u,e
-    expected = bytes(petscii_to_screen_code(ord(c)) for c in "true")
+    expected = bytes(petscii_to_screen_code(ord(c)) for c in "TRUE")
     assert screen[:4] == expected
 
 
 def test_print_false(h):
-    screen = _eval_with_screen(h, "print false")
-    expected = bytes(petscii_to_screen_code(ord(c)) for c in "false")
+    screen = _eval_with_screen(h, "PRINT FALSE")
+    expected = bytes(petscii_to_screen_code(ord(c)) for c in "FALSE")
     assert screen[:5] == expected
 
 
 def test_print_none(h):
-    screen = _eval_with_screen(h, "print none")
-    expected = bytes(petscii_to_screen_code(ord(c)) for c in "none")
+    screen = _eval_with_screen(h, "PRINT NONE")
+    expected = bytes(petscii_to_screen_code(ord(c)) for c in "NONE")
     assert screen[:4] == expected
 
 
 def test_print_in_loop(h):
     """Multiple prints; each ends with newline."""
     h.call("screen_init")
-    src = "for x in [1, 2, 3]:\n    print x"
+    src = "FOR x IN [1, 2, 3]:\n    PRINT x"
     payload = list(src.encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
@@ -1654,7 +1653,7 @@ def test_print_in_loop(h):
 
 
 def test_print_with_variable(h):
-    screen = _eval_with_screen(h, "x = 42\nprint x")
+    screen = _eval_with_screen(h, "x = 42\nPRINT x")
     assert screen[:2] == bytes([0x34, 0x32])  # '4','2'
 
 
@@ -1663,10 +1662,10 @@ def test_program_compute_and_print(h):
     src = (
         "n = 5\n"
         "f = 1\n"
-        "while n > 1:\n"
+        "WHILE n > 1:\n"
         "    f = f * n\n"
         "    n = n - 1\n"
-        "print f\n"
+        "PRINT f\n"
     )
     h.call("screen_init")
     payload = list(src.encode("ascii"))
@@ -1682,42 +1681,42 @@ def test_program_compute_and_print(h):
 # --- built-in functions: len, range ----------------------------------------
 
 @pytest.mark.parametrize("text,expected", [
-    ('len("")', 0),
-    ('len("hello")', 5),
-    ("len([])", 0),
-    ("len([1, 2, 3])", 3),
-    ("len([1, 2, 3, 4, 5, 6, 7])", 7),
-    ("len((1, 2))", 2),
-    ("len(<>)", 0),
-    ("len(<1: 10, 2: 20>)", 2),
+    ('LEN("")', 0),
+    ('LEN("hello")', 5),
+    ("LEN([])", 0),
+    ("LEN([1, 2, 3])", 3),
+    ("LEN([1, 2, 3, 4, 5, 6, 7])", 7),
+    ("LEN((1, 2))", 2),
+    ("LEN(<>)", 0),
+    ("LEN(<1: 10, 2: 20>)", 2),
 ])
 def test_len_builtin(h, text, expected):
     assert _eval(h, text) == expected
 
 
 def test_len_via_variable(h):
-    src = "xs = [10, 20, 30, 40]\nlen(xs)"
+    src = "xs = [10, 20, 30, 40]\nLEN(xs)"
     assert _eval(h, src) == 4
 
 
 def test_range_builtin_simple(h):
     """range(N) returns a list — len(range(5)) = 5."""
-    src = "len(range(5))"
+    src = "LEN(RANGE(5))"
     assert _eval(h, src) == 5
 
 
 def test_range_elements(h):
     """range(5)[2] should be 2."""
-    assert _eval(h, "range(5)[0]") == 0
-    assert _eval(h, "range(5)[2]") == 2
-    assert _eval(h, "range(5)[4]") == 4
+    assert _eval(h, "RANGE(5)[0]") == 0
+    assert _eval(h, "RANGE(5)[2]") == 2
+    assert _eval(h, "RANGE(5)[4]") == 4
 
 
 def test_range_in_for(h):
     """The canonical `for i in range(N):` loop."""
     src = (
         "s = 0\n"
-        "for i in range(10):\n"
+        "FOR i IN RANGE(10):\n"
         "    s = s + i\n"
         "s"
     )
@@ -1727,16 +1726,16 @@ def test_range_in_for(h):
 
 def test_range_zero(h):
     """range(0) is an empty list."""
-    assert _eval(h, "len(range(0))") == 0
+    assert _eval(h, "LEN(RANGE(0))") == 0
 
 
 def test_nested_calls(h):
     """`len(range(N))` — calls inside calls."""
-    assert _eval(h, "len(range(7))") == 7
+    assert _eval(h, "LEN(RANGE(7))") == 7
 
 
 def test_call_with_arithmetic_arg(h):
-    assert _eval(h, "len(range(2 + 3))") == 5
+    assert _eval(h, "LEN(RANGE(2 + 3))") == 5
 
 
 # --- string-as-function (Admiral pattern) ----------------------------------
@@ -1744,7 +1743,7 @@ def test_call_with_arithmetic_arg(h):
 def test_str_function_simplest(h):
     """A string with `return` is callable."""
     src = (
-        'add = "return a + b"\n'
+        'add = "RETURN a + b"\n'
         'add(a=1, b=2)'
     )
     assert _eval(h, src) == 3
@@ -1752,7 +1751,7 @@ def test_str_function_simplest(h):
 
 def test_str_function_with_arithmetic(h):
     src = (
-        'square = "return x * x"\n'
+        'square = "RETURN x * x"\n'
         'square(x=7)'
     )
     assert _eval(h, src) == 49
@@ -1760,7 +1759,7 @@ def test_str_function_with_arithmetic(h):
 
 def test_str_function_no_args(h):
     src = (
-        'forty_two = "return 42"\n'
+        'forty_two = "RETURN 42"\n'
         'forty_two()'
     )
     assert _eval(h, src) == 42
@@ -1783,7 +1782,7 @@ def test_str_function_no_return_yields_none(h):
 
 def test_str_function_with_multiple_kwargs(h):
     src = (
-        'wt = "return weight * 2"\n'
+        'wt = "RETURN weight * 2"\n'
         'wt(weight=21)'
     )
     assert _eval(h, src) == 42
@@ -1793,7 +1792,7 @@ def test_str_function_locals_dont_pollute_global(h):
     """Function-local assignments shouldn't affect the caller."""
     src = (
         'x = 100\n'
-        'shadow = "x = 7\\nreturn x"\n'   # x is local in the function
+        'shadow = "x = 7\\nRETURN x"\n'   # x is local in the function
         'shadow()\n'
         'x'                               # still 100 in global scope
     )
@@ -1807,7 +1806,7 @@ def test_str_function_arg_shadows_global_in_body(h):
     """Inside the function, the kwarg `n` shadows any global `n`."""
     src = (
         'n = 100\n'
-        'inc = "return n + 1"\n'
+        'inc = "RETURN n + 1"\n'
         'inc(n=5)'
     )
     # n=5 is bound in the new function scope; body sees that, not the global.
@@ -1817,8 +1816,8 @@ def test_str_function_arg_shadows_global_in_body(h):
 def test_str_function_returns_complex_value(h):
     """Return a list."""
     src = (
-        'pair = "return [a, b]"\n'
-        'len(pair(a=10, b=20))'
+        'pair = "RETURN [a, b]"\n'
+        'LEN(pair(a=10, b=20))'
     )
     assert _eval(h, src) == 2
 
@@ -1826,7 +1825,7 @@ def test_str_function_returns_complex_value(h):
 def test_nested_str_function_calls(h):
     """One function calls another."""
     src = (
-        'add = "return x + y"\n'
+        'add = "RETURN x + y"\n'
         'add(x=3, y=4)'
     )
     assert _eval(h, src) == 7
@@ -1834,7 +1833,7 @@ def test_nested_str_function_calls(h):
 
 def test_str_function_in_arithmetic(h):
     src = (
-        'sq = "return n * n"\n'
+        'sq = "RETURN n * n"\n'
         'sq(n=5) + 1'
     )
     assert _eval(h, src) == 26
@@ -1844,7 +1843,7 @@ def test_multi_line_function_body(h):
     r"""Function bodies can span multiple statements via `\n` escapes
     in the string literal."""
     src = (
-        r'compute = "a = x + 1\nb = a * 2\nreturn b"'  '\n'
+        r'compute = "a = x + 1\nb = a * 2\nRETURN b"'  '\n'
         'compute(x=10)'
     )
     # x=10, a = 11, b = 22.
@@ -1854,7 +1853,7 @@ def test_multi_line_function_body(h):
 def test_function_with_loop(h):
     r"""Function body can contain a loop."""
     src = (
-        r'sum_to = "s = 0\ni = 1\nwhile i <= n:\n    s = s + i\n    i = i + 1\nreturn s"'  '\n'
+        r'sum_to = "s = 0\ni = 1\nWHILE i <= n:\n    s = s + i\n    i = i + 1\nRETURN s"'  '\n'
         'sum_to(n=10)'
     )
     # 1+2+...+10 = 55
@@ -1863,7 +1862,7 @@ def test_function_with_loop(h):
 
 def test_function_with_if(h):
     src = (
-        r'sign = "if x > 0:\n    return 1\nif x < 0:\n    return -1\nreturn 0"'  '\n'
+        r'sign = "IF x > 0:\n    RETURN 1\nIF x < 0:\n    RETURN -1\nRETURN 0"'  '\n'
         'sign(x=42)'
     )
     assert _eval(h, src) == 1
@@ -1871,7 +1870,7 @@ def test_function_with_if(h):
 
 def test_function_with_if_else(h):
     src = (
-        r'absval = "if x < 0:\n    return -x\nelse:\n    return x"'  '\n'
+        r'absval = "IF x < 0:\n    RETURN -x\nELSE:\n    RETURN x"'  '\n'
         'absval(x=-5)'
     )
     assert _eval(h, src) == 5
@@ -1883,7 +1882,7 @@ def test_function_reads_global(h):
     """Function body sees a global variable via the parent-scope link."""
     src = (
         'pi_approx = 314\n'
-        'show = "return pi_approx"\n'
+        'show = "RETURN pi_approx"\n'
         'show()'
     )
     assert _eval(h, src) == 314
@@ -1893,7 +1892,7 @@ def test_function_assignment_is_local(h):
     """Assignment inside a function shadows global only locally."""
     src = (
         'x = 100\n'
-        'modify = "x = 7\\nreturn x"\n'
+        'modify = "x = 7\\nRETURN x"\n'
         'modify()\n'
         'x'
     )
@@ -1905,7 +1904,7 @@ def test_function_assignment_is_local(h):
 def test_recursive_factorial(h):
     """The defining test: a recursive function calling itself by name."""
     src = (
-        r'fact = "if n <= 1:\n    return 1\nreturn n * fact(n=n-1)"'  '\n'
+        r'fact = "IF n <= 1:\n    RETURN 1\nRETURN n * fact(n=n-1)"'  '\n'
         'fact(n=6)'
     )
     # 6! = 720
@@ -1915,7 +1914,7 @@ def test_recursive_factorial(h):
 def test_recursive_fibonacci(h):
     """fib(7) = 13. Tests deep recursion (~41 calls; py65 sim is slow)."""
     src = (
-        'fib = "if n < 2:\\n    return n\\nreturn fib(n=n-1) + fib(n=n-2)"\n'
+        'fib = "IF n < 2:\\n    RETURN n\\nRETURN fib(n=n-1) + fib(n=n-2)"\n'
         'fib(n=7)'
     )
     # fib: 0,1,1,2,3,5,8,13
@@ -1925,8 +1924,8 @@ def test_recursive_fibonacci(h):
 def test_function_call_within_function(h):
     """One function calls another via global scope lookup."""
     src = (
-        'doubler = "return 2 * x"\n'
-        'apply = "return doubler(x=n)"\n'
+        'doubler = "RETURN 2 * x"\n'
+        'apply = "RETURN doubler(x=n)"\n'
         'apply(n=21)'
     )
     assert _eval(h, src) == 42
@@ -1935,7 +1934,7 @@ def test_function_call_within_function(h):
 def test_function_can_call_builtin(h):
     """Function bodies can use range() and len() — they're in global scope."""
     src = (
-        'count_to = "return len(range(n))"\n'
+        'count_to = "RETURN LEN(RANGE(n))"\n'
         'count_to(n=7)'
     )
     assert _eval(h, src) == 7
@@ -1945,8 +1944,8 @@ def test_nested_function_access_grandparent(h):
     """A function calling a function. Inner sees outer via chain → global."""
     src = (
         'g = 100\n'
-        'inner = "return g + x"\n'
-        'outer = "return inner(x=5)"\n'
+        'inner = "RETURN g + x"\n'
+        'outer = "RETURN inner(x=5)"\n'
         'outer()'
     )
     # inner needs g (global) and x (its own kwarg). Both work via chain.
@@ -1974,7 +1973,7 @@ def test_attribute_read_chained(h):
 def test_method_call_me_binding(h):
     """The receiver dict is bound as `me` in the method's scope."""
     src = (
-        'obj = <"value": 99, "get": "return me.value">\n'
+        'obj = <"value": 99, "get": "RETURN ME.value">\n'
         'obj.get()'
     )
     assert _eval(h, src) == 99
@@ -1982,7 +1981,7 @@ def test_method_call_me_binding(h):
 
 def test_method_call_with_kwarg(h):
     src = (
-        'obj = <"base": 10, "add": "return me.base + n">\n'
+        'obj = <"base": 10, "add": "RETURN ME.base + n">\n'
         'obj.add(n=5)'
     )
     assert _eval(h, src) == 15
@@ -1990,7 +1989,7 @@ def test_method_call_with_kwarg(h):
 
 def test_method_with_arithmetic(h):
     src = (
-        'rect = <"w": 4, "h": 5, "area": "return me.w * me.h">\n'
+        'rect = <"w": 4, "h": 5, "area": "RETURN ME.w * ME.h">\n'
         'rect.area()'
     )
     assert _eval(h, src) == 20
@@ -1999,8 +1998,8 @@ def test_method_with_arithmetic(h):
 def test_method_does_not_pollute_other_calls(h):
     """After `obj.method()`, plain calls don't see `me`."""
     src = (
-        'obj = <"f": "return 0">\n'
-        'plain = "return 42"\n'
+        'obj = <"f": "RETURN 0">\n'
+        'plain = "RETURN 42"\n'
         'obj.f()\n'
         'plain()'
     )
@@ -2013,8 +2012,8 @@ def test_method_does_not_pollute_other_calls(h):
 def test_method_followed_by_arithmetic_then_plain_call(h):
     """`obj.f() + plain()` — plain() must NOT inherit me."""
     src = (
-        'obj = <"f": "return me.x", "x": 100>\n'
-        'plain = "return 1"\n'
+        'obj = <"f": "RETURN ME.x", "x": 100>\n'
+        'plain = "RETURN 1"\n'
         'obj.f() + plain()'
     )
     # If plain() inherited me=obj, then `me.x` would still work in plain
@@ -2027,7 +2026,7 @@ def test_property_read_doesnt_set_me_for_later_call(h):
     """`a.b` (no parens) followed by another `f()` later — f must not get me=a."""
     src = (
         'd = <"x": 5>\n'
-        'fn = "return me"\n'
+        'fn = "RETURN ME"\n'
         'd.x\n'                 # property read, no call follows
         'fn()'                  # plain call. me should be 0 (NONE-equivalent).
     )
@@ -2044,7 +2043,7 @@ def test_method_inside_method(h):
     """A method calls another method on the same receiver. Inner method
     needs its own me binding (= the receiver of the inner call)."""
     src = (
-        'obj = <"x": 7, "helper": "return me.x * 2", "outer": "return me.helper() + 1">\n'
+        'obj = <"x": 7, "helper": "RETURN ME.x * 2", "outer": "RETURN ME.helper() + 1">\n'
         'obj.outer()'
     )
     # outer.me = obj. helper called via me.helper() → helper.me = obj.
@@ -2055,7 +2054,7 @@ def test_method_inside_method(h):
 def test_state_mutation_via_me(h):
     """A method mutates the receiver via `me.key = ...`."""
     src = (
-        'counter = <"value": 0, "tick": "me.value = me.value + 1\\nreturn me.value">\n'
+        'counter = <"value": 0, "tick": "ME.value = ME.value + 1\\nRETURN ME.value">\n'
         'counter.tick()\n'
         'counter.tick()\n'
         'counter.tick()\n'
@@ -2098,7 +2097,7 @@ def test_attribute_assignment_returns_none(h):
 def test_method_can_mutate_unrelated_global(h):
     """A method can also do regular scope_set on its own locals."""
     src = (
-        'obj = <"x": 5, "double": "n = me.x * 2\\nreturn n">\n'
+        'obj = <"x": 5, "double": "n = ME.x * 2\\nRETURN n">\n'
         'obj.double()'
     )
     assert _eval(h, src) == 10
@@ -2109,8 +2108,8 @@ def test_full_object_pattern(h):
     src = (
         'account = <'
         '  "balance": 100, '
-        '  "deposit": "me.balance = me.balance + amount\\nreturn me.balance", '
-        '  "withdraw": "me.balance = me.balance - amount\\nreturn me.balance"'
+        '  "deposit": "ME.balance = ME.balance + amount\\nRETURN ME.balance", '
+        '  "withdraw": "ME.balance = ME.balance - amount\\nRETURN ME.balance"'
         '>\n'
         'account.deposit(amount=50)\n'
         'account.deposit(amount=25)\n'
@@ -2129,8 +2128,8 @@ def test_lexical_scoping_not_dynamic(h):
     we use lexical scoping (parent = ROOT_SCOPE), not dynamic (parent =
     caller's scope)."""
     src = (
-        'helper = "return y"\n'
-        'caller = "y = 99\\nreturn helper()"\n'
+        'helper = "RETURN y"\n'
+        'caller = "y = 99\\nRETURN helper()"\n'
         'caller()'
     )
     payload = list(src.encode("ascii"))
@@ -2143,7 +2142,7 @@ def test_lexical_scoping_not_dynamic(h):
 def test_return_yields_ctrl_handle(h):
     """At parser_stmt level, `return e` produces a TYPE_CTRL handle."""
     from conftest import RV
-    src = "return 42"
+    src = "RETURN 42"
     payload = list(src.encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
@@ -2430,7 +2429,7 @@ def test_long_path_assign(h):
 def test_method_call_on_dot_chain(h):
     """`a.b.method()` — receiver is the dict reached via chain."""
     src = (
-        'a = <"b": <"v": 7, "get": "return me.v">>\n'
+        'a = <"b": <"v": 7, "get": "RETURN ME.v">>\n'
         'a.b.get()'
     )
     assert _eval(h, src) == 7
@@ -2439,7 +2438,7 @@ def test_method_call_on_dot_chain(h):
 def test_method_call_on_subscript(h):
     """`xs[0].method()` — receiver is a list element."""
     src = (
-        'xs = [<"v": 11, "get": "return me.v">]\n'
+        'xs = [<"v": 11, "get": "RETURN ME.v">]\n'
         'xs[0].get()'
     )
     assert _eval(h, src) == 11
@@ -2448,7 +2447,7 @@ def test_method_call_on_subscript(h):
 def test_method_call_on_long_path(h):
     """`a.b.lst[0].method()` — long-path method invocation."""
     src = (
-        'a = <"b": <"lst": [<"v": 9, "get": "return me.v">]>>\n'
+        'a = <"b": <"lst": [<"v": 9, "get": "RETURN ME.v">]>>\n'
         'a.b.lst[0].get()'
     )
     assert _eval(h, src) == 9
@@ -2457,7 +2456,7 @@ def test_method_call_on_long_path(h):
 def test_method_mutates_deep_receiver(h):
     """Method on a deep receiver mutates that receiver, not the outer."""
     src = (
-        'a = <"b": <"v": 0, "set": "me.v = n\\nreturn me.v">>\n'
+        'a = <"b": <"v": 0, "set": "ME.v = n\\nRETURN ME.v">>\n'
         'a.b.set(n=5)\n'
         'a.b.v'
     )
@@ -2519,8 +2518,8 @@ def test_and_short_circuits_rhs_call(h):
     """`0 and bump()` must not call bump."""
     src = (
         'tracker = <"n": 0>\n'
-        'bump = "tracker.n = tracker.n + 1\\nreturn 1"\n'
-        'r = 0 and bump()\n'           # LHS falsy → bump skipped
+        'bump = "tracker.n = tracker.n + 1\\nRETURN 1"\n'
+        'r = 0 AND bump()\n'           # LHS falsy → bump skipped
         'tracker.n'
     )
     assert _eval(h, src) == 0
@@ -2530,8 +2529,8 @@ def test_and_evaluates_rhs_when_lhs_truthy(h):
     """`1 and bump()` must call bump."""
     src = (
         'tracker = <"n": 0>\n'
-        'bump = "tracker.n = tracker.n + 1\\nreturn 1"\n'
-        'r = 1 and bump()\n'
+        'bump = "tracker.n = tracker.n + 1\\nRETURN 1"\n'
+        'r = 1 AND bump()\n'
         'tracker.n'
     )
     assert _eval(h, src) == 1
@@ -2541,8 +2540,8 @@ def test_or_short_circuits_rhs_call(h):
     """`1 or bump()` must not call bump."""
     src = (
         'tracker = <"n": 0>\n'
-        'bump = "tracker.n = tracker.n + 1\\nreturn 1"\n'
-        'r = 1 or bump()\n'
+        'bump = "tracker.n = tracker.n + 1\\nRETURN 1"\n'
+        'r = 1 OR bump()\n'
         'tracker.n'
     )
     assert _eval(h, src) == 0
@@ -2552,8 +2551,8 @@ def test_or_evaluates_rhs_when_lhs_falsy(h):
     """`0 or bump()` must call bump."""
     src = (
         'tracker = <"n": 0>\n'
-        'bump = "tracker.n = tracker.n + 1\\nreturn 1"\n'
-        'r = 0 or bump()\n'
+        'bump = "tracker.n = tracker.n + 1\\nRETURN 1"\n'
+        'r = 0 OR bump()\n'
         'tracker.n'
     )
     assert _eval(h, src) == 1
@@ -2563,8 +2562,8 @@ def test_and_chain_stops_at_first_falsy(h):
     """`1 and 0 and bump()` — short-circuits at the 0; bump never called."""
     src = (
         'tracker = <"n": 0>\n'
-        'bump = "tracker.n = tracker.n + 1\\nreturn 1"\n'
-        'r = 1 and 0 and bump()\n'
+        'bump = "tracker.n = tracker.n + 1\\nRETURN 1"\n'
+        'r = 1 AND 0 AND bump()\n'
         'tracker.n'
     )
     assert _eval(h, src) == 0
@@ -2574,8 +2573,8 @@ def test_or_chain_stops_at_first_truthy(h):
     """`0 or 1 or bump()` — short-circuits at the 1; bump never called."""
     src = (
         'tracker = <"n": 0>\n'
-        'bump = "tracker.n = tracker.n + 1\\nreturn 1"\n'
-        'r = 0 or 1 or bump()\n'
+        'bump = "tracker.n = tracker.n + 1\\nRETURN 1"\n'
+        'r = 0 OR 1 OR bump()\n'
         'tracker.n'
     )
     assert _eval(h, src) == 0
@@ -2586,8 +2585,8 @@ def test_short_circuit_with_subscript_rhs(h):
     src = (
         'xs = [10, 20, 30]\n'
         'tracker = <"n": 0>\n'
-        'mark = "tracker.n = 1\\nreturn 0"\n'
-        'r = 0 and xs[mark()]\n'        # falsy short-circuit, mark not called
+        'mark = "tracker.n = 1\\nRETURN 0"\n'
+        'r = 0 AND xs[mark()]\n'        # falsy short-circuit, mark not called
         'tracker.n'
     )
     assert _eval(h, src) == 0
@@ -2597,7 +2596,7 @@ def test_short_circuit_with_dot_chain_rhs(h):
     """RHS like `a.b.c` must skip cleanly through dot chain."""
     src = (
         'a = <"b": <"c": 0>>\n'
-        'r = 1 or a.b.c\n'              # truthy short-circuit; access skipped
+        'r = 1 OR a.b.c\n'              # truthy short-circuit; access skipped
         'r'
     )
     assert _eval(h, src) == 1
@@ -2607,8 +2606,8 @@ def test_short_circuit_with_arithmetic_rhs(h):
     """RHS with + and * must skip through ordinary infix ops."""
     src = (
         'tracker = <"n": 0>\n'
-        'side = "tracker.n = 1\\nreturn 5"\n'
-        'r = 0 and 2 + 3 * side()\n'
+        'side = "tracker.n = 1\\nRETURN 5"\n'
+        'r = 0 AND 2 + 3 * side()\n'
         'tracker.n'
     )
     assert _eval(h, src) == 0
@@ -2617,7 +2616,7 @@ def test_short_circuit_with_arithmetic_rhs(h):
 def test_short_circuit_preserves_lhs_value(h):
     """Skip path returns LHS handle; value should round-trip unchanged."""
     src = (
-        '0 and 999'   # LHS falsy → returns 0
+        '0 AND 999'   # LHS falsy → returns 0
     )
     assert _eval(h, src) == 0
 
@@ -2626,8 +2625,8 @@ def test_short_circuit_with_paren_grouped_rhs(h):
     """RHS inside parens — depth tracker must consume the whole group."""
     src = (
         'tracker = <"n": 0>\n'
-        'side = "tracker.n = 1\\nreturn 1"\n'
-        'r = 0 and (1 + side())\n'
+        'side = "tracker.n = 1\\nRETURN 1"\n'
+        'r = 0 AND (1 + side())\n'
         'tracker.n'
     )
     assert _eval(h, src) == 0
@@ -2637,8 +2636,8 @@ def test_short_circuit_with_unary_rhs(h):
     """RHS starts with prefix unary — skip must consume it."""
     src = (
         'tracker = <"n": 0>\n'
-        'side = "tracker.n = 1\\nreturn 1"\n'
-        'r = 1 or -side()\n'            # truthy → skip; side not called
+        'side = "tracker.n = 1\\nRETURN 1"\n'
+        'r = 1 OR -side()\n'            # truthy → skip; side not called
         'tracker.n'
     )
     assert _eval(h, src) == 0
@@ -2648,8 +2647,8 @@ def test_mixed_and_or_short_circuit(h):
     """`0 or 1 and side()` — `1 and side()` evaluates (1 truthy), side called."""
     src = (
         'tracker = <"n": 0>\n'
-        'side = "tracker.n = 7\\nreturn 1"\n'
-        'r = 0 or 1 and side()\n'
+        'side = "tracker.n = 7\\nRETURN 1"\n'
+        'r = 0 OR 1 AND side()\n'
         'tracker.n'
     )
     assert _eval(h, src) == 7
@@ -2659,9 +2658,9 @@ def test_short_circuit_in_if_condition(h):
     """`if 0 and side(): ...` — side not called even though `if` evaluates."""
     src = (
         'tracker = <"n": 0>\n'
-        'side = "tracker.n = 1\\nreturn true"\n'
-        'if 0 and side():\n'
-        '    pass\n'
+        'side = "tracker.n = 1\\nRETURN TRUE"\n'
+        'IF 0 AND side():\n'
+        '    PASS\n'
         'tracker.n'
     )
     assert _eval(h, src) == 0
@@ -2716,10 +2715,10 @@ def test_multiline_dict_value_on_next_line(h):
     """Newline after `:` allowed."""
     src = (
         'd = <\n'
-        '    "key":\n'
+        '    "KEY":\n'
         '        99\n'
         '>\n'
-        'd["key"]'
+        'd["KEY"]'
     )
     assert _eval(h, src) == 99
 
@@ -2760,7 +2759,7 @@ def test_for_over_dict_iterates_entries(h):
         'd = <1: 10, 2: 20, 3: 30>\n'
         'k_total = 0\n'
         'v_total = 0\n'
-        'for k, v in d:\n'
+        'FOR k, v IN d:\n'
         '    k_total = k_total + k\n'
         '    v_total = v_total + v\n'
         'k_total + v_total * 100'
@@ -2773,7 +2772,7 @@ def test_inline_for_body(h):
     """`for x in [1,2,3]: r = x` — inline simple-statement body."""
     src = (
         'r = 0\n'
-        'for x in [1,2,3]: r = x\n'
+        'FOR x IN [1,2,3]: r = x\n'
         'r'
     )
     assert _eval(h, src) == 3
@@ -2784,7 +2783,7 @@ def test_inline_for_dict_tuple_target(h):
     src = (
         'd = <"ADMIRAL": 114>\n'
         'r = 0\n'
-        'for name, size in d: r = size\n'
+        'FOR name, size IN d: r = size\n'
         'r'
     )
     assert _eval(h, src) == 114
@@ -2794,7 +2793,7 @@ def test_inline_if_body(h):
     """`if x: r = 1` — inline simple-statement body."""
     src = (
         'r = 0\n'
-        'if 1: r = 1\n'
+        'IF 1: r = 1\n'
         'r'
     )
     assert _eval(h, src) == 1
@@ -2804,7 +2803,7 @@ def test_inline_if_skipped(h):
     """Inline if-body is skipped when condition is false."""
     src = (
         'r = 7\n'
-        'if 0: r = 1\n'
+        'IF 0: r = 1\n'
         'r'
     )
     assert _eval(h, src) == 7
@@ -2814,7 +2813,7 @@ def test_inline_while_body(h):
     """`while x: ...` with inline body."""
     src = (
         'i = 0\n'
-        'while i < 3: i = i + 1\n'
+        'WHILE i < 3: i = i + 1\n'
         'i'
     )
     assert _eval(h, src) == 3
@@ -2825,7 +2824,7 @@ def test_for_over_dict_keys_only(h):
     src = (
         'd = <"a": 1, "b": 2, "c": 3>\n'
         'count = 0\n'
-        'for k, _ in d:\n'
+        'FOR k, _ IN d:\n'
         '    count = count + d[k]\n'
         'count'
     )
@@ -2837,7 +2836,7 @@ def test_for_over_dict_entry_via_index(h):
     src = (
         'd = <1: 100, 2: 200>\n'
         'total = 0\n'
-        'for entry in d:\n'
+        'FOR entry IN d:\n'
         '    total = total + entry[0] + entry[1]\n'
         'total'
     )
@@ -2847,7 +2846,7 @@ def test_for_over_dict_entry_via_index(h):
 def test_for_over_empty_dict_zero_iterations(h):
     src = (
         'count = 0\n'
-        'for k, v in <>:\n'
+        'FOR k, v IN <>:\n'
         '    count = count + 1\n'
         'count'
     )
@@ -2859,10 +2858,10 @@ def test_for_over_dict_with_break(h):
     src = (
         'd = <1: 10, 2: 20, 3: 30>\n'
         'last_v = 0\n'
-        'for k, v in d:\n'
+        'FOR k, v IN d:\n'
         '    last_v = v\n'
-        '    if k == 2:\n'
-        '        break\n'
+        '    IF k == 2:\n'
+        '        BREAK\n'
         'last_v'
     )
     # Keys are sorted: iteration visits (1,10), (2,20), then break.
@@ -2872,7 +2871,7 @@ def test_for_over_dict_with_break(h):
 def test_multiline_literal_inside_function_body(h):
     """Multi-line literal inside a function body."""
     src = (
-        'mk = "return [\\n  1,\\n  2,\\n  3\\n]"\n'
+        'mk = "RETURN [\\n  1,\\n  2,\\n  3\\n]"\n'
         'mk()[1]'
     )
     assert _eval(h, src) == 2
@@ -2883,9 +2882,9 @@ def test_short_circuit_in_while_condition(h):
     on the second iteration (assuming side returns 0). Loop exits."""
     src = (
         'tracker = <"n": 0>\n'
-        'side = "tracker.n = tracker.n + 1\\nreturn tracker.n < 3"\n'
-        'while false or side():\n'
-        '    pass\n'
+        'side = "tracker.n = tracker.n + 1\\nRETURN tracker.n < 3"\n'
+        'WHILE FALSE OR side():\n'
+        '    PASS\n'
         'tracker.n'
     )
     # 3 iterations: side() returns True, True, False → loop exits.
@@ -2895,23 +2894,23 @@ def test_short_circuit_in_while_condition(h):
 # --- Stage 11: extended methods + negative indices + del statement --------
 
 def test_str_lower(h):
-    assert _eval_str(h, '"HELLO".lower()') == b"hello"
+    assert _eval_str(h, '"HELLO".LOWER()') == b"hello"
 
 
 def test_str_upper_lower_roundtrip(h):
-    assert _eval_str(h, '"AbCdEf".upper().lower()') == b"abcdef"
+    assert _eval_str(h, '"AbCdEf".UPPER().LOWER()') == b"abcdef"
 
 
 def test_str_find_present(h):
-    assert _eval(h, '"hello".find("l")') == 2
+    assert _eval(h, '"hello".FIND("l")') == 2
 
 
 def test_str_find_missing(h):
-    assert _eval(h, '"hello".find("z")') == -1
+    assert _eval(h, '"hello".FIND("z")') == -1
 
 
 def test_str_find_empty_returns_zero(h):
-    assert _eval(h, '"hello".find("")') == 0
+    assert _eval(h, '"hello".FIND("")') == 0
 
 
 # --- str.find with optional start / end -------------------------------------
@@ -2919,103 +2918,103 @@ def test_str_find_empty_returns_zero(h):
 def test_str_find_start_skips_first_match(h):
     """`find("l", 3)` skips the two l's at indices 2,3 and finds none after."""
     # "hello".find("l", 3) → index 3 (second 'l')
-    assert _eval(h, '"hello".find("l", 3)') == 3
+    assert _eval(h, '"hello".FIND("l", 3)') == 3
 
 
 def test_str_find_start_past_first(h):
     """Start one past the first occurrence finds the second."""
-    assert _eval(h, '"abcabc".find("b", 2)') == 4
+    assert _eval(h, '"abcabc".FIND("b", 2)') == 4
 
 
 def test_str_find_start_past_last_returns_neg1(h):
-    assert _eval(h, '"hello".find("o", 5)') == -1
+    assert _eval(h, '"hello".FIND("o", 5)') == -1
 
 
 def test_str_find_start_zero_equals_no_arg(h):
-    assert _eval(h, '"hello".find("h", 0)') == 0
+    assert _eval(h, '"hello".FIND("h", 0)') == 0
 
 
 def test_str_find_end_excludes_match(h):
     """Match starts at index 4 (second 'b'); end=4 excludes it."""
-    assert _eval(h, '"abcabc".find("b", 0, 4)') == 1
+    assert _eval(h, '"abcabc".FIND("b", 0, 4)') == 1
 
 
 def test_str_find_end_includes_match(h):
-    assert _eval(h, '"abcabc".find("b", 0, 5)') == 1
+    assert _eval(h, '"abcabc".FIND("b", 0, 5)') == 1
 
 
 def test_str_find_end_too_short_for_match(h):
     """`needle` len 2; end=2 leaves only 'he' which doesn't contain 'lo'."""
-    assert _eval(h, '"hello".find("lo", 0, 2)') == -1
+    assert _eval(h, '"hello".FIND("lo", 0, 2)') == -1
 
 
 def test_str_find_negative_start(h):
     """Negative start = me_len + start (Python semantics)."""
     # "hello".find("l", -2) → search "lo" → l is at index 3
-    assert _eval(h, '"hello".find("l", -2)') == 3
+    assert _eval(h, '"hello".FIND("l", -2)') == 3
 
 
 def test_str_find_negative_end(h):
     """Negative end clips off the tail."""
     # "abcabc".find("c", 0, -1) → search "abcab" → c at index 2
-    assert _eval(h, '"abcabc".find("c", 0, -1)') == 2
+    assert _eval(h, '"abcabc".FIND("c", 0, -1)') == 2
 
 
 def test_str_find_negative_both(h):
     # "abcabc".find("a", -4, -1) → search "cab" (indices 2,3,4) → a at 3
-    assert _eval(h, '"abcabc".find("a", -4, -1)') == 3
+    assert _eval(h, '"abcabc".FIND("a", -4, -1)') == 3
 
 
 def test_str_find_empty_with_start(h):
     """Empty needle returns the (clamped) start position."""
-    assert _eval(h, '"hello".find("", 2)') == 2
+    assert _eval(h, '"hello".FIND("", 2)') == 2
 
 
 def test_str_find_empty_with_start_past_end(h):
     """Empty needle, start past length → clamps to length."""
-    assert _eval(h, '"hello".find("", 99)') == 5
+    assert _eval(h, '"hello".FIND("", 99)') == 5
 
 
 def test_str_find_start_greater_than_end(h):
     """start > end → no valid window → -1."""
-    assert _eval(h, '"hello".find("e", 4, 2)') == -1
+    assert _eval(h, '"hello".FIND("e", 4, 2)') == -1
 
 
 def test_str_find_full_range_explicit(h):
     """Explicit (0, 99) matches plain 2-arg form."""
-    assert _eval(h, '"hello".find("l", 0, 99)') == 2
+    assert _eval(h, '"hello".FIND("l", 0, 99)') == 2
 
 
 def test_str_find_membership_still_works(h):
     """Regression: `x in s` uses str_find_pos with the full-range sentinel."""
-    assert _eval_bool(h, '"ll" in "hello"') is True
-    assert _eval_bool(h, '"xx" in "hello"') is False
+    assert _eval_bool(h, '"ll" IN "hello"') is True
+    assert _eval_bool(h, '"xx" IN "hello"') is False
 
 
 def test_str_startswith_match(h):
-    assert _eval_bool(h, '"hello".startswith("he")') is True
+    assert _eval_bool(h, '"hello".STARTSWITH("he")') is True
 
 
 def test_str_startswith_mismatch(h):
-    assert _eval_bool(h, '"hello".startswith("world")') is False
+    assert _eval_bool(h, '"hello".STARTSWITH("world")') is False
 
 
 def test_str_startswith_empty_always_true(h):
-    assert _eval_bool(h, '"abc".startswith("")') is True
+    assert _eval_bool(h, '"abc".STARTSWITH("")') is True
 
 
 def test_str_endswith_match(h):
-    assert _eval_bool(h, '"hello".endswith("lo")') is True
+    assert _eval_bool(h, '"hello".ENDSWITH("lo")') is True
 
 
 def test_str_endswith_mismatch(h):
-    assert _eval_bool(h, '"hello".endswith("world")') is False
+    assert _eval_bool(h, '"hello".ENDSWITH("world")') is False
 
 
 def test_list_insert_middle(h):
     src = (
         'lst = [1, 2, 3]\n'
-        'lst.insert(1, 99)\n'
+        'lst.INSERT(1, 99)\n'
         'lst[1]'
     )
     assert _eval(h, src) == 99
@@ -3024,21 +3023,21 @@ def test_list_insert_middle(h):
 def test_list_insert_at_zero(h):
     src = (
         'lst = [10, 20]\n'
-        'lst.insert(0, 5)\n'
+        'lst.INSERT(0, 5)\n'
         'lst[0]'
     )
     assert _eval(h, src) == 5
 
 
 def test_list_pop_returns_last(h):
-    assert _eval(h, "[1, 2, 3].pop()") == 3
+    assert _eval(h, "[1, 2, 3].POP()") == 3
 
 
 def test_list_pop_shrinks(h):
     src = (
         'lst = [1, 2, 3]\n'
-        'lst.pop()\n'
-        'len(lst)'
+        'lst.POP()\n'
+        'LEN(lst)'
     )
     assert _eval(h, src) == 2
 
@@ -3046,8 +3045,8 @@ def test_list_pop_shrinks(h):
 def test_list_pop_until_one(h):
     src = (
         'lst = [10, 20, 30]\n'
-        'lst.pop()\n'
-        'lst.pop()\n'
+        'lst.POP()\n'
+        'lst.POP()\n'
         'lst[0]'
     )
     assert _eval(h, src) == 10
@@ -3058,18 +3057,18 @@ def test_dict_subscript_present(h):
 
 
 def test_dict_in_membership(h):
-    assert _eval_bool(h, '99 in <1: 10>') is False
-    assert _eval_bool(h, '1 in <1: 10>') is True
+    assert _eval_bool(h, '99 IN <1: 10>') is False
+    assert _eval_bool(h, '1 IN <1: 10>') is True
 
 
 def test_dict_keys_length(h):
-    assert _eval(h, 'len(<1: 10, 2: 20, 3: 30>.keys())') == 3
+    assert _eval(h, 'LEN(<1: 10, 2: 20, 3: 30>.KEYS())') == 3
 
 
 def test_dict_keys_iteration_via_subscript(h):
     src = (
         'd = <1: 10, 2: 20, 3: 30>\n'
-        'd.keys()[1]'
+        'd.KEYS()[1]'
     )
     assert _eval(h, src) == 2
 
@@ -3077,7 +3076,7 @@ def test_dict_keys_iteration_via_subscript(h):
 def test_dict_values_extracts_values(h):
     src = (
         'd = <1: 10, 2: 20, 3: 30>\n'
-        'd.values()[1]'
+        'd.VALUES()[1]'
     )
     assert _eval(h, src) == 20
 
@@ -3085,7 +3084,7 @@ def test_dict_values_extracts_values(h):
 def test_dict_iterate_via_values(h):
     src = (
         'total = 0\n'
-        'for v in <1: 10, 2: 20, 3: 30>.values():\n'
+        'FOR v IN <1: 10, 2: 20, 3: 30>.VALUES():\n'
         '    total = total + v\n'
         'total'
     )
@@ -3094,8 +3093,8 @@ def test_dict_iterate_via_values(h):
 
 def test_user_dict_method_shadows_builtin_keys(h):
     src = (
-        'obj = <"keys": "return 42">\n'
-        'obj.keys()'
+        'obj = <"KEYS": "RETURN 42">\n'
+        'obj.KEYS()'
     )
     assert _eval(h, src) == 42
 
@@ -3103,7 +3102,7 @@ def test_user_dict_method_shadows_builtin_keys(h):
 def test_del_list_element(h):
     src = (
         'lst = [10, 20, 30]\n'
-        'del lst[1]\n'
+        'DEL lst[1]\n'
         'lst[1]'
     )
     assert _eval(h, src) == 30
@@ -3112,8 +3111,8 @@ def test_del_list_element(h):
 def test_del_list_shrinks(h):
     src = (
         'lst = [10, 20, 30]\n'
-        'del lst[0]\n'
-        'len(lst)'
+        'DEL lst[0]\n'
+        'LEN(lst)'
     )
     assert _eval(h, src) == 2
 
@@ -3121,8 +3120,8 @@ def test_del_list_shrinks(h):
 def test_del_dict_key(h):
     src = (
         'd = <1: 10, 2: 20, 3: 30>\n'
-        'del d[2]\n'
-        'len(d)'
+        'DEL d[2]\n'
+        'LEN(d)'
     )
     assert _eval(h, src) == 2
 
@@ -3130,8 +3129,8 @@ def test_del_dict_key(h):
 def test_del_dict_then_in(h):
     src = (
         'd = <1: 10, 2: 20>\n'
-        'del d[1]\n'
-        '1 in d'
+        'DEL d[1]\n'
+        '1 IN d'
     )
     assert _eval_bool(h, src) is False
 
@@ -3185,14 +3184,14 @@ def test_slice_with_negative_start_and_stop(h):
 
 def test_id_returns_positive_int(h):
     """id(x) returns the handle address as a non-negative INT."""
-    assert _eval(h, 'a = [1, 2, 3]\nid(a) > 0') is None or _eval(h, 'a = [1, 2, 3]\nid(a) > 0')
+    assert _eval(h, 'a = [1, 2, 3]\nID(a) > 0') is None or _eval(h, 'a = [1, 2, 3]\nID(a) > 0')
 
 
 def test_id_same_object_same_id(h):
     src = (
         'a = [1, 2, 3]\n'
         'b = a\n'           # same handle
-        'id(a) == id(b)'
+        'ID(a) == ID(b)'
     )
     assert _eval_bool(h, src) is True
 
@@ -3201,41 +3200,41 @@ def test_id_different_objects_different_ids(h):
     src = (
         'a = [1]\n'
         'b = [1]\n'
-        'id(a) == id(b)'
+        'ID(a) == ID(b)'
     )
     assert _eval_bool(h, src) is False
 
 
 def test_cmp_less(h):
-    assert _eval(h, 'cmp(1, 2)') == -1
+    assert _eval(h, 'CMP(1, 2)') == -1
 
 
 def test_cmp_equal(h):
-    assert _eval(h, 'cmp(2, 2)') == 0
+    assert _eval(h, 'CMP(2, 2)') == 0
 
 
 def test_cmp_greater(h):
-    assert _eval(h, 'cmp(3, 2)') == 1
+    assert _eval(h, 'CMP(3, 2)') == 1
 
 
 def test_cmp_strings(h):
-    assert _eval(h, 'cmp("a", "b")') == -1
+    assert _eval(h, 'CMP("a", "b")') == -1
 
 
 def test_hex_zero(h):
-    assert _eval_str(h, "hex(0)") == b"0x00"
+    assert _eval_str(h, "HEX(0)") == b"0x00"
 
 
 def test_hex_small_positive(h):
-    assert _eval_str(h, "hex(15)") == b"0x0f"
+    assert _eval_str(h, "HEX(15)") == b"0x0f"
 
 
 def test_hex_negative(h):
-    assert _eval_str(h, "hex(-1)") == b"-0x01"
+    assert _eval_str(h, "HEX(-1)") == b"-0x01"
 
 
 def test_hex_large(h):
-    assert _eval_str(h, "hex(256)") == b"0x0100"
+    assert _eval_str(h, "HEX(256)") == b"0x0100"
 
 
 # --- Stage 11: augmented assignment ---------------------------------------
@@ -3363,7 +3362,7 @@ def test_dict_create_returns_new_dict(h):
     """create() returns a fresh dict; modifying it doesn't touch the proto."""
     src = (
         'p = <"x": 1>\n'
-        'c = p.create()\n'
+        'c = p.CREATE()\n'
         'c["x"] = 2\n'
         'p["x"]'
     )
@@ -3373,7 +3372,7 @@ def test_dict_create_returns_new_dict(h):
 def test_dict_create_child_holds_own_writes(h):
     src = (
         'p = <"x": 1>\n'
-        'c = p.create()\n'
+        'c = p.CREATE()\n'
         'c["x"] = 2\n'
         'c["x"]'
     )
@@ -3384,7 +3383,7 @@ def test_dict_create_child_inherits_field(h):
     """Field defined on prototype is visible on child by attribute access."""
     src = (
         'p = <"x": 7>\n'
-        'c = p.create()\n'
+        'c = p.CREATE()\n'
         'c.x'
     )
     assert _eval(h, src) == 7
@@ -3393,8 +3392,8 @@ def test_dict_create_child_inherits_field(h):
 def test_dict_create_method_inherits_from_prototype(h):
     """Method defined on prototype runs on child via me-binding."""
     src = (
-        'ship = <"spd": 0, "go": "me.spd = 8">\n'
-        'shuttle = ship.create()\n'
+        'ship = <"spd": 0, "go": "ME.spd = 8">\n'
+        'shuttle = ship.CREATE()\n'
         'shuttle.go()\n'
         'shuttle.spd'
     )
@@ -3403,8 +3402,8 @@ def test_dict_create_method_inherits_from_prototype(h):
 
 def test_dict_create_method_does_not_pollute_prototype(h):
     src = (
-        'ship = <"spd": 0, "go": "me.spd = 8">\n'
-        'shuttle = ship.create()\n'
+        'ship = <"spd": 0, "go": "ME.spd = 8">\n'
+        'shuttle = ship.CREATE()\n'
         'shuttle.go()\n'
         'ship.spd'
     )
@@ -3415,7 +3414,7 @@ def test_dict_create_prototype_changes_propagate(h):
     """Updating the prototype is reflected in children that don't shadow."""
     src = (
         'p = <"x": 1>\n'
-        'c = p.create()\n'
+        'c = p.CREATE()\n'
         'p["x"] = 99\n'
         'c.x'
     )
@@ -3426,8 +3425,8 @@ def test_dict_create_three_level_chain(h):
     """create() can chain — grandchild reads through grandparent."""
     src = (
         'a = <"v": 5>\n'
-        'b = a.create()\n'
-        'c = b.create()\n'
+        'b = a.CREATE()\n'
+        'c = b.CREATE()\n'
         'c.v'
     )
     assert _eval(h, src) == 5
@@ -3437,7 +3436,7 @@ def test_dict_create_subscript_inherits(h):
     """Subscript reads (`obj["key"]`) walk prototype too."""
     src = (
         'p = <"x": 11>\n'
-        'c = p.create()\n'
+        'c = p.CREATE()\n'
         'c["x"]'
     )
     assert _eval(h, src) == 11
@@ -3446,136 +3445,136 @@ def test_dict_create_subscript_inherits(h):
 # --- str.isalpha / str.isdigit ----------------------------------------------
 
 def test_isalpha_all_letters(h):
-    assert _eval_bool(h, '"Hello".isalpha()') is True
+    assert _eval_bool(h, '"Hello".ISALPHA()') is True
 
 
 def test_isalpha_mixed_rejected(h):
-    assert _eval_bool(h, '"Hi5".isalpha()') is False
+    assert _eval_bool(h, '"Hi5".ISALPHA()') is False
 
 
 def test_isalpha_empty_is_false(h):
-    assert _eval_bool(h, '"".isalpha()') is False
+    assert _eval_bool(h, '"".ISALPHA()') is False
 
 
 def test_isalpha_space_rejected(h):
-    assert _eval_bool(h, '"a b".isalpha()') is False
+    assert _eval_bool(h, '"a b".ISALPHA()') is False
 
 
 def test_isdigit_all_digits(h):
-    assert _eval_bool(h, '"12345".isdigit()') is True
+    assert _eval_bool(h, '"12345".ISDIGIT()') is True
 
 
 def test_isdigit_mixed_rejected(h):
-    assert _eval_bool(h, '"12a".isdigit()') is False
+    assert _eval_bool(h, '"12a".ISDIGIT()') is False
 
 
 def test_isdigit_empty_is_false(h):
-    assert _eval_bool(h, '"".isdigit()') is False
+    assert _eval_bool(h, '"".ISDIGIT()') is False
 
 
 def test_isdigit_minus_rejected(h):
     """Leading sign isn't a digit per Python's str.isdigit."""
-    assert _eval_bool(h, '"-1".isdigit()') is False
+    assert _eval_bool(h, '"-1".ISDIGIT()') is False
 
 
 # --- repr() and container rendering ----------------------------------------
 
 def test_repr_string_quotes(h):
     """repr('hi') wraps in single quotes."""
-    assert _eval_str(h, "repr('hi')") == b"'hi'"
+    assert _eval_str(h, "REPR('hi')") == b"'hi'"
 
 
 def test_repr_int_unchanged(h):
     """repr(int) renders the same as str(int)."""
-    assert _eval_str(h, 'repr(42)') == b"42"
+    assert _eval_str(h, 'REPR(42)') == b"42"
 
 
 def test_repr_bool_unchanged(h):
-    assert _eval_str(h, 'repr(true)') == b"true"
+    assert _eval_str(h, 'REPR(TRUE)') == b"TRUE"
 
 
 def test_repr_none_unchanged(h):
-    assert _eval_str(h, 'repr(none)') == b"none"
+    assert _eval_str(h, 'REPR(NONE)') == b"NONE"
 
 
 def test_str_list_quotes_inner_strings(h):
     """str([1, 'hi']) → "[1,'hi']" — inner strings are quoted. Separator is
     a bare comma (no trailing space) — see STR_COMMA_SPACE in statics.asm."""
-    assert _eval_str(h, 'str([1, "hi"])') == b"[1,'hi']"
+    assert _eval_str(h, 'STR([1, "hi"])') == b"[1,'hi']"
 
 
 def test_str_int_in_list_unchanged(h):
     """str([1, 2]) → "[1,2]"."""
-    assert _eval_str(h, 'str([1, 2])') == b"[1,2]"
+    assert _eval_str(h, 'STR([1, 2])') == b"[1,2]"
 
 
 def test_str_dict_quotes_string_keys_and_values(h):
     """str(<'a': 'b'>) → "<'a':'b'>" — both key and value quoted, key/value
     separator is a bare colon. Brackets are angle, not curly: the C64
     character ROM has no `<` `>` glyphs."""
-    assert _eval_str(h, 'str(<"a": "b">)') == b"<'a':'b'>"
+    assert _eval_str(h, 'STR(<"a": "b">)') == b"<'a':'b'>"
 
 
 def test_str_tuple_quotes_inner(h):
-    assert _eval_str(h, 'str(("x",))') == b"('x',)" or _eval_str(h, 'str(("x", 1))') == b"('x',1)"
+    assert _eval_str(h, 'STR(("x",))') == b"('x',)" or _eval_str(h, 'STR(("x", 1))') == b"('x',1)"
 
 
 def test_repr_list_same_as_str(h):
     """repr() and str() agree on containers."""
-    src1 = 'repr([1, "hi"])'
-    src2 = 'str([1, "hi"])'
+    src1 = 'REPR([1, "hi"])'
+    src2 = 'STR([1, "hi"])'
     assert _eval_str(h, src1) == _eval_str(h, src2)
 
 
 def test_str_top_level_string_passthrough(h):
     """str('hi') returns the bare string — no quotes (vs. repr which adds them)."""
-    assert _eval_str(h, "str('hi')") == b"hi"
+    assert _eval_str(h, "STR('hi')") == b"hi"
 
 
 # --- str.replace --------------------------------------------------------------
 
 def test_replace_simple(h):
-    assert _eval_str(h, '"hello".replace("l", "L")') == b"heLLo"
+    assert _eval_str(h, '"hello".REPLACE("l", "L")') == b"heLLo"
 
 
 def test_replace_no_match(h):
-    assert _eval_str(h, '"hello".replace("x", "Y")') == b"hello"
+    assert _eval_str(h, '"hello".REPLACE("x", "Y")') == b"hello"
 
 
 def test_replace_grow(h):
     """new longer than old."""
-    assert _eval_str(h, '"abc".replace("b", "BBB")') == b"aBBBc"
+    assert _eval_str(h, '"abc".REPLACE("b", "BBB")') == b"aBBBc"
 
 
 def test_replace_shrink(h):
     """new shorter than old."""
-    assert _eval_str(h, '"hello".replace("ll", "")') == b"heo"
+    assert _eval_str(h, '"hello".REPLACE("ll", "")') == b"heo"
 
 
 def test_replace_multi_char_pattern(h):
-    assert _eval_str(h, '"banana".replace("an", "X")') == b"bXXa"
+    assert _eval_str(h, '"banana".REPLACE("an", "X")') == b"bXXa"
 
 
 def test_replace_at_start(h):
-    assert _eval_str(h, '"abc".replace("a", "Z")') == b"Zbc"
+    assert _eval_str(h, '"abc".REPLACE("a", "Z")') == b"Zbc"
 
 
 def test_replace_at_end(h):
-    assert _eval_str(h, '"abc".replace("c", "Z")') == b"abZ"
+    assert _eval_str(h, '"abc".REPLACE("c", "Z")') == b"abZ"
 
 
 def test_replace_overlap_non_greedy(h):
     """After a match, scanning continues past the replaced region — Python sem."""
-    assert _eval_str(h, '"aaaa".replace("aa", "b")') == b"bb"
+    assert _eval_str(h, '"aaaa".REPLACE("aa", "b")') == b"bb"
 
 
 def test_replace_whole_string(h):
-    assert _eval_str(h, '"hello".replace("hello", "world")') == b"world"
+    assert _eval_str(h, '"hello".REPLACE("hello", "world")') == b"world"
 
 
 def test_replace_empty_old_panics(h):
     """Empty `old` is a type error in this port."""
-    src = '"abc".replace("", "X")'
+    src = '"abc".REPLACE("", "X")'
     payload = list(src.encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
@@ -3586,58 +3585,58 @@ def test_replace_empty_old_panics(h):
 
 def test_split_basic(h):
     """split returns a 3-element list."""
-    assert _eval(h, 'len("a,b,c".split(","))') == 3
+    assert _eval(h, 'LEN("a,b,c".SPLIT(","))') == 3
 
 
 def test_split_first_element(h):
-    assert _eval_str(h, '"a,b,c".split(",")[0]') == b"a"
+    assert _eval_str(h, '"a,b,c".SPLIT(",")[0]') == b"a"
 
 
 def test_split_last_element(h):
-    assert _eval_str(h, '"a,b,c".split(",")[2]') == b"c"
+    assert _eval_str(h, '"a,b,c".SPLIT(",")[2]') == b"c"
 
 
 def test_split_empty_segments(h):
     """Consecutive seps produce empty strings (Python sem)."""
-    assert _eval(h, 'len("a,,b".split(","))') == 3
+    assert _eval(h, 'LEN("a,,b".SPLIT(","))') == 3
 
 
 def test_split_empty_segment_value(h):
-    assert _eval_str(h, '"a,,b".split(",")[1]') == b""
+    assert _eval_str(h, '"a,,b".SPLIT(",")[1]') == b""
 
 
 def test_split_leading_empty(h):
-    assert _eval_str(h, '",a".split(",")[0]') == b""
+    assert _eval_str(h, '",a".SPLIT(",")[0]') == b""
 
 
 def test_split_trailing_empty(h):
-    assert _eval_str(h, '"a,".split(",")[1]') == b""
+    assert _eval_str(h, '"a,".SPLIT(",")[1]') == b""
 
 
 def test_split_no_sep_in_string(h):
     """No matches → list with one element = original string."""
-    assert _eval_str(h, '"hello".split(",")[0]') == b"hello"
+    assert _eval_str(h, '"hello".SPLIT(",")[0]') == b"hello"
 
 
 def test_split_no_sep_length(h):
-    assert _eval(h, 'len("hello".split(","))') == 1
+    assert _eval(h, 'LEN("hello".SPLIT(","))') == 1
 
 
 def test_split_multi_char_sep(h):
-    assert _eval_str(h, '"1<>2<>3".split("<>")[1]') == b"2"
+    assert _eval_str(h, '"1<>2<>3".SPLIT("<>")[1]') == b"2"
 
 
 def test_split_empty_string(h):
     """Empty me → list with one empty string."""
-    assert _eval(h, 'len("".split(","))') == 1
+    assert _eval(h, 'LEN("".SPLIT(","))') == 1
 
 
 def test_split_empty_string_value(h):
-    assert _eval_str(h, '"".split(",")[0]') == b""
+    assert _eval_str(h, '"".SPLIT(",")[0]') == b""
 
 
 def test_split_empty_sep_panics(h):
-    src = '"abc".split("")'
+    src = '"abc".SPLIT("")'
     payload = list(src.encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
@@ -3650,76 +3649,76 @@ def test_split_empty_sep_panics(h):
 # never emitted. Mirrors Python's `str.split()`.
 
 def test_split_ws_basic(h):
-    assert _eval(h, 'len("a b c".split())') == 3
+    assert _eval(h, 'LEN("a b c".SPLIT())') == 3
 
 
 def test_split_ws_collapses_runs(h):
     """Multiple spaces between words count as one separator."""
-    assert _eval(h, 'len("a   b".split())') == 2
+    assert _eval(h, 'LEN("a   b".SPLIT())') == 2
 
 
 def test_split_ws_strips_leading(h):
-    assert _eval_str(h, '"   hi".split()[0]') == b"hi"
+    assert _eval_str(h, '"   hi".SPLIT()[0]') == b"hi"
 
 
 def test_split_ws_strips_trailing(h):
-    assert _eval(h, 'len("hi   ".split())') == 1
+    assert _eval(h, 'LEN("hi   ".SPLIT())') == 1
 
 
 def test_split_ws_strips_both(h):
-    assert _eval_str(h, '"  one  two  ".split()[1]') == b"two"
+    assert _eval_str(h, '"  one  two  ".SPLIT()[1]') == b"two"
 
 
 def test_split_ws_empty_string(h):
     """Whitespace mode on empty string → empty list (NOT [""])."""
-    assert _eval(h, 'len("".split())') == 0
+    assert _eval(h, 'LEN("".SPLIT())') == 0
 
 
 def test_split_ws_only_whitespace(h):
     """All-whitespace input → empty list."""
-    assert _eval(h, 'len("    ".split())') == 0
+    assert _eval(h, 'LEN("    ".SPLIT())') == 0
 
 
 def test_split_ws_handles_cr(h):
     """$0D (CR) is also whitespace."""
-    src = 'len("a\\rb".split())'
+    src = 'LEN("a\\rb".SPLIT())'
     # Use literal CR via chr(13) so the source is parsed correctly.
-    src = 'len(("a" + chr(13) + "b").split())'
+    src = 'LEN(("a" + CHR(13) + "b").SPLIT())'
     assert _eval(h, src) == 2
 
 
 def test_split_ws_mixed_separators(h):
     """Mix of space + CR runs together as one separator."""
-    src = '("a" + chr(13) + "  " + chr(13) + "b").split()'
-    assert _eval(h, f'len({src})') == 2
+    src = '("a" + CHR(13) + "  " + CHR(13) + "b").SPLIT()'
+    assert _eval(h, f'LEN({src})') == 2
 
 
 def test_split_ws_segment_values(h):
-    assert _eval_str(h, '"  hello world  ".split()[0]') == b"hello"
+    assert _eval_str(h, '"  hello world  ".SPLIT()[0]') == b"hello"
 
 
 # --- sort ------------------------------------------------------------------
 
 def test_sort_str(h):
-    assert _eval_str(h, 'sort("cba")') == b"abc"
+    assert _eval_str(h, 'SORT("cba")') == b"abc"
 
 
 def test_sort_str_already_sorted(h):
-    assert _eval_str(h, 'sort("abc")') == b"abc"
+    assert _eval_str(h, 'SORT("abc")') == b"abc"
 
 
 def test_sort_str_with_duplicates(h):
-    assert _eval_str(h, 'sort("banana")') == b"aaabnn"
+    assert _eval_str(h, 'SORT("banana")') == b"aaabnn"
 
 
 def test_sort_empty_string(h):
-    assert _eval_str(h, 'sort("")') == b""
+    assert _eval_str(h, 'SORT("")') == b""
 
 
 def test_sort_str_does_not_modify_original(h):
     src = (
         's = "cba"\n'
-        'sort(s)\n'
+        'SORT(s)\n'
         's'
     )
     assert _eval_str(h, src) == b"cba"
@@ -3728,7 +3727,7 @@ def test_sort_str_does_not_modify_original(h):
 def test_sort_list_int(h):
     src = (
         'lst = [3, 1, 2]\n'
-        'sort(lst)\n'
+        'SORT(lst)\n'
         'lst[0]'
     )
     assert _eval(h, src) == 1
@@ -3737,7 +3736,7 @@ def test_sort_list_int(h):
 def test_sort_list_int_last(h):
     src = (
         'lst = [3, 1, 2]\n'
-        'sort(lst)\n'
+        'SORT(lst)\n'
         'lst[2]'
     )
     assert _eval(h, src) == 3
@@ -3747,7 +3746,7 @@ def test_sort_list_in_place(h):
     """sort returns the same list handle (in-place)."""
     src = (
         'lst = [2, 1]\n'
-        'sort(lst)\n'
+        'SORT(lst)\n'
         'lst[0]'
     )
     assert _eval(h, src) == 1
@@ -3757,7 +3756,7 @@ def test_sort_tuple(h):
     """Tuple returns a fresh sorted tuple."""
     src = (
         't = (3, 1, 2)\n'
-        'r = sort(t)\n'
+        'r = SORT(t)\n'
         'r[0]'
     )
     assert _eval(h, src) == 1
@@ -3766,7 +3765,7 @@ def test_sort_tuple(h):
 def test_sort_tuple_does_not_modify_original(h):
     src = (
         't = (3, 1, 2)\n'
-        'sort(t)\n'
+        'SORT(t)\n'
         't[0]'
     )
     assert _eval(h, src) == 3
@@ -3775,7 +3774,7 @@ def test_sort_tuple_does_not_modify_original(h):
 def test_sort_list_strings(h):
     src = (
         'lst = ["banana", "apple", "cherry"]\n'
-        'sort(lst)\n'
+        'SORT(lst)\n'
         'lst[0]'
     )
     assert _eval_str(h, src) == b"apple"
@@ -3788,7 +3787,7 @@ def test_sort_list_strings(h):
 
 def test_rnd_no_args_returns_float_in_unit_interval(hfp):
     """rnd() returns a FLOAT in [0, 1)."""
-    v = _eval_float(hfp, 'rnd()')
+    v = _eval_float(hfp, 'RND()')
     assert 0.0 <= v < 1.0
 
 
@@ -3797,12 +3796,12 @@ def test_rnd_no_args_first_value_from_seed_0(hfp):
     (184, 163, 27, 16). The mantissa is built as $B8_A3_1B_10 with bit 31
     forced (hidden-1 explicit), giving value 1.44247... in [1, 2). Subtract
     1.0 → ~0.44248."""
-    assert _eval_float(hfp, 'rnd()') == pytest.approx(0.4424775913, rel=1e-7)
+    assert _eval_float(hfp, 'RND()') == pytest.approx(0.4424775913, rel=1e-7)
 
 
 def test_rnd_no_args_sequence_from_seed_0(hfp):
     """Three successive rnd() calls each pull 4 rand8 bytes."""
-    payload = list("rnd() + rnd() + rnd()".encode("ascii"))
+    payload = list("RND() + RND() + RND()".encode("ascii"))
     handle = place_str(hfp, 0x8500, payload)
     hfp.rs_push(handle)
     hfp.call("parser_eval", max_steps=5_000_000)
@@ -3816,7 +3815,7 @@ def test_rnd_no_args_sequence_from_seed_0(hfp):
 
 def test_rnd_int_end_returns_int_in_range(hfp):
     """rnd(end) with INT end returns an INT in [0, end)."""
-    v = _eval(hfp, 'rnd(10)')
+    v = _eval(hfp, 'RND(10)')
     assert 0 <= v < 10
     # First rand8 byte from seed 0 is 184 → 184 % 10 = 4.
     assert v == 4
@@ -3825,7 +3824,7 @@ def test_rnd_int_end_returns_int_in_range(hfp):
 def test_rnd_int_end_zero_panics(hfp):
     """rnd(0) → divide-by-zero panic from int_mod."""
     from conftest import ERROR_CODE_ZP
-    payload = list('rnd(0)'.encode('ascii'))
+    payload = list('RND(0)'.encode('ascii'))
     handle = place_str(hfp, 0x8500, payload)
     hfp.rs_push(handle)
     hfp.call('parser_eval', expect_panic=True, max_steps=2_000_000)
@@ -3834,7 +3833,7 @@ def test_rnd_int_end_zero_panics(hfp):
 
 def test_rnd_int_two_args_returns_int_in_range(hfp):
     """rnd(start, end) with both INT returns an INT in [start, end)."""
-    v = _eval(hfp, 'rnd(100, 110)')
+    v = _eval(hfp, 'RND(100, 110)')
     assert 100 <= v < 110
     # diff = 10; rand8 = 184; 184 % 10 = 4; 100 + 4 = 104.
     assert v == 104
@@ -3842,14 +3841,14 @@ def test_rnd_int_two_args_returns_int_in_range(hfp):
 
 def test_rnd_float_end_returns_float_in_range(hfp):
     """rnd(end) with FLOAT end scales float_random by end."""
-    v = _eval_float(hfp, 'rnd(2.0)')
+    v = _eval_float(hfp, 'RND(2.0)')
     # First float_random ≈ 0.44248; * 2.0 ≈ 0.88496.
     assert v == pytest.approx(0.8849551826, rel=1e-6)
 
 
 def test_rnd_float_two_args_returns_float_in_range(hfp):
     """rnd(start, end) with both FLOAT scales float_random into [start, end)."""
-    v = _eval_float(hfp, 'rnd(10.0, 12.0)')
+    v = _eval_float(hfp, 'RND(10.0, 12.0)')
     # 10.0 + first_random * (12.0 - 10.0) ≈ 10.88496.
     assert v == pytest.approx(10.8849551826, rel=1e-6)
 
@@ -3860,14 +3859,14 @@ def test_rnd_mixed_int_float_promotes_to_float(hfp):
     With cast_common_number_type the INT side is promoted, so the result is
     a FLOAT in [start, end). Mirrors admiral's `built_in_rnd_2`.
     """
-    v = _eval_float(hfp, 'rnd(1, 2.0)')
+    v = _eval_float(hfp, 'RND(1, 2.0)')
     assert 1.0 <= v < 2.0
 
 
 def test_rnd_bool_arg_panics(hfp):
     """rnd(True) — admiral rejects BOOL with ERR_TYPE; the C64 port matches."""
     from conftest import ERROR_CODE_ZP
-    payload = list('rnd(true)'.encode('ascii'))
+    payload = list('RND(TRUE)'.encode('ascii'))
     handle = place_str(hfp, 0x8500, payload)
     hfp.rs_push(handle)
     hfp.call('parser_eval', expect_panic=True, max_steps=2_000_000)
@@ -3877,7 +3876,7 @@ def test_rnd_bool_arg_panics(hfp):
 def test_rnd_bool_second_arg_panics(hfp):
     """rnd(0, True) also panics — BOOL reject applies to either position."""
     from conftest import ERROR_CODE_ZP
-    payload = list('rnd(0, true)'.encode('ascii'))
+    payload = list('RND(0, TRUE)'.encode('ascii'))
     handle = place_str(hfp, 0x8500, payload)
     hfp.rs_push(handle)
     hfp.call('parser_eval', expect_panic=True, max_steps=2_000_000)
@@ -3886,7 +3885,7 @@ def test_rnd_bool_second_arg_panics(hfp):
 
 def test_rnd_int_large_range_in_bounds(hfp):
     """rnd(0, 1000) returns a value in [0, 1000)."""
-    v = _eval(hfp, 'rnd(0, 1000)')
+    v = _eval(hfp, 'RND(0, 1000)')
     assert 0 <= v < 1000
 
 
@@ -3899,13 +3898,13 @@ def test_rnd_int_large_range_distribution(hfp):
     would have produced 184 % 1000 = 184 — i.e. impossible to ever exceed
     255 even though the requested range is 1000.
     """
-    assert _eval(hfp, 'rnd(0, 1000)') == 267
+    assert _eval(hfp, 'RND(0, 1000)') == 267
 
 
 def test_rnd_too_many_args_panics(hfp):
     """rnd(a, b, c) — arity > 2 panics ERR_ARITY."""
     from conftest import ERROR_CODE_ZP
-    payload = list('rnd(1, 2, 3)'.encode('ascii'))
+    payload = list('RND(1, 2, 3)'.encode('ascii'))
     handle = place_str(hfp, 0x8500, payload)
     hfp.rs_push(handle)
     hfp.call('parser_eval', expect_panic=True, max_steps=2_000_000)
@@ -4044,14 +4043,14 @@ def test_tuple_assign_non_sequence_rhs_panics(h):
 def test_no_regression_function_call_stmt(h):
     """`len(...)` at statement level is parsed by testlist first; rollback
     must still leave the call working."""
-    src = 'len("abc")'
+    src = 'LEN("abc")'
     assert _eval(h, src) == 3
 
 
 def test_no_regression_method_call_stmt(h):
     src = (
         's = "hello"\n'
-        's.upper()'
+        's.UPPER()'
     )
     assert _eval_str(h, src) == b"HELLO"
 
@@ -4121,7 +4120,7 @@ def test_for_tuple_unpack_over_list_of_pairs(h):
         'pairs = [(1, 10), (2, 20), (3, 30)]\n'
         'a_sum = 0\n'
         'b_sum = 0\n'
-        'for a, b in pairs:\n'
+        'FOR a, b IN pairs:\n'
         '    a_sum = a_sum + a\n'
         '    b_sum = b_sum + b\n'
         'a_sum * 100 + b_sum'
@@ -4133,7 +4132,7 @@ def test_for_tuple_unpack_three_elements(h):
     src = (
         'rows = [(1, 2, 3), (4, 5, 6)]\n'
         'total = 0\n'
-        'for x, y, z in rows:\n'
+        'FOR x, y, z IN rows:\n'
         '    total = total + x + y + z\n'
         'total'
     )
@@ -4145,7 +4144,7 @@ def test_for_nested_tuple_unpack(h):
     src = (
         'pairs = [(1, (2, 3)), (10, (20, 30))]\n'
         'total = 0\n'
-        'for a, (b, c) in pairs:\n'
+        'FOR a, (b, c) IN pairs:\n'
         '    total = total + a + b + c\n'
         'total'
     )
@@ -4157,7 +4156,7 @@ def test_for_tuple_unpack_over_list_of_lists(h):
     src = (
         'data = [[1, 10], [2, 20]]\n'
         'sum = 0\n'
-        'for k, v in data:\n'
+        'FOR k, v IN data:\n'
         '    sum = sum + k * v\n'
         'sum'
     )
@@ -4169,7 +4168,7 @@ def test_for_dict_iteration_uses_keys_for_lookup(h):
     src = (
         'd = <"a": 1, "b": 2, "c": 3>\n'
         'total = 0\n'
-        'for k, v in d:\n'
+        'FOR k, v IN d:\n'
         '    total = total + v\n'
         'total'
     )
@@ -4182,10 +4181,10 @@ def test_for_single_name_over_dict_binds_entry(h):
         'd = <10: 1, 20: 2>\n'
         'k0 = 0\n'
         'v0 = 0\n'
-        'for entry in d:\n'
+        'FOR entry IN d:\n'
         '    k0 = entry[0]\n'
         '    v0 = entry[1]\n'
-        '    break\n'
+        '    BREAK\n'
         'k0 * 100 + v0'
     )
     # First entry (sorted): (10, 1)
@@ -4197,8 +4196,8 @@ def test_for_tuple_arity_mismatch_panics(h):
     from conftest import ERROR_CODE_ZP, ERR_ARITY
     src = (
         'pairs = [(1, 2), (3, 4)]\n'
-        'for a, b, c in pairs:\n'
-        '    pass'
+        'FOR a, b, c IN pairs:\n'
+        '    PASS'
     )
     payload = list(src.encode("ascii"))
     handle = place_str(h, 0x8500, payload)
@@ -4211,7 +4210,7 @@ def test_for_no_regression_single_name(h):
     """`for x in list` — bare-name target still works."""
     src = (
         'total = 0\n'
-        'for x in [1, 2, 3, 4]:\n'
+        'FOR x IN [1, 2, 3, 4]:\n'
         '    total = total + x\n'
         'total'
     )
@@ -4222,7 +4221,7 @@ def test_for_no_regression_string_iteration(h):
     """`for c in "abc"` — string iteration with bare-name target."""
     src = (
         'count = 0\n'
-        'for c in "abc":\n'
+        'FOR c IN "abc":\n'
         '    count = count + 1\n'
         'count'
     )
@@ -4233,11 +4232,11 @@ def test_for_no_regression_break_continue(h):
     """break / continue still work with the new testlist-based for-loop."""
     src = (
         'total = 0\n'
-        'for i in [1, 2, 3, 4, 5]:\n'
-        '    if i == 2:\n'
-        '        continue\n'
-        '    if i == 4:\n'
-        '        break\n'
+        'FOR i IN [1, 2, 3, 4, 5]:\n'
+        '    IF i == 2:\n'
+        '        CONTINUE\n'
+        '    IF i == 4:\n'
+        '        BREAK\n'
         '    total = total + i\n'
         'total'
     )
@@ -4248,41 +4247,41 @@ def test_for_no_regression_break_continue(h):
 
 def test_globals_returns_dict(h):
     from conftest import TYPE_DICT
-    h_type, _ = _eval_container_type_and_len(h, "globals()")
+    h_type, _ = _eval_container_type_and_len(h, "GLOBALS()")
     assert h_type == TYPE_DICT
 
 
 def test_locals_returns_dict(h):
     from conftest import TYPE_DICT
-    h_type, _ = _eval_container_type_and_len(h, "locals()")
+    h_type, _ = _eval_container_type_and_len(h, "LOCALS()")
     assert h_type == TYPE_DICT
 
 
 def test_globals_locals_same_handle_at_top_level(h):
     """At top level, globals() and locals() return the same scope dict."""
-    assert _eval_bool(h, "id(globals()) == id(locals())") is True
+    assert _eval_bool(h, "ID(GLOBALS()) == ID(LOCALS())") is True
 
 
 def test_globals_contains_top_level_assignment(h):
-    src = 'x = 42\nlen(globals())'
+    src = 'x = 42\nLEN(GLOBALS())'
     assert _eval(h, src) == 1
 
 
 def test_locals_contains_top_level_assignment(h):
-    src = 'y = 99\nlen(locals())'
+    src = 'y = 99\nLEN(LOCALS())'
     assert _eval(h, src) == 1
 
 
 def test_mem_returns_positive_int(h):
-    assert _eval_bool(h, "mem() > 0") is True
+    assert _eval_bool(h, "MEM() > 0") is True
 
 
 def test_mem_decreases_after_alloc(h):
     """Allocating a list reduces mem()'s reported free heap."""
     src = (
-        'before = mem()\n'
+        'before = MEM()\n'
         'data = [1, 2, 3, 4, 5]\n'
-        'after = mem()\n'
+        'after = MEM()\n'
         'before > after'
     )
     assert _eval_bool(h, src) is True
@@ -4308,7 +4307,7 @@ def _eval_no_result(h, source: str) -> None:
 def test_wset_writes_screen_code(h):
     """wset(0, 0, 'A') writes screen code $01 (the C64 code for 'A')."""
     h.mpu.memory[SCREEN_BASE] = 0x00
-    _eval_no_result(h, 'wset(0, 0, "A")')
+    _eval_no_result(h, 'WSET(0, 0, "A")')
     assert h.mpu.memory[SCREEN_BASE] == 0x01
 
 
@@ -4316,16 +4315,15 @@ def test_wset_writes_at_correct_offset(h):
     """wset(5, 3, 'B') targets SCREEN_BASE + 3*40 + 5."""
     addr = SCREEN_BASE + 3 * SCREEN_COLS + 5
     h.mpu.memory[addr] = 0x00
-    _eval_no_result(h, 'wset(5, 3, "B")')
+    _eval_no_result(h, 'WSET(5, 3, "B")')
     assert h.mpu.memory[addr] == 0x02
 
 
-def test_wset_translates_lowercase(h):
-    """Lowercase PETSCII 'z' ($7A) → screen code $1A. The $61..$7A range is
-    a special-cased remap (subtract $60) so lowercase ASCII strings render
-    as uppercase glyphs in the unshifted charset — the BASIC look on C64."""
+def test_wset_translates_uppercase_letter(h):
+    """PETSCII uppercase 'Z' ($5A) → screen code $1A via the general octant
+    formula in petscii_to_screen_code."""
     h.mpu.memory[SCREEN_BASE] = 0x00
-    _eval_no_result(h, 'wset(0, 0, "z")')
+    _eval_no_result(h, 'WSET(0, 0, "Z")')
     assert h.mpu.memory[SCREEN_BASE] == 0x1A
 
 
@@ -4335,7 +4333,7 @@ def test_wset_writes_color_ram(h):
     screen_addr = SCREEN_BASE + 3 * SCREEN_COLS + 5
     h.mpu.memory[color_addr] = 0x00
     h.mpu.memory[screen_addr] = 0x00
-    _eval_no_result(h, 'wset(5, 3, "X")')
+    _eval_no_result(h, 'WSET(5, 3, "X")')
     # Confirm screen wrote (sanity check).
     assert h.mpu.memory[screen_addr] == 0x18, "screen RAM should hold $18 (X)"
     # Now color.
@@ -4345,7 +4343,7 @@ def test_wset_writes_color_ram(h):
 def test_wset_oob_col_no_op(h):
     """col >= 40 → silent no-op, screen RAM untouched."""
     h.mpu.memory[SCREEN_BASE] = 0xEE
-    _eval_no_result(h, 'wset(40, 0, "A")')
+    _eval_no_result(h, 'WSET(40, 0, "A")')
     assert h.mpu.memory[SCREEN_BASE] == 0xEE
 
 
@@ -4353,14 +4351,14 @@ def test_wset_oob_row_no_op(h):
     """row >= 25 → silent no-op."""
     addr = SCREEN_BASE + 24 * SCREEN_COLS
     h.mpu.memory[addr] = 0xEE
-    _eval_no_result(h, 'wset(0, 25, "A")')
+    _eval_no_result(h, 'WSET(0, 25, "A")')
     assert h.mpu.memory[addr] == 0xEE
 
 
 def test_wset_negative_no_op(h):
     """Negative col → silent no-op (sign bit set ≥ $80 ≥ 40)."""
     h.mpu.memory[SCREEN_BASE] = 0xEE
-    _eval_no_result(h, 'wset(-1, 0, "A")')
+    _eval_no_result(h, 'WSET(-1, 0, "A")')
     assert h.mpu.memory[SCREEN_BASE] == 0xEE
 
 
@@ -4368,7 +4366,7 @@ def test_wget_returns_petscii_str(h):
     """wget(5, 3) reads screen code $01 → 1-char STR with PETSCII 'A'."""
     addr = SCREEN_BASE + 3 * SCREEN_COLS + 5
     h.mpu.memory[addr] = 0x01
-    payload = list('wget(5, 3)'.encode("ascii"))
+    payload = list('WGET(5, 3)'.encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
@@ -4383,7 +4381,7 @@ def test_wget_passes_through_high_codes(h):
     """Screen codes >= $20 are returned as-is (no inverse translation)."""
     addr = SCREEN_BASE + 0
     h.mpu.memory[addr] = 0x7A
-    payload = list('wget(0, 0)'.encode("ascii"))
+    payload = list('WGET(0, 0)'.encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
@@ -4394,7 +4392,7 @@ def test_wget_passes_through_high_codes(h):
 
 def test_wset_wget_roundtrip(h):
     """wset then wget recovers the original PETSCII char."""
-    src = 'wset(7, 4, "Q")\nwget(7, 4)'
+    src = 'WSET(7, 4, "Q")\nWGET(7, 4)'
     payload = list(src.encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
@@ -4410,37 +4408,37 @@ def test_cursor_set_updates_zp(h):
     """cursor(7, 3) writes SCREEN_COL=7, SCREEN_ROW=3."""
     h.mpu.memory[SCREEN_COL_ZP] = 0
     h.mpu.memory[SCREEN_ROW_ZP] = 0
-    _eval_no_result(h, 'cursor(7, 3)')
+    _eval_no_result(h, 'CURSOR(7, 3)')
     assert h.mpu.memory[SCREEN_COL_ZP] == 7
     assert h.mpu.memory[SCREEN_ROW_ZP] == 3
 
 
 def test_cursor_set_clamps_high(h):
     """cursor(50, 50) clamps to (39, 24)."""
-    _eval_no_result(h, 'cursor(50, 50)')
+    _eval_no_result(h, 'CURSOR(50, 50)')
     assert h.mpu.memory[SCREEN_COL_ZP] == 39
     assert h.mpu.memory[SCREEN_ROW_ZP] == 24
 
 
 def test_cursor_set_clamps_negative(h):
     """cursor(-1, -1) clamps both to max-bound (negatives wrap to 0xFF, > limit)."""
-    _eval_no_result(h, 'cursor(-1, -1)')
+    _eval_no_result(h, 'CURSOR(-1, -1)')
     assert h.mpu.memory[SCREEN_COL_ZP] == 39
     assert h.mpu.memory[SCREEN_ROW_ZP] == 24
 
 
 def test_cursor_get_returns_col(h):
-    assert _eval(h, 'cursor(7, 3)\ncursor()[0]') == 7
+    assert _eval(h, 'CURSOR(7, 3)\nCURSOR()[0]') == 7
 
 
 def test_cursor_get_returns_row(h):
-    assert _eval(h, 'cursor(7, 3)\ncursor()[1]') == 3
+    assert _eval(h, 'CURSOR(7, 3)\nCURSOR()[1]') == 3
 
 
 def test_cursor_get_returns_tuple(h):
     """cursor() result is a 2-tuple."""
     from conftest import TYPE_TUPLE
-    h_type, o_len = _eval_container_type_and_len(h, 'cursor(2, 1)\ncursor()')
+    h_type, o_len = _eval_container_type_and_len(h, 'CURSOR(2, 1)\nCURSOR()')
     assert h_type == TYPE_TUPLE
     assert o_len == 2
 
@@ -4448,7 +4446,7 @@ def test_cursor_get_returns_tuple(h):
 def test_cursor_arity_one_panics(h):
     """cursor(5) — single arg is invalid; panics ERR_ARITY."""
     from conftest import ERROR_CODE_ZP, ERR_ARITY
-    payload = list('cursor(5)'.encode("ascii"))
+    payload = list('CURSOR(5)'.encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     with pytest.raises(Exception):
@@ -4468,16 +4466,16 @@ def test_cls_blanks_screen(h):
     """`cls` keyword fills every cell with screen-code space."""
     for row in range(25):
         _fill_screen_row(h, row, 0x42)
-    _eval_no_result(h, 'cls')
+    _eval_no_result(h, 'CLS')
     for i in range(25 * SCREEN_COLS):
         assert h.mpu.memory[SCREEN_BASE + i] == 0x20, f"cell {i} not blanked"
 
 
 def test_cls_resets_cursor(h):
     """`cls` moves cursor to (0, 0)."""
-    _eval_no_result(h, 'cursor(13, 7)\ncls')
-    assert _eval(h, 'cursor()[0]') == 0
-    assert _eval(h, 'cursor()[1]') == 0
+    _eval_no_result(h, 'CURSOR(13, 7)\nCLS')
+    assert _eval(h, 'CURSOR()[0]') == 0
+    assert _eval(h, 'CURSOR()[1]') == 0
 
 
 
@@ -4516,20 +4514,20 @@ def _eval_to_str(h, source: str, max_steps: int = 2_000_000) -> bytes:
 def test_getc_returns_petscii_str(h):
     """getc() returns a 1-char STR with the byte GETIN gave."""
     _stub_getin_always(h, 0x41)  # 'A'
-    assert _eval_to_str(h, 'getc()') == b'A'
+    assert _eval_to_str(h, 'GETC()') == b'A'
 
 
 def test_getc_returns_petscii_for_lowercase(h):
     """getc() doesn't translate — passes PETSCII through verbatim."""
     _stub_getin_always(h, 0x7A)  # 'z'
-    assert _eval_to_str(h, 'getc()') == b'z'
+    assert _eval_to_str(h, 'GETC()') == b'z'
 
 
 def test_key_returns_none_when_buffer_empty(h):
     """key() returns None when GETIN gives 0."""
     from conftest import TYPE_NONE
     _stub_getin_always(h, 0x00)
-    payload = list('key()'.encode("ascii"))
+    payload = list('KEY()'.encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
@@ -4540,7 +4538,7 @@ def test_key_returns_none_when_buffer_empty(h):
 def test_key_returns_str_when_key_available(h):
     """key() returns a 1-char STR when GETIN gives non-zero."""
     _stub_getin_always(h, 0x58)  # 'X'
-    assert _eval_to_str(h, 'key()') == b'X'
+    assert _eval_to_str(h, 'KEY()') == b'X'
 
 
 # --- input -----------------------------------------------------------------
@@ -4583,29 +4581,29 @@ def _stub_getin_queue(h, bytes_in: bytes) -> None:
 
 
 def test_input_no_prompt_returns_buffer(h):
-    """input() reads chars until $0D, returns them as STR (no newline).
-    A-Z are lowercase-folded to match the lexer/REPL convention so input
-    bytes are comparable to source-code string literals."""
+    """input() reads chars until $0D, returns them as STR (no newline). Bytes
+    pass through verbatim — internal storage is PETSCII uppercase, which is
+    exactly what KERNAL_GETIN returns from the keyboard."""
     _stub_getin_queue(h, b'HELLO\r')
-    assert _eval_to_str(h, 'input()') == b'hello'
+    assert _eval_to_str(h, 'INPUT()') == b'HELLO'
 
 
 def test_input_empty_returns_empty_str(h):
     """input() with immediate RETURN returns an empty TYPE_STR."""
     _stub_getin_queue(h, b'\r')
-    assert _eval_to_str(h, 'input()') == b''
+    assert _eval_to_str(h, 'INPUT()') == b''
 
 
 def test_input_del_removes_last_char(h):
     """DEL ($14) removes the last buffered char before RETURN."""
     _stub_getin_queue(h, b'CAB\x14\r')
-    assert _eval_to_str(h, 'input()') == b'ca'
+    assert _eval_to_str(h, 'INPUT()') == b'CA'
 
 
 def test_input_del_on_empty_is_noop(h):
     """DEL with empty buffer is ignored, doesn't underflow."""
     _stub_getin_queue(h, b'\x14\x14X\r')
-    assert _eval_to_str(h, 'input()') == b'x'
+    assert _eval_to_str(h, 'INPUT()') == b'X'
 
 
 def test_input_echoes_to_screen(h):
@@ -4615,7 +4613,7 @@ def test_input_echoes_to_screen(h):
     h.mpu.memory[SCREEN_BASE + 1] = 0x00
     h.mpu.memory[SCREEN_COL_ZP] = 0
     h.mpu.memory[SCREEN_ROW_ZP] = 0
-    _eval_to_str(h, 'input()')
+    _eval_to_str(h, 'INPUT()')
     # 'A' → screen code $01, 'B' → $02.
     assert h.mpu.memory[SCREEN_BASE] == 0x01
     assert h.mpu.memory[SCREEN_BASE + 1] == 0x02
@@ -4626,7 +4624,7 @@ def test_input_prompt_printed(h):
     _stub_getin_queue(h, b'X\r')
     h.mpu.memory[SCREEN_COL_ZP] = 0
     h.mpu.memory[SCREEN_ROW_ZP] = 0
-    _eval_to_str(h, 'input(">")')
+    _eval_to_str(h, 'INPUT(">")')
     # '>' is screen code $1E (PETSCII $3E, no translation since < $40).
     assert h.mpu.memory[SCREEN_BASE] == 0x3E
     # 'X' echoed at column 1.
@@ -4636,7 +4634,7 @@ def test_input_prompt_printed(h):
 def test_input_prompt_wrong_type_panics(h):
     """input(non-STR) panics ERR_TYPE."""
     from conftest import ERROR_CODE_ZP, ERR_TYPE
-    payload = list('input(42)'.encode("ascii"))
+    payload = list('INPUT(42)'.encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     with pytest.raises(Exception):
@@ -4647,7 +4645,7 @@ def test_input_prompt_wrong_type_panics(h):
 def test_input_caps_at_80(h):
     """Buffer caps at 80 chars; further keystrokes (before RETURN) are dropped."""
     _stub_getin_queue(h, b'A' * 90 + b'\r')
-    payload = list('len(input())'.encode("ascii"))
+    payload = list('LEN(INPUT())'.encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=10_000_000)
@@ -4665,52 +4663,51 @@ F3_CANCEL = 0x86
 def test_edit_no_arg_save_immediate(h):
     """edit() with F1 immediately → empty STR."""
     _stub_getin_queue(h, bytes([F1_SAVE]))
-    assert _eval_to_str(h, 'edit()') == b''
+    assert _eval_to_str(h, 'EDIT()') == b''
 
 
 def test_edit_with_text_save_unchanged(h):
     """edit("hello") + F1 → 'hello'."""
     _stub_getin_queue(h, bytes([F1_SAVE]))
-    assert _eval_to_str(h, 'edit("hello")') == b'hello'
+    assert _eval_to_str(h, 'EDIT("hello")') == b'hello'
 
 
 def test_edit_with_long_text_preload(h):
     """edit(long_str) preserves the full string (was byte-truncated at 256)."""
     _stub_getin_queue(h, bytes([F1_SAVE]))
-    src = 's = "k" * 400\nedit(s)'
+    src = 's = "k" * 400\nEDIT(s)'
     assert _eval_to_str(h, src, max_steps=20_000_000) == b'k' * 400
 
 
 def test_edit_type_chars_then_save(h):
-    """edit() + 'A' 'B' + F1 → 'ab' (typed uppercase A-Z fold to lowercase
-    so the lexer's keyword table — which is lowercase-only — recognizes
-    `for`/`print`/etc. when an edit() result is exec'd via str-call)."""
+    """edit() + 'A' 'B' + F1 → 'AB'. Typed bytes pass through verbatim:
+    PETSCII uppercase $41-$5A is the platform's native encoding."""
     _stub_getin_queue(h, b'AB' + bytes([F1_SAVE]))
-    assert _eval_to_str(h, 'edit()') == b'ab'
+    assert _eval_to_str(h, 'EDIT()') == b'AB'
 
 
 def test_edit_bs_removes_last_char(h):
-    """edit() + 'X' + BS + 'Y' + F1 → 'y' (typed letters fold to lowercase)."""
+    """edit() + 'X' + BS + 'Y' + F1 → 'Y'."""
     _stub_getin_queue(h, b'X\x14Y' + bytes([F1_SAVE]))
-    assert _eval_to_str(h, 'edit()') == b'y'
+    assert _eval_to_str(h, 'EDIT()') == b'Y'
 
 
 def test_edit_cancel_returns_original(h):
     """edit('orig') + F3 → 'orig' (cancel returns the input arg)."""
     _stub_getin_queue(h, bytes([F3_CANCEL]))
-    assert _eval_to_str(h, 'edit("orig")') == b'orig'
+    assert _eval_to_str(h, 'EDIT("orig")') == b'orig'
 
 
 def test_edit_cancel_no_arg_returns_empty(h):
     """edit() + F3 → empty STR."""
     _stub_getin_queue(h, bytes([F3_CANCEL]))
-    assert _eval_to_str(h, 'edit()') == b''
+    assert _eval_to_str(h, 'EDIT()') == b''
 
 
 def test_edit_wrong_arg_type_panics(h):
     """edit(123) panics ERR_TYPE."""
     from conftest import ERROR_CODE_ZP, ERR_TYPE
-    payload = list('edit(123)'.encode("ascii"))
+    payload = list('EDIT(123)'.encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     with pytest.raises(Exception):
@@ -4719,12 +4716,11 @@ def test_edit_wrong_arg_type_panics(h):
 
 
 def test_edit_type_into_existing(h):
-    """edit('AB') + cursor-left + 'X' + F1 → 'AxB' — the initial 'AB' is
-    seeded via the arg path (which doesn't fold), but the typed 'X' goes
-    through _bedit_insert and folds to 'x'."""
+    """edit('AB') + cursor-left + 'X' + F1 → 'AXB'. Both seeded and typed
+    bytes pass through verbatim post-charset migration."""
     CRSR_LEFT = 0x9D
     _stub_getin_queue(h, bytes([CRSR_LEFT, ord('X'), F1_SAVE]))
-    assert _eval_to_str(h, 'edit("AB")') == b'AxB'
+    assert _eval_to_str(h, 'EDIT("AB")') == b'AXB'
 
 
 # --- edit() Phase E: kill / yank -------------------------------------------
@@ -4738,7 +4734,7 @@ def test_edit_kill_to_eol(h):
     the whole line, save → ''."""
     CRSR_LEFT = 0x9D
     _stub_getin_queue(h, bytes([CRSR_LEFT] * 5 + [F5_KILL, F1_SAVE]))
-    assert _eval_to_str(h, 'edit("hello")') == b''
+    assert _eval_to_str(h, 'EDIT("hello")') == b''
 
 
 def test_edit_yank_after_kill(h):
@@ -4746,7 +4742,7 @@ def test_edit_yank_after_kill(h):
     back at the same cursor position)."""
     CRSR_LEFT = 0x9D
     _stub_getin_queue(h, bytes([CRSR_LEFT] * 5 + [F5_KILL, F7_YANK, F1_SAVE]))
-    assert _eval_to_str(h, 'edit("hello")') == b'hello'
+    assert _eval_to_str(h, 'EDIT("hello")') == b'hello'
 
 
 def test_edit_yank_at_different_position(h):
@@ -4754,13 +4750,13 @@ def test_edit_yank_at_different_position(h):
     But cursor-left at start is no-op, so still 'AB'."""
     CRSR_LEFT = 0x9D
     _stub_getin_queue(h, bytes([F5_KILL, CRSR_LEFT, F7_YANK, F1_SAVE]))
-    assert _eval_to_str(h, 'edit("AB")') == b'AB'
+    assert _eval_to_str(h, 'EDIT("AB")') == b'AB'
 
 
 def test_edit_yank_with_no_clip_is_noop(h):
     """edit('X') + F7 (no kill yet) + F1 → 'X'."""
     _stub_getin_queue(h, bytes([F7_YANK, F1_SAVE]))
-    assert _eval_to_str(h, 'edit("X")') == b'X'
+    assert _eval_to_str(h, 'EDIT("X")') == b'X'
 
 
 # --- parser_exec — REPL-flavored variant that reuses caller's scope ---------
@@ -4795,7 +4791,7 @@ def test_error_handler_recovers_to_repl_loop(hd):
     # `mem` is a builtin, but bare-name lookup raises ERR_LEX because the
     # scope chain doesn't contain builtins. Drives the panic-and-recover
     # path the user hits when they type any unbound name.
-    src = place_str(hd, 0x8500, list(b"mem"))
+    src = place_str(hd, 0x8500, list(b"MEM"))
     hd.rs_push(src)
     repl_loop = hd.sym["repl_loop"]
     hd.mpu.pc = hd.sym["parser_exec"]
@@ -4806,7 +4802,7 @@ def test_error_handler_recovers_to_repl_loop(hd):
             continue
         hd.mpu.step()
     else:
-        raise TimeoutError("error_handler did not jmp repl_loop")
+        raise TimeoutError("error_handler did NOT jmp repl_loop")
 
     # ERROR_CODE should be cleared by error_handler before reprompt.
     assert hd.mpu.memory[0x27] == 0
@@ -4815,7 +4811,7 @@ def test_error_handler_recovers_to_repl_loop(hd):
     # Screen-codes for '?ERR': '?'=$3F, 'E'→$05, 'R'→$12.
     # Look for the sequence anywhere in the row band.
     needle = bytes([0x3F, 0x05, 0x12, 0x12])
-    assert needle in screen_chunk, "?ERR text not found in screen RAM"
+    assert needle in screen_chunk, "?ERR text NOT found IN screen RAM"
 
 
 def test_parser_exec_prints_int_expression(h):
@@ -4831,7 +4827,7 @@ def test_parser_exec_prints_int_expression(h):
     h.write_word(ROOT_SCOPE, scope)
     h.rs_push(scope)
 
-    src = place_str(h, 0x8500, list(b"print 1+2"))
+    src = place_str(h, 0x8500, list(b"PRINT 1+2"))
     h.rs_push(src)
     h.call("parser_exec", max_steps=2_000_000)
 
@@ -4854,7 +4850,7 @@ def test_parser_exec_prints_list(h):
     h.write_word(ROOT_SCOPE, scope)
     h.rs_push(scope)
 
-    src = place_str(h, 0x8500, list(b"print [1,2,3]"))
+    src = place_str(h, 0x8500, list(b"PRINT [1,2,3]"))
     h.rs_push(src)
     h.call("parser_exec", max_steps=2_000_000)
 

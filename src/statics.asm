@@ -173,7 +173,8 @@ CTRL_CONTINUE_OBJ:
     .word 0
 
 // Pre-allocated TYPE_STR singletons for print rendering of bool / None.
-// Bytes are raw ASCII (kickass `.text` would emit screen codes).
+// Bytes are PETSCII uppercase ($41-$5A) — matches the platform's native
+// keyboard / disk encoding.
 STR_TRUE:
     .word STR_TRUE_OBJ
     .word 6                  // O_HEADER + 4
@@ -182,7 +183,7 @@ STR_TRUE:
     .byte 0
 STR_TRUE_OBJ:
     .word 4
-    .byte $74, $72, $75, $65  // "true"
+    .byte $54, $52, $55, $45  // "TRUE"
 
 STR_FALSE:
     .word STR_FALSE_OBJ
@@ -192,7 +193,7 @@ STR_FALSE:
     .byte 0
 STR_FALSE_OBJ:
     .word 5
-    .byte $66, $61, $6C, $73, $65  // "false"
+    .byte $46, $41, $4C, $53, $45  // "FALSE"
 
 STR_NONE:
     .word STR_NONE_OBJ
@@ -202,7 +203,7 @@ STR_NONE:
     .byte 0
 STR_NONE_OBJ:
     .word 4
-    .byte $6E, $6F, $6E, $65  // "none"
+    .byte $4E, $4F, $4E, $45  // "NONE"
 
 // Built-in functions and methods are not first-class values in admiral —
 // they're never stored, passed as arguments, or returned from expressions.
@@ -211,7 +212,7 @@ STR_NONE_OBJ:
 // (parser.asm). No TYPE_BUILTIN handle ever exists at runtime.
 
 // Name strings for binding the built-ins into the global scope at
-// parser_eval start. Bytes are raw ASCII.
+// parser_eval start. Bytes are PETSCII uppercase ($41-$5A).
 // --- Method names. Prefixed `STR_NAME_M_` so they don't collide with the ----
 // global-builtin name strings above. ----------------------------------------
 STR_NAME_M_UPPER:
@@ -222,7 +223,7 @@ STR_NAME_M_UPPER:
     .byte 0
 STR_NAME_M_UPPER_OBJ:
     .word 5
-    .byte $75, $70, $70, $65, $72  // "upper"
+    .byte $55, $50, $50, $45, $52  // "UPPER"
 
 STR_NAME_M_LOWER:
     .word STR_NAME_M_LOWER_OBJ
@@ -232,7 +233,7 @@ STR_NAME_M_LOWER:
     .byte 0
 STR_NAME_M_LOWER_OBJ:
     .word 5
-    .byte $6C, $6F, $77, $65, $72  // "lower"
+    .byte $4C, $4F, $57, $45, $52  // "LOWER"
 
 STR_NAME_M_FIND:
     .word STR_NAME_M_FIND_OBJ
@@ -242,7 +243,7 @@ STR_NAME_M_FIND:
     .byte 0
 STR_NAME_M_FIND_OBJ:
     .word 4
-    .byte $66, $69, $6E, $64        // "find"
+    .byte $46, $49, $4E, $44        // "FIND"
 
 STR_NAME_M_STARTSWITH:
     .word STR_NAME_M_STARTSWITH_OBJ
@@ -252,7 +253,7 @@ STR_NAME_M_STARTSWITH:
     .byte 0
 STR_NAME_M_STARTSWITH_OBJ:
     .word 10
-    .byte $73, $74, $61, $72, $74, $73, $77, $69, $74, $68 // "startswith"
+    .byte $53, $54, $41, $52, $54, $53, $57, $49, $54, $48 // "STARTSWITH"
 
 STR_NAME_M_ENDSWITH:
     .word STR_NAME_M_ENDSWITH_OBJ
@@ -262,7 +263,7 @@ STR_NAME_M_ENDSWITH:
     .byte 0
 STR_NAME_M_ENDSWITH_OBJ:
     .word 8
-    .byte $65, $6E, $64, $73, $77, $69, $74, $68  // "endswith"
+    .byte $45, $4E, $44, $53, $57, $49, $54, $48  // "ENDSWITH"
 
 STR_NAME_M_ISALPHA:
     .word STR_NAME_M_ISALPHA_OBJ
@@ -272,7 +273,7 @@ STR_NAME_M_ISALPHA:
     .byte 0
 STR_NAME_M_ISALPHA_OBJ:
     .word 7
-    .byte $69, $73, $61, $6C, $70, $68, $61  // "isalpha"
+    .byte $49, $53, $41, $4C, $50, $48, $41  // "ISALPHA"
 
 STR_NAME_M_ISDIGIT:
     .word STR_NAME_M_ISDIGIT_OBJ
@@ -282,7 +283,7 @@ STR_NAME_M_ISDIGIT:
     .byte 0
 STR_NAME_M_ISDIGIT_OBJ:
     .word 7
-    .byte $69, $73, $64, $69, $67, $69, $74  // "isdigit"
+    .byte $49, $53, $44, $49, $47, $49, $54  // "ISDIGIT"
 
 STR_NAME_M_REPLACE:
     .word STR_NAME_M_REPLACE_OBJ
@@ -292,7 +293,7 @@ STR_NAME_M_REPLACE:
     .byte 0
 STR_NAME_M_REPLACE_OBJ:
     .word 7
-    .byte $72, $65, $70, $6C, $61, $63, $65  // "replace"
+    .byte $52, $45, $50, $4C, $41, $43, $45  // "REPLACE"
 
 STR_NAME_M_SPLIT:
     .word STR_NAME_M_SPLIT_OBJ
@@ -302,7 +303,7 @@ STR_NAME_M_SPLIT:
     .byte 0
 STR_NAME_M_SPLIT_OBJ:
     .word 5
-    .byte $73, $70, $6C, $69, $74          // "split"
+    .byte $53, $50, $4C, $49, $54          // "SPLIT"
 
 STR_NAME_M_APPEND:
     .word STR_NAME_M_APPEND_OBJ
@@ -312,7 +313,7 @@ STR_NAME_M_APPEND:
     .byte 0
 STR_NAME_M_APPEND_OBJ:
     .word 6
-    .byte $61, $70, $70, $65, $6E, $64  // "append"
+    .byte $41, $50, $50, $45, $4E, $44  // "APPEND"
 
 STR_NAME_M_INSERT:
     .word STR_NAME_M_INSERT_OBJ
@@ -322,7 +323,7 @@ STR_NAME_M_INSERT:
     .byte 0
 STR_NAME_M_INSERT_OBJ:
     .word 6
-    .byte $69, $6E, $73, $65, $72, $74  // "insert"
+    .byte $49, $4E, $53, $45, $52, $54  // "INSERT"
 
 STR_NAME_M_POP:
     .word STR_NAME_M_POP_OBJ
@@ -332,7 +333,7 @@ STR_NAME_M_POP:
     .byte 0
 STR_NAME_M_POP_OBJ:
     .word 3
-    .byte $70, $6F, $70             // "pop"
+    .byte $50, $4F, $50             // "POP"
 
 STR_NAME_M_KEYS:
     .word STR_NAME_M_KEYS_OBJ
@@ -342,7 +343,7 @@ STR_NAME_M_KEYS:
     .byte 0
 STR_NAME_M_KEYS_OBJ:
     .word 4
-    .byte $6B, $65, $79, $73        // "keys"
+    .byte $4B, $45, $59, $53        // "KEYS"
 
 STR_NAME_M_VALUES:
     .word STR_NAME_M_VALUES_OBJ
@@ -352,7 +353,7 @@ STR_NAME_M_VALUES:
     .byte 0
 STR_NAME_M_VALUES_OBJ:
     .word 6
-    .byte $76, $61, $6C, $75, $65, $73  // "values"
+    .byte $56, $41, $4C, $55, $45, $53  // "VALUES"
 
 STR_NAME_M_CREATE:
     .word STR_NAME_M_CREATE_OBJ
@@ -362,7 +363,7 @@ STR_NAME_M_CREATE:
     .byte 0
 STR_NAME_M_CREATE_OBJ:
     .word 6
-    .byte $63, $72, $65, $61, $74, $65  // "create"
+    .byte $43, $52, $45, $41, $54, $45  // "CREATE"
 
 
 
@@ -512,7 +513,7 @@ STR_UNDERSCORE_OBJ:
     .word 1
     .byte $5F                 // "_"
 
-// Receiver-binding key: `me`. led_lparen's str-call binds `me` to the
+// Receiver-binding key: `ME`. led_lparen's str-call binds `ME` to the
 // method's receiver dict when called via attribute access (`obj.method(...)`).
 // Mirrors Admiral's STR_ME (parser.dasm16:2046).
 STR_ME:
@@ -523,4 +524,4 @@ STR_ME:
     .byte 0
 STR_ME_OBJ:
     .word 2
-    .byte $6D, $65            // "me"
+    .byte $4D, $45            // "ME"

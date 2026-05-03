@@ -266,15 +266,6 @@ _rrl_not_shift_space:
     cpy #REPL_LINE_CAP
     bcs _rrl_key_loop
 
-    // Lowercase fold for ASCII A-Z so typed `PRINT` matches the lexer's
-    // lowercase keyword table.
-    cmp #$41
-    bcc _rrl_insert_char
-    cmp #$5B
-    bcs _rrl_insert_char
-    clc
-    adc #$20
-
 _rrl_insert_char:
     // Insert (A) at repl_line_pos, shifting buf[pos..len-1] right by one.
     pha

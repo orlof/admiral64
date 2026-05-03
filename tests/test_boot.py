@@ -35,7 +35,7 @@ def test_boot_prints_banner(h):
             break
         h.mpu.step()
     else:
-        raise TimeoutError("boot did not reach repl_main")
+        raise TimeoutError("boot did NOT reach repl_main")
 
     expected = _expected_screen_codes("     **** COMMODORE 64 ADMIRAL ****")
     actual = [h.mpu.memory[SCREEN_BASE + i] for i in range(len(expected))]
@@ -61,12 +61,12 @@ def test_boot_prints_banner(h):
     )
 
     # After the two-line banner + println, cursor is at row 2, col 0.
-    assert h.mpu.memory[0x33] == 2, "cursor row after banner should be 2"
-    assert h.mpu.memory[0x34] == 0, "cursor col after banner should be 0"
+    assert h.mpu.memory[0x33] == 2, "CURSOR row after banner should be 2"
+    assert h.mpu.memory[0x34] == 0, "CURSOR col after banner should be 0"
 
     # Static cursor block painted at (2, 0).
     cursor_addr = SCREEN_BASE + 2 * 40 + 0
-    assert h.mpu.memory[cursor_addr] == 0xA0, "static cursor not painted"
+    assert h.mpu.memory[cursor_addr] == 0xA0, "static CURSOR NOT painted"
 
 
 def test_boot_sets_border_and_bg_to_green_theme(h):

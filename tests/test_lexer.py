@@ -348,14 +348,14 @@ def test_str_bad_hex_panics(h):
 # --- E: identifiers + keywords -----------------------------------------------
 
 ALL_KEYWORDS = [
-    ("if", TK_IF), ("elif", TK_ELIF), ("else", TK_ELSE),
-    ("while", TK_WHILE), ("for", TK_FOR), ("in", TK_IN),
-    ("break", TK_BREAK), ("continue", TK_CONTINUE), ("pass", TK_PASS),
-    ("return", TK_RETURN),
-    ("try", TK_TRY), ("except", TK_EXCEPT), ("finally", TK_FINALLY),
-    ("raise", TK_RAISE), ("del", TK_DEL),
-    ("and", TK_AND), ("or", TK_OR), ("not", TK_NOT), ("is", TK_IS),
-    ("true", TK_TRUE), ("false", TK_FALSE), ("none", TK_NONE_KW),
+    ("IF", TK_IF), ("ELIF", TK_ELIF), ("ELSE", TK_ELSE),
+    ("WHILE", TK_WHILE), ("FOR", TK_FOR), ("IN", TK_IN),
+    ("BREAK", TK_BREAK), ("CONTINUE", TK_CONTINUE), ("PASS", TK_PASS),
+    ("RETURN", TK_RETURN),
+    ("TRY", TK_TRY), ("EXCEPT", TK_EXCEPT), ("FINALLY", TK_FINALLY),
+    ("RAISE", TK_RAISE), ("DEL", TK_DEL),
+    ("AND", TK_AND), ("OR", TK_OR), ("NOT", TK_NOT), ("IS", TK_IS),
+    ("TRUE", TK_TRUE), ("FALSE", TK_FALSE), ("NONE", TK_NONE_KW),
 ]
 
 
@@ -398,7 +398,7 @@ def _kinds(toks):
 
 
 def test_simple_indent(h):
-    toks = _drive(h, "if x:\n    y\n")
+    toks = _drive(h, "IF x:\n    y\n")
     assert _kinds(toks) == [
         TK_IF, TK_NAME, TK_COLON, TK_NEWLINE,
         TK_INDENT, TK_NAME, TK_NEWLINE,
@@ -407,7 +407,7 @@ def test_simple_indent(h):
 
 
 def test_two_level_indent(h):
-    src = "if a:\n    if b:\n        c\n"
+    src = "IF a:\n    IF b:\n        c\n"
     toks = _drive(h, src)
     assert _kinds(toks) == [
         TK_IF, TK_NAME, TK_COLON, TK_NEWLINE,
@@ -418,7 +418,7 @@ def test_two_level_indent(h):
 
 
 def test_dedent_back_to_zero(h):
-    src = "if a:\n    if b:\n        c\nq\n"
+    src = "IF a:\n    IF b:\n        c\nq\n"
     toks = _drive(h, src)
     # ... INDENT b INDENT c NEWLINE DEDENT DEDENT NEWLINE q NEWLINE EOF
     expected_tail = [TK_DEDENT, TK_DEDENT, TK_NAME, TK_NEWLINE, TK_EOF]
@@ -427,7 +427,7 @@ def test_dedent_back_to_zero(h):
 
 def test_blank_line_inside_block(h):
     """A blank line in a block doesn't emit DEDENT/INDENT bursts."""
-    src = "if a:\n    x\n\n    y\n"
+    src = "IF a:\n    x\n\n    y\n"
     toks = _drive(h, src)
     # No DEDENT between x's NEWLINE and y; the two y-block statements are
     # both at indent 4.
@@ -439,7 +439,7 @@ def test_blank_line_inside_block(h):
 
 
 def test_comment_only_line_inside_block(h):
-    src = "if a:\n    x\n    # c\n    y\n"
+    src = "IF a:\n    x\n    # c\n    y\n"
     kinds = _kinds(_drive(h, src))
     assert kinds.count(TK_INDENT) == 1
     assert kinds.count(TK_DEDENT) == 1
@@ -447,7 +447,7 @@ def test_comment_only_line_inside_block(h):
 
 def test_eof_flushes_dedents(h):
     """Source ending mid-block (no trailing newline) still emits DEDENTs."""
-    src = "if a:\n    x"   # no trailing \n
+    src = "IF a:\n    x"   # no trailing \n
     kinds = _kinds(_drive(h, src))
     # Whatever comes before, the tail must include a DEDENT then EOF.
     assert TK_DEDENT in kinds
@@ -486,7 +486,7 @@ def test_function_call_like(h):
 
 
 def test_for_in_range(h):
-    src = "for i in range(10):\n    pass\n"
+    src = "FOR i IN RANGE(10):\n    PASS\n"
     toks = _drive(h, src)
     assert _kinds(toks) == [
         TK_FOR, TK_NAME, TK_IN, TK_NAME, TK_LPAREN, TK_INT, TK_RPAREN,
@@ -564,10 +564,10 @@ def test_get_token_as_string_two_in_a_row(h):
 
 def test_get_token_as_string_preserves_lex_state(h):
     """Materialization must not corrupt LEX_PTR / indent state, etc."""
-    _init_and_run(h, "if x:\n    y\n")
+    _init_and_run(h, "IF x:\n    y\n")
     # First token: TK_IF
     assert _kind(h) == TK_IF
-    assert _materialize(h) == b"if"
+    assert _materialize(h) == b"IF"
     # Lex stream continues unchanged.
     _next(h); assert _kind(h) == TK_NAME
     _next(h); assert _kind(h) == TK_COLON
