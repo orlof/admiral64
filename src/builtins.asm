@@ -545,17 +545,29 @@ _bstr_none:
 // shared finish that toggles the bit back, restoring state for the outer
 // call (or leaving it clean at the top level). Same trick as DCPU's
 // TYPE_EXTENSION-bit toggle in dict_repr.
-_bstr_list:
+// Common entry for the three container str()-paths. Loads W0 from arg 0,
+// XOR-toggles FLAG_RENDERING, and returns with A = post-AND result so the
+// caller's beq routes recursion (FLAG was set → A=0 → Z=1) vs render
+// (FLAG was clear → A=FLAG_RENDERING → Z=0). Caller is responsible for
+// pushing the container handle (lo/hi) on the HW stack for
+// _bstr_container_finish; ferry Z across the PHAs via tay/tya.
+_bstr_seq_setup:
     arg_get(0, W0)
-    lda W0+1
-    pha
-    lda W0
-    pha
     ldy #H_FLAGS
     lda (W0),y
     eor #FLAG_RENDERING
     sta (W0),y
     and #FLAG_RENDERING
+    rts
+
+_bstr_list:
+    jsr _bstr_seq_setup
+    tay
+    lda W0+1
+    pha
+    lda W0
+    pha
+    tya
     beq _bstr_list_recursion
     rs_push(W0)
     rs_push_const(STR_LBRACK)
@@ -570,16 +582,13 @@ _bstr_list_recursion:
     jmp _bstr_container_finish
 
 _bstr_tuple:
-    arg_get(0, W0)
+    jsr _bstr_seq_setup
+    tay
     lda W0+1
     pha
     lda W0
     pha
-    ldy #H_FLAGS
-    lda (W0),y
-    eor #FLAG_RENDERING
-    sta (W0),y
-    and #FLAG_RENDERING
+    tya
     beq _bstr_tuple_recursion
     rs_push(W0)
     rs_push_const(STR_LPAREN)
@@ -594,16 +603,13 @@ _bstr_tuple_recursion:
     jmp _bstr_container_finish
 
 _bstr_dict:
-    arg_get(0, W0)
+    jsr _bstr_seq_setup
+    tay
     lda W0+1
     pha
     lda W0
     pha
-    ldy #H_FLAGS
-    lda (W0),y
-    eor #FLAG_RENDERING
-    sta (W0),y
-    and #FLAG_RENDERING
+    tya
     beq _bstr_dict_recursion
     rs_push(W0)
     jsr _bstr_render_dict
