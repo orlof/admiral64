@@ -166,11 +166,22 @@ _rpl_copy_done:
 
     jsr parser_exec                  // consumes source on return; RV = result
 
-    // Bind `_` in ROOT_SCOPE to the last expression result. The scope-walk
-    // type check in scope_get keeps this from poisoning parent-link lookups.
+    // Bind `_` in ROOT_SCOPE to the last NON-None expression result. Python
+    // semantics: statements / None-returning calls don't clobber the previous
+    // `_`. Also avoids poisoning future `_()`: scope_get can't distinguish
+    // "key not bound" from "key bound to NONE", so binding NONE makes `_`
+    // unresolvable on the next call (panic_lex via the scope walk).
+    lda RV
+    cmp #<NONE
+    bne !bind+
+    lda RV+1
+    cmp #>NONE
+    beq _rpl_skip_bind
+!bind:
     rs_push_const(STR_UNDERSCORE)
     jsr rs_push_rv
     jsr scope_set
+_rpl_skip_bind:
 
     jmp repl_loop
 

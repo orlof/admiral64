@@ -1859,7 +1859,7 @@ builtin_load:
     sta W0+1                          // W0 = name ptr
     jsr disk_open_seq_r               // CHKIN lfn 2
 
-    jsr disk_deserialize              // RV = root handle
+    jsr disk_deserialize              // RV = root handle; bails on early EOF
 
     rs_push(RV)                       // root via RS so close+status are safe
 

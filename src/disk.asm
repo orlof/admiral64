@@ -825,10 +825,24 @@ disk_deserialize:
     jsr list_alloc
     rs_push(RV)
 
+    // First-byte EOF guard: a valid save() stream starts with a non-zero
+    // ID-low and no EOF flag. The 1541's response to CHRIN on a never-opened
+    // channel (FILE NOT FOUND, etc.) is one byte with EOI set — without
+    // this guard we'd run the rest of the loop on garbage and either grind
+    // until OOM or wedge entirely. The post-close status_check still
+    // surfaces the actual DOS code via panic_disk.
+    jsr disk_byte_r
+    bcc !ok+
+    jmp _dds_done                      // EOF on first byte → bail
+!ok:
+    sta B0
+    jmp _dds_have_id_low
+
 _dds_loop:
     // Read ID (2 bytes LE)
     jsr disk_byte_r
     sta B0                             // B0 = ID low
+_dds_have_id_low:
     jsr disk_byte_r
     sta B1                             // B1 = ID high
 
