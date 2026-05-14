@@ -450,6 +450,83 @@ _bflt_from_str:
     jmp postamble
 
 // =============================================================================
+// builtin_exp / builtin_log / builtin_sqrt / builtin_sin / builtin_cos /
+// builtin_tan / builtin_atan — INT / BOOL / FLOAT → TYPE_FLOAT.
+//
+// All seven funnel through one body (`_b_trig_body`) that handles the entire
+// arc: preamble, coerce-to-float, unpack into FAC1, bank in BASIC + KERNAL,
+// JSR into a *self-modified* ROM target, bank out, alloc + pack, postamble.
+// Each user-facing entry is a 5-byte stub that loads its index 0..6 into A
+// and jumps to `_b_trig_dispatch`, which patches the JSR target from a
+// 7-entry lo/hi table.
+//
+// Domain errors (LOG(x<=0), SQR(x<0), TAN at π/2 + nπ, EXP overflow) trip
+// BASIC's own error vector — same exposure `**` already has via FPWRT.
+// =============================================================================
+builtin_exp:  lda #0
+              jmp _b_trig_dispatch
+builtin_log:  lda #1
+              jmp _b_trig_dispatch
+builtin_sqrt: lda #2
+              jmp _b_trig_dispatch
+builtin_sin:  lda #3
+              jmp _b_trig_dispatch
+builtin_cos:  lda #4
+              jmp _b_trig_dispatch
+builtin_tan:  lda #5
+              jmp _b_trig_dispatch
+builtin_atan: lda #6
+              // fall through
+
+_b_trig_dispatch:
+    tax
+    lda _b_trig_lo,x
+    sta _fp_basic_target+1
+    lda _b_trig_hi,x
+    sta _fp_basic_target+2
+    // fall through
+
+_b_trig_body:
+    jsr preamble_call_1_1_w0
+    jsr _coerce_arg0_to_rs_float
+
+    rs_peek_at(W0, 0)
+    jsr deref_W0_to_W2
+    jsr _fp_unpack_to_fac1
+
+    jsr _fp_basic_envelope
+
+    jsr _fp_alloc_and_pack
+    jmp postamble
+
+_b_trig_lo:
+    .byte <BASIC_EXP, <BASIC_LOG, <BASIC_SQR, <BASIC_SIN, <BASIC_COS, <BASIC_TAN, <BASIC_ATN
+_b_trig_hi:
+    .byte >BASIC_EXP, >BASIC_LOG, >BASIC_SQR, >BASIC_SIN, >BASIC_COS, >BASIC_TAN, >BASIC_ATN
+
+// _coerce_arg0_to_rs_float — after preamble_call_1_1_w0, W0 = arg-0 handle.
+// Pushes a TYPE_FLOAT equivalent onto RS:
+//   FLOAT      → push the original handle.
+//   INT / BOOL → int_to_float (BOOL's 1-byte payload reads as a tiny int).
+//   anything else → panic_type. `float(s)` is the explicit STR path.
+_coerce_arg0_to_rs_float:
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_FLOAT
+    beq _c2f_float
+    cmp #TYPE_INT
+    beq _c2f_int
+    cmp #TYPE_BOOL
+    beq _c2f_int
+    jmp panic_type
+_c2f_int:
+    jsr arg0_w0_push
+    jsr int_to_float
+    jmp rs_push_rv                   // tail
+_c2f_float:
+    jmp arg0_w0_push                 // tail
+
+// =============================================================================
 // builtin_str(x) — render any value as a TYPE_STR.
 //   STR   → same handle.
 //   INT   → int_to_str.

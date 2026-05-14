@@ -69,27 +69,11 @@
     jsr _basic_zp_restore
 }
 
-.macro basic_binop(addr) {
-    jsr _basic_zp_save
-    // ARISGN ($6F) = FAC1.sign XOR FAC2.sign — what BASIC's CONUPK would have
-    // computed. Multiplication and division read it for result sign;
-    // addition/subtraction recompute internally so the value is harmless.
-    lda FAC1+5
-    eor FAC2+5
-    sta ARISGN
-    inc $01
-    inc $01
-    inc $01
-    // A = FAC1 exp — the register-form entries start with a BNE/BEQ on A,
-    // expecting it to reflect the FAC1-zero (or FAC2-zero for FSUBT) check.
-    // INC $01 clobbers Z/N flags so the LDA must come *after* it.
-    lda FAC1
-    jsr addr
-    dec $01
-    dec $01
-    dec $01
-    jsr _basic_zp_restore
-}
+// basic_binop is now an alias for basic_op — register-form binops are the
+// canonical "needs sign-prep and A=FAC1" callers, and the unified envelope
+// always does both. Kept as a separate macro name for readability at the
+// FADDT/FSUBT/FMULTT/FDIVT/FPWRT call sites.
+.macro basic_binop(addr) { basic_op(addr) }
 
 // -----------------------------------------------------------------------------
 // _fp_unpack_to_fac1 / _fp_unpack_to_fac2 — packed heap bytes (5) → unpacked
@@ -360,6 +344,54 @@ _basic_zp_buf:
     .fill BASIC_ZP_LEN, 0
 
 // -----------------------------------------------------------------------------
+// basic_op(addr) / _fp_basic_envelope — shared bank-flip + JSR + restore for
+// any single-FAC ROM call where the caller doesn't need A/Y preserved across
+// the ZP save. Replaces both the old `basic_call` (unary) and `basic_binop`
+// (register-form binop) inline expansions — the envelope unconditionally does
+// the binop-style ARISGN sign-prep and A=FAC1 preload, both of which are
+// harmless to unary ROM entries that ignore them.
+//
+// Saves ~14-16 bytes per site vs the old inline macros: each call shrinks to
+// `lda/sta/lda/sta/jsr` (13 bytes) and shares the 32-byte envelope.
+// Self-modifies the JMP target — single-threaded contexts only (no IRQ-time
+// entries into FP exist in admiral).
+//
+// `basic_call` (in the section above) is still required for GIVAYF — it
+// preserves A=hi/Y=lo across the ZP save via HW-stack pha/tya/pha.
+// -----------------------------------------------------------------------------
+.macro basic_op(addr) {
+    lda #<addr
+    sta _fp_basic_target+1
+    lda #>addr
+    sta _fp_basic_target+2
+    jsr _fp_basic_envelope
+}
+
+_fp_basic_envelope:
+    jsr _basic_zp_save
+    // ARISGN ($6F) = FAC1.sign XOR FAC2.sign — required by FMULTT/FDIVT/FPWRT
+    // for result-sign computation; harmless to other ROM entries (they don't
+    // read ARISGN). Unary callers may see a random XOR if FAC2 was never set
+    // up — still harmless because they don't read ARISGN either.
+    lda FAC1+5
+    eor FAC2+5
+    sta ARISGN
+    inc $01
+    inc $01
+    inc $01
+    // A = FAC1 exp — required by register-form binops (BNE/BEQ on A at entry).
+    // Other ROM entries ignore A or load their own; the preload is harmless.
+    // INC $01 above clobbers Z/N so the LDA must come *after* it.
+    lda FAC1
+    jsr _fp_basic_target
+    dec $01
+    dec $01
+    dec $01
+    jmp _basic_zp_restore               // tail-jmp
+_fp_basic_target:
+    jmp $0000                            // patched per call
+
+// -----------------------------------------------------------------------------
 // float_pow — FAC1 = FAC2 ** FAC1 via BASIC FPWRT (which calls EXP/LOG and
 // the POLY helpers in KERNAL ROM).
 //   in:  RS — base (deeper), exponent (top).
@@ -390,7 +422,7 @@ float_floordiv:
     jmp panic_div_zero
 _ffd_ok:
     basic_binop(BASIC_FDIVT)         // FAC1 = a / b
-    basic_call(BASIC_INT)            // FAC1 = floor(FAC1)
+    basic_op(BASIC_INT)           // FAC1 = floor(FAC1)
     jmp _fp_alloc_pack_post
 
 // -----------------------------------------------------------------------------
@@ -410,7 +442,7 @@ float_mod:
     jmp panic_div_zero
 _fmod_ok:
     basic_binop(BASIC_FDIVT)         // FAC1 = a / b
-    basic_call(BASIC_INT)            // FAC1 = floor(a/b)
+    basic_op(BASIC_INT)           // FAC1 = floor(a/b)
 
     // Reload b → FAC2, then FAC1 *= b.
     rs_peek_at(W0, 0)
@@ -439,7 +471,7 @@ float_neg:
     jsr deref_W0_to_W2
     jsr _fp_unpack_to_fac1
 
-    basic_call(BASIC_NEGOP)
+    basic_op(BASIC_NEGOP)
 
     jmp _fp_alloc_pack_post
 
@@ -607,7 +639,7 @@ _i2f_no_add:
 _i2f_apply_sign:
     lda B3
     bpl _i2f_pack
-    basic_call(BASIC_NEGOP)
+    basic_op(BASIC_NEGOP)
 
 _i2f_pack:
     jmp _fp_alloc_pack_post
@@ -815,7 +847,7 @@ float_to_str:
     jsr deref_W0_to_W2
     jsr _fp_unpack_to_fac1
 
-    basic_call(BASIC_FOUT)
+    basic_op(BASIC_FOUT)
 
     // B1 = source offset into $0100 (0 or 1 if first byte is space).
     ldx #0

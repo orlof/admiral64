@@ -393,6 +393,13 @@
 .const BASIC_FOUT   = $BDDD        // FAC1 → ASCII at $0100 (null-terminated)
 .const BASIC_INT    = $BCCC        // FAC1 = floor(FAC1)  (toward -inf)
 .const BASIC_FPWRT  = $BF7B        // FAC1 = FAC2 ^ FAC1  (caller preloads A=FAC1 exp, $6F=combined sign)
+.const BASIC_EXP    = $BFED        // FAC1 = exp(FAC1)
+.const BASIC_LOG    = $B9EA        // FAC1 = ln(FAC1)   (panics on FAC1 <= 0)
+.const BASIC_SQR    = $BF71        // FAC1 = sqrt(FAC1) (computes as exp(0.5*log(FAC1)) → panics on FAC1 < 0)
+.const BASIC_SIN    = $E26B        // FAC1 = sin(FAC1)  (radians; in KERNAL bank)
+.const BASIC_COS    = $E264        // FAC1 = cos(FAC1)  (adds π/2 then falls into SIN)
+.const BASIC_TAN    = $E2B4        // FAC1 = tan(FAC1)
+.const BASIC_ATN    = $E30E        // FAC1 = atan(FAC1)
 
 // FAC ZP base addresses (BASIC's workspace; preserved by our ZP partition).
 // Layout per FAC: [exp, m_hi, m_mh, m_ml, m_lo, sign].
