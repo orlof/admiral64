@@ -377,6 +377,14 @@ nmi_handler:
     pha
     lda #MEM_IO                      // I/O at $D000 — steady-state $34 has no I/O
     sta $01
+    // Save W0 — the banner math (NEXT_HANDLE - NEXT_DATA etc.) stashes results
+    // there before calling _nmi_word_at_x. The interrupted V4' routine is
+    // allowed to hold live state in W0..W3 / B0..B7 (preamble preserves them
+    // across calls), so we must not clobber W0 asynchronously.
+    lda W0
+    pha
+    lda W0+1
+    pha
 
     lda NMI_PAUSED
     beq _nmi_first                   // 0 → first press, draw banner & wait
@@ -491,6 +499,10 @@ _nmi_uncolor:
     bpl _nmi_uncolor
 
 _nmi_exit:
+    pla
+    sta W0+1
+    pla
+    sta W0
     pla
     sta $01
     pla
