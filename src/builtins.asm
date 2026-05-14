@@ -478,17 +478,21 @@ builtin_tan:  lda #5
 builtin_atan: lda #6
               // fall through
 
+// Patch `_fp_basic_target` AFTER coerce, not before — int_to_float (called
+// by the INT-coerce path) internally invokes basic_op(GIVAYF / FADDT / ...),
+// which rewrites the target. Patching first would lose our ROM address.
+// HW-stack PHA/PLA survives preamble_call_1_1_w0 + the coerce subroutine
+// because preamble's own PHAs are balanced 1:1 with PLAs.
 _b_trig_dispatch:
+    pha                              // save index 0..6 across coerce
+    jsr preamble_call_1_1_w0
+    jsr _coerce_arg0_to_rs_float
+    pla
     tax
     lda _b_trig_lo,x
     sta _fp_basic_target+1
     lda _b_trig_hi,x
     sta _fp_basic_target+2
-    // fall through
-
-_b_trig_body:
-    jsr preamble_call_1_1_w0
-    jsr _coerce_arg0_to_rs_float
 
     rs_peek_at(W0, 0)
     jsr deref_W0_to_W2
