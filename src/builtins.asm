@@ -2472,7 +2472,22 @@ _bedit_down:
     jmp _bedit_after_key
 
 _bedit_after_key:
+    // Cursor moves alone don't set edit_dirty, so a key that slides
+    // edit_view_shift (cursor past col 39 / back into view) would leave the
+    // screen showing the old offset. Stash view_shift on HW stack across
+    // edit_view_focus (a leaf, balances the stack) and OR in bit 1
+    // (full-screen-dirty) on any change. Same fix covers insert/delete
+    // past col 39, which previously only redrew the current line.
+    lda edit_view_shift
+    pha
     jsr edit_view_focus
+    pla
+    cmp edit_view_shift
+    beq _bedit_check_dirty
+    lda edit_dirty
+    ora #$02
+    sta edit_dirty
+_bedit_check_dirty:
     lda edit_dirty
     and #$02
     beq _bedit_check_line_dirty

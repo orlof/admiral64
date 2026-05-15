@@ -574,18 +574,27 @@ _dser_emit_size:
     jmp _dser_data_scalar
 
 _dser_data_scalar:
-    // Stream B0 bytes from payload (cap ≤ 255 so single-byte index suffices).
+    // Stream B0:B1 bytes from payload — full 16-bit count. W2 advances by
+    // one page when Y wraps so payloads >256 are handled correctly.
     // disk_byte_w → KERNAL CHROUT preserves Y (CBM ROM contract; our mock
     // matches), so the index doesn't need to be cached across the JSR.
     jsr deref_W0_to_W2                // W2 = payload start (bytes)
     ldy #0
 _dser_scalar_loop:
-    cpy B0
-    beq _dser_record_done
+    lda B0
+    ora B1
+    beq _dser_record_done             // B0:B1 == 0 → done
     lda (W2),y
     jsr disk_byte_w
+    lda B0
+    bne !nb+
+    dec B1
+!nb:
+    dec B0
     iny
-    bne _dser_scalar_loop             // unconditional (B0 ≤ 255 cap)
+    bne _dser_scalar_loop
+    inc W2+1                          // Y wrapped — bump payload page
+    jmp _dser_scalar_loop
 
 _dser_data_container:
     // For each child slot j = 0..O_LEN-1:
@@ -895,16 +904,26 @@ _dds_have_handle:
     cmp #TYPE_DICT
     beq _dds_data_container
 
-    // Scalar: read SIZE bytes (cap ≤ 255) into payload.
+    // Scalar: read B2:B3 bytes (full 16-bit SIZE) into payload at W2.
+    // W2 advances by one page when Y wraps; B2:B3 is the decrementing
+    // remaining-bytes counter.
     jsr deref_W0_to_W2                 // W2 = payload start
     ldy #0
 _dds_scalar_loop:
-    cpy B2
-    beq _dds_record_done
+    lda B2
+    ora B3
+    beq _dds_record_done               // B2:B3 == 0 → done
     jsr disk_byte_r
     sta (W2),y
+    lda B2
+    bne !nb+
+    dec B3
+!nb:
+    dec B2
     iny
     bne _dds_scalar_loop
+    inc W2+1                           // Y wrapped — bump payload page
+    jmp _dds_scalar_loop
 
 _dds_data_container:
     // SIZE/2 children. Read each sub-ID, look up (or alloc placeholder),
