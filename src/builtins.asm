@@ -2472,17 +2472,31 @@ _bedit_down:
     jmp _bedit_after_key
 
 _bedit_after_key:
-    // Cursor moves alone don't set edit_dirty, so a key that slides
-    // edit_view_shift (cursor past col 39 / back into view) would leave the
-    // screen showing the old offset. Stash view_shift on HW stack across
-    // edit_view_focus (a leaf, balances the stack) and OR in bit 1
-    // (full-screen-dirty) on any change. Same fix covers insert/delete
-    // past col 39, which previously only redrew the current line.
+    // Cursor moves alone don't set edit_dirty, so any key that slides the
+    // viewport — horizontally (edit_view_shift) when cursor crosses col 39,
+    // or vertically (edit_view_start) when cursor crosses the visible top/
+    // bottom — would otherwise leave the screen painted against the old
+    // origin. Stash all 3 origin bytes on the HW stack across
+    // edit_view_focus (a leaf that balances the stack), XOR each post-JSR
+    // value against its saved twin into B0, and OR bit 1 (full-screen-dirty)
+    // if any byte differs.
     lda edit_view_shift
+    pha
+    lda edit_view_start
+    pha
+    lda edit_view_start+1
     pha
     jsr edit_view_focus
     pla
-    cmp edit_view_shift
+    eor edit_view_start+1
+    sta B0
+    pla
+    eor edit_view_start
+    ora B0
+    sta B0
+    pla
+    eor edit_view_shift
+    ora B0
     beq _bedit_check_dirty
     lda edit_dirty
     ora #$02

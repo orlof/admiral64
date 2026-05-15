@@ -16,7 +16,7 @@ TYPE_STR = 0x21
 H_TYPE = 6
 O_HEADER = 2  # 2-byte O_LEN before payload
 
-SOURCE = Path(__file__).parent.parent / "build" / "neuron.txt"
+SOURCE = Path(__file__).parent.parent / "examples" / "neuron.admiral"
 PACKER = Path(__file__).parent.parent / "tools" / "pack_str_record.py"
 
 

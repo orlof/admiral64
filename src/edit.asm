@@ -446,8 +446,17 @@ edit_prevline:
 _eprev_back:
     // W0 currently points at a line-start. Step back over the newline that
     // ended the previous line, then bol() again.
+    //
+    // Compare W0 vs gap_end as a 16-bit value — checking the low byte alone
+    // mis-triggered the cross-gap path whenever a regular line-start happened
+    // to share its low byte with gap_end (e.g. $C220 vs $C320), which sent
+    // prevline back to the LAST line of the buffer instead of the previous
+    // one.
     lda W0
     cmp edit_gap_end
+    bne _eprev_dec
+    lda W0+1
+    cmp edit_gap_end+1
     bne _eprev_dec
     // W0 == gap_end → cross the gap leftward.
     lda edit_gap_start
