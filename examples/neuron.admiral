@@ -1,0 +1,21 @@
+PRINT "C64-NEURON"
+PRINT "TRAINING"
+X1 = [0.0, 0.0, 1.0, 1.0]
+X2 = [0.0, 1.0, 0.0, 1.0]
+Y  = [0.0, 0.0, 0.0, 1.0]
+W1 = 0.0
+W2 = 0.0
+B  = 0.0
+FOR E IN RANGE(100):
+  PRINT "ROUND:", E
+  FOR I IN RANGE(4):
+    Z = X1[I]*W1 + X2[I]*W2 + B
+    P = 1.0 / (1.0 + EXP(-Z))
+    D = (Y[I] - P) * 0.5
+    W1 = W1 + D*X1[I]
+    W2 = W2 + D*X2[I]
+    B  = B  + D
+PRINT "AND-GATE SIMULATION"
+FOR I IN RANGE(4):
+  Z = X1[I]*W1 + X2[I]*W2 + B
+  PRINT X1[I], X2[I], 1.0 / (1.0 + EXP(-Z))

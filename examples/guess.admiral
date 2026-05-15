@@ -1,0 +1,13 @@
+PRINT "GUESS THE NUMBER 1-100"
+T = RND(1, 101)
+N = 0
+G = 0
+WHILE G != T:
+  S = INPUT("? ")
+  G = INT(S)
+  N = N + 1
+  IF G < T:
+    PRINT "HIGHER"
+  ELIF G > T:
+    PRINT "LOWER"
+PRINT "GOT IT IN", N, "TRIES"
