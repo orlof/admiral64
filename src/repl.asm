@@ -158,19 +158,19 @@ _rpl_copy:
     jmp _rpl_copy
 _rpl_copy_done:
 
-    lda RV
-    sta W0
-    lda RV+1
-    sta W0+1
-    rs_push(W0)
+    jsr rs_push_rv                   // source string (= old RV) for parser_exec
 
     jsr parser_exec                  // consumes source on return; RV = result
 
-    // Bind `_` in ROOT_SCOPE to the last NON-None expression result. Python
-    // semantics: statements / None-returning calls don't clobber the previous
-    // `_`. Also avoids poisoning future `_()`: scope_get can't distinguish
-    // "key not bound" from "key bound to NONE", so binding NONE makes `_`
-    // unresolvable on the next call (panic_lex via the scope walk).
+    // After parser_exec: if RV != NONE, both auto-print the value (Python-REPL
+    // style; assignments and statements return NONE and stay quiet) and bind
+    // `_` to it in ROOT_SCOPE. The same None check gates both so we don't
+    // poison `_` (scope_get can't distinguish NONE from missing) and don't
+    // spam the screen with phantom "None" lines after every statement.
+    //
+    // RS layout: push RV THREE times — once for print_value (consumed last),
+    // once for the "_" name slot and once for the scope_set value (consumed
+    // together first). scope_set leaves the bottom RV intact for print_value.
     lda RV
     cmp #<NONE
     bne !bind+
@@ -178,9 +178,13 @@ _rpl_copy_done:
     cmp #>NONE
     beq _rpl_skip_bind
 !bind:
+    jsr rs_push_rv                   // bottom: RV for print_value
     rs_push_const(STR_UNDERSCORE)
     jsr rs_push_rv
-    jsr scope_set
+    jsr scope_set                    // pops UNDERSCORE+RV; bottom RV stays
+    jsr print_value                  // pops the bottom RV, prints it
+    lda #$0D
+    jsr screen_put_char
 _rpl_skip_bind:
 
     jmp repl_loop

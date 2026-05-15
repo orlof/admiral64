@@ -15,13 +15,13 @@ def ascii_bytes(s: str) -> list[int]:
     return [ord(c) for c in s]
 
 
-def run_to_str(h, payload_bytes: list[int]) -> list[int]:
+def run_to_str(h, payload_bytes: list[int], max_steps: int = 100_000) -> list[int]:
     """Place an int with the given payload, call int_to_str, return the
     resulting string's payload bytes."""
     rsp_initial = h.rsp
     x = place_int(h, 0x8500, payload_bytes)
     h.rs_push(x)
-    h.call("int_to_str")
+    h.call("int_to_str", max_steps=max_steps)
     assert h.rsp == rsp_initial, (
         f"int_to_str violated stack discipline: expected RSP=${rsp_initial:04X}, "
         f"got ${h.rsp:04X}"
@@ -144,3 +144,28 @@ def test_large_value_under_tight_gc_pressure(h):
     garbage2 = h.alloc_int(500)  # unrooted garbage
     del garbage1, garbage2
     assert run_to_str(h, [0xFF, 0xFF, 0x00]) == ascii_bytes("65535")
+
+
+# --- wide payloads: regression on the byte-index sign-bit aliasing ------------
+# Two prior bugs only fired on big integers:
+#   1. int_divmod's outer loop used bmi/bpl on X as the byte index, treating
+#      any X >= $80 (i.e. dividend payload >= 129 bytes) as underflow → Q
+#      came back all zeros.
+#   2. int_to_str's digit counter was 8-bit (B1), so any value rendering to
+#      > 255 decimal digits got truncated.
+# 2**1024 hits both: payload is 129 bytes, decimal form is 309 digits.
+
+def test_2_to_the_1024(h):
+    # 2**1024 little-endian: 128 zero bytes then 0x01. No sign-extension byte
+    # needed because the top byte (0x01) has bit 7 clear.
+    payload = [0x00] * 128 + [0x01]
+    assert run_to_str(h, payload, max_steps=20_000_000) == ascii_bytes(str(2 ** 1024))
+
+
+def test_neg_2_to_the_1024(h):
+    # -(2**1024) as variable-length two's-complement: 128 zero bytes then 0xFF.
+    # (Negating 2**1024 = "0...0 01" gives "0...0 FF" with one's-complement +1
+    # carries to a 129-byte all-FF-ish form; the canonical normalized
+    # representation is 128 zero bytes + 0xFF.)
+    payload = [0x00] * 128 + [0xFF]
+    assert run_to_str(h, payload, max_steps=20_000_000) == ascii_bytes("-" + str(2 ** 1024))

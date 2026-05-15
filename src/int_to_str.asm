@@ -45,10 +45,12 @@ i2s_neg:
     jsr int_negate               // consumes top; RV = -x = |x|
     rs_push(RV)
 i2s_have_working:
-    // RS: [... x, working]. B0 = sign. B1 will be digit count.
+    // RS: [... x, working]. B0 = sign. B1:B2 = 16-bit digit count
+    // (8-bit would cap at 255 digits → 2**1000 = 302 digits got truncated).
 
     lda #0
     sta B1
+    sta B2
 
     // --- Digit-extraction loop. ---
 i2s_digit_loop:
@@ -74,6 +76,9 @@ i2s_digit_ready:
     adc #'0'                     // ASCII digit
     fs_push_byte()
     inc B1
+    bne !+
+    inc B2
+!:
 
     // Is Q zero? Zero for our non-negative Q means either O_LEN=0 or
     // O_LEN=1 & payload[0]=0. Anything else is non-zero.
@@ -109,12 +114,15 @@ i2s_q_zero:
     lda #'-'
     fs_push_byte()
     inc B1
+    bne !+
+    inc B2
+!:
 i2s_no_sign:
 
     // --- Allocate exact-size string. ---
     lda B1
     sta ALLOC_SIZE
-    lda #0
+    lda B2
     sta ALLOC_SIZE+1
     jsr str_alloc                // RV = string handle
     rs_push(RV)                  // root it
@@ -127,26 +135,28 @@ i2s_no_sign:
     sta W0+1
     jsr deref_W0_to_W2           // W2 = string payload ptr
 
-    // Copy B1 bytes from FS (top → bottom) into payload[0..B1-1].
-    // fs_pop_byte clobbers Y, so stash index in B2.
-    lda #0
-    sta B2
+    // Copy B1:B2 bytes from FS (top → bottom) into the payload.
+    // W2 walks forward through the payload one byte at a time; Y stays 0
+    // since fs_pop_byte clobbers it anyway. B1:B2 down-counts to zero.
+    // fs_pop_byte's call form keeps the loop body small.
 i2s_pop_loop:
-    lda B2
-    cmp B1
+    lda B1
+    ora B2
     beq i2s_pop_done
-    fs_pop_byte()                // A = digit, Y clobbered
-    ldy B2
+    jsr fs_pop_byte_call         // A = digit, Y clobbered
+    ldy #0
     sta (W2),y
-    inc B2
+    inc W2
+    bne !+
+    inc W2+1
+!:
+    lda B1
+    bne !+
+    dec B2
+!:
+    dec B1
     jmp i2s_pop_loop
 i2s_pop_done:
 
-    // --- Return string handle in RV. ---
-    rs_peek(W0)
-    lda W0
-    sta RV
-    lda W0+1
-    sta RV+1
-
-    jmp postamble
+    // --- Return string handle in RV. Top of RS is the string handle. ---
+    jmp postamble_peek_rv

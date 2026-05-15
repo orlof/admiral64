@@ -191,10 +191,17 @@ zero_r:
     // Per bit:
     //   R <<= 1 (with OR-in of current bit of a)
     //   if R >= mb: R -= mb; Q[X] |= B1
+    //
+    // Loop framing: walk X = AL'-1 ... 0. We can't use bmi/bpl to detect
+    // underflow — when AL' >= 129, X = AL'-1 has bit 7 set and looks
+    // "negative" to bpl/bmi even though it's a valid byte index. Instead:
+    // - dex sits at the top of the body (so X enters at AL'-1);
+    // - txa + bne at the bottom tests X != 0 without sign-bit aliasing;
+    // - the AL' = 0 case is skipped before the loop starts.
     ldx B2
-    dex                          // X = AL' - 1
-    bmi div_done                 // AL'=0 means zero dividend; already zeroed buffers
+    beq div_done                 // AL'=0 → zero dividend; buffers already zeroed
 div_outer:
+    dex                          // first iter: X = AL'-1; last useful iter: X = 0
     txa
     tay
     lda (W2),y
@@ -287,8 +294,8 @@ next_bit:
     dec B5
     bne div_inner
 
-    dex
-    bpl div_outer
+    txa                          // X != 0 → another byte to process
+    bne div_outer                // (bpl would alias bit-7 byte indices as exit)
 
 div_done:
     // RS: [a, b, ma, mb, Q, R]

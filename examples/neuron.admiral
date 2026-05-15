@@ -6,15 +6,20 @@ Y  = [0.0, 0.0, 0.0, 1.0]
 W1 = 0.0
 W2 = 0.0
 B  = 0.0
-FOR E IN RANGE(100):
+
+E=0
+WHILE E<100:
   PRINT "ROUND:", E
-  FOR I IN RANGE(4):
+  I=0
+  WHILE I<4:
     Z = X1[I]*W1 + X2[I]*W2 + B
     P = 1.0 / (1.0 + EXP(-Z))
     D = (Y[I] - P) * 0.5
     W1 = W1 + D*X1[I]
     W2 = W2 + D*X2[I]
     B  = B  + D
+    I+=1
+  E+=1
 PRINT "AND-GATE SIMULATION"
 FOR I IN RANGE(4):
   Z = X1[I]*W1 + X2[I]*W2 + B
