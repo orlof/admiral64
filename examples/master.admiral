@@ -1,0 +1,15 @@
+# MASTERMIND - DICT-AS-OBJECT DEMO.
+# DATA AND METHODS LIVE TOGETHER; METHODS USE 'ME'
+# TO READ AND MUTATE THE RECEIVER DICT.
+
+M = <
+  "MAX": 10,
+  "SECRET": [],
+  "TRIES": 0,
+  "NEW": "ME.SECRET = []\nME.TRIES = 0\nI = 0\nWHILE I < 4:\n  ME.SECRET.APPEND(RND(1, 7))\n  I = I + 1",
+  "PARSE": "D = []\nI = 0\nWHILE I < 4:\n  D.APPEND(INT(S[I]))\n  I = I + 1\nRETURN D",
+  "SCORE": "B = 0\nC = 0\nU = [0, 0, 0, 0]\nV = [0, 0, 0, 0]\nI = 0\nWHILE I < 4:\n  IF G[I] == ME.SECRET[I]:\n    B = B + 1\n    U[I] = 1\n    V[I] = 1\n  I = I + 1\nI = 0\nWHILE I < 4:\n  IF U[I] == 0:\n    J = 0\n    WHILE J < 4:\n      IF V[J] == 0:\n        IF G[I] == ME.SECRET[J]:\n          C = C + 1\n          U[I] = 1\n          V[J] = 1\n          J = 4\n      J = J + 1\n  I = I + 1\nRETURN [B, C]",
+  "PLAY": "ME.NEW()\nPRINT \"CRACK THE 4-DIGIT CODE (1-6)\"\nWHILE ME.TRIES < ME.MAX:\n  S = INPUT(\"? \")\n  IF LEN(S) != 4:\n    PRINT \"NEED 4 DIGITS\"\n  ELSE:\n    G = ME.PARSE(S=S)\n    R = ME.SCORE(G=G)\n    ME.TRIES = ME.TRIES + 1\n    PRINT R[0], \"BULLS\", R[1], \"COWS\"\n    IF R[0] == 4:\n      PRINT \"WON IN\", ME.TRIES, \"TRIES\"\n      RETURN\nPRINT \"LOST. SECRET WAS\", ME.SECRET"
+>
+
+M.PLAY()

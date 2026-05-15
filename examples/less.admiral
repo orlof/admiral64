@@ -1,0 +1,10 @@
+L = T.SPLIT("\r")
+I = 0
+R = 0
+WHILE I < LEN(L):
+  R = R + LEN(L[I]) / 40 + 1
+  PRINT L[I]
+  I = I + 1
+  IF R >= 23:
+    GETC()
+    R = 0
