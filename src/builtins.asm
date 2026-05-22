@@ -1801,8 +1801,8 @@ builtin_poke:
 
 _bpkp_poke:
     arg_get(1, W0)
-    jsr deref_W0_to_W2                  // Y = 0 at exit
-    lda (W2),y                          // A = val byte
+    ldy #0
+    lda (W0),y                          // inline int: low byte = value
     ldx $01
     ldy #MEM_IO
     sty $01
@@ -1810,6 +1810,97 @@ _bpkp_poke:
     sta (W1),y
     stx $01
     jmp postamble_return_none
+
+// =============================================================================
+// builtin_call(code, a0..a3) — invoke a leaf 6510 routine held in a string.
+//
+//   code     : TYPE_STR whose payload is position-independent 6510 machine
+//              code. JSR'd at its first payload byte (via self-modifying code,
+//              since 6502 JSR has no indirect form).
+//   a0..a3   : 0..4 further args; each arg's HANDLE address is placed in
+//              W0..W3 (arg0→W0 …). For an inline int the 4 value bytes live at
+//              the handle, so the extension reads them directly at W0; for a
+//              boxed type (STR/…) the handle's H_PTR leads to the payload.
+//
+// Contract: the routine is a LEAF — it must not allocate or call back into
+// Admiral (so GC can't fire and relocate the code string mid-run), must
+// balance the hardware stack, and returns a 16-bit result in W0 (zero-extended
+// to an inline int). It may freely clobber W0..W3 / B0..B7 / A / X / Y — this
+// builtin's V4' frame restores the caller's registers on exit.
+// =============================================================================
+builtin_call:
+    preamble_call(1, 5)
+
+    // Stash the args-tuple payload ptr ($FB:$FC) so marshalling into W0..W3
+    // can't corrupt the pointer we read args through.
+    lda W3
+    sta $FB
+    lda W3+1
+    sta $FC
+
+    // SMC the JSR target from the code string (tuple[0]) → first opcode.
+    ldy #0
+    lda ($FB),y
+    sta W0
+    iny
+    lda ($FB),y
+    sta W0+1
+    jsr deref_W0_to_W2                  // W2 = code payload (H_PTR + O_HEADER)
+    lda W2
+    sta _call_jsr+1
+    lda W2+1
+    sta _call_jsr+2
+
+    // Marshal up to 4 arg handles (tuple[1..4]) into W0..W3 by arg count (B7).
+    lda B7
+    cmp #2
+    bcc _call_go
+    ldy #2
+    lda ($FB),y
+    sta W0
+    iny
+    lda ($FB),y
+    sta W0+1
+    lda B7
+    cmp #3
+    bcc _call_go
+    ldy #4
+    lda ($FB),y
+    sta W1
+    iny
+    lda ($FB),y
+    sta W1+1
+    lda B7
+    cmp #4
+    bcc _call_go
+    ldy #6
+    lda ($FB),y
+    sta W2
+    iny
+    lda ($FB),y
+    sta W2+1
+    lda B7
+    cmp #5
+    bcc _call_go
+    ldy #8
+    lda ($FB),y
+    sta W3
+    iny
+    lda ($FB),y
+    sta W3+1
+_call_go:
+_call_jsr:
+    jsr $ffff                           // operand patched above (SMC)
+
+    // Result: 16-bit value in W0, zero-extended to an inline int.
+    lda W0
+    sta W2
+    lda W0+1
+    sta W2+1
+    lda #0
+    sta W3
+    sta W3+1
+    jmp postamble_set_rv_int32
 
 
 // =============================================================================

@@ -63,6 +63,7 @@ BUILTINS = [
     ("EDIT",    "builtin_edit"),
     ("PEEK",    "builtin_peek"),
     ("POKE",    "builtin_poke"),
+    ("CALL",    "builtin_call"),
     ("EXP",     "builtin_exp"),
     ("LOG",     "builtin_log"),
     ("SQRT",    "builtin_sqrt"),
