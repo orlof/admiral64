@@ -14,7 +14,20 @@
 // Layout: [link $080B][line 10][SYS $9E]["2061"][eol $00][eop $00 $00].
 .byte $0B, $08, $0A, $00, $9E, $32, $30, $36, $31, $00, $00, $00
 
+// cold — the SYS / RESET entry. Defaults the heap config to text (full heap),
+// then falls into boot. REBOOT(bool) sets GFX_CONFIG itself and JMPs to `boot`
+// directly, preserving the chosen config across the warm restart.
+cold:
+    lda #0
+    sta GFX_CONFIG
+
 boot:
+    // REBOOT reaches `boot` via JMP from deep in a builtin call chain, so the
+    // HW stack would leak across reboots — reset it. Harmless on the cold path
+    // (we never RTS back to BASIC; boot ends in `jmp repl_main`).
+    ldx #$FF
+    txs
+
     // Phase 1 banking: bank BASIC + KERNAL out, keep I/O. KERNAL ROM is no
     // longer mapped at $E000-$FFFF; the CPU's IRQ/NMI vectors at $FFFA-$FFFF
     // now read RAM. We must populate them before flipping $01, otherwise the
@@ -66,10 +79,11 @@ boot:
     lda #>nmi_handler
     sta $0319
 
-    // RESET: pointer to boot, so a soft-reset re-enters us.
-    lda #<boot
+    // RESET: pointer to `cold`, so a soft-reset re-enters us in text config
+    // (a stale graphics config must not survive a reset).
+    lda #<cold
     sta $FFFC
-    lda #>boot
+    lda #>cold
     sta $FFFD
 
     // $01 = MEM_NORMAL ($34): BASIC out, KERNAL out, $D000-$DFFF is RAM
@@ -83,6 +97,7 @@ boot:
 
     jsr rs_init
     jsr fs_init
+    jsr _heap_apply              // set HEAP_TOP from GFX_CONFIG (before alloc)
     jsr alloc_init
     jsr rnd_init
 
@@ -281,6 +296,32 @@ _err_nibble:
     jmp screen_put_char
 
 // -----------------------------------------------------------------------------
+// Heap-config cells + selector. `cold` sets GFX_CONFIG=0 (text); REBOOT(bool)
+// sets it from the arg's truthiness. _heap_apply (called by boot before
+// alloc_init) reads it and sets HEAP_TOP — the handle-table ceiling alloc_init
+// carves down from. These resident RAM cells survive the warm restart; they
+// avoid ZP $FB-$FE (used by builtin_call/int_divmod) and the cassette buffer
+// (used by the REPL).
+// -----------------------------------------------------------------------------
+GFX_CONFIG: .byte 0
+HEAP_TOP:   .word 0
+
+_heap_apply:
+    lda GFX_CONFIG
+    beq _ha_text
+    lda #<HEAP_HANDLE_START_GFX
+    sta HEAP_TOP
+    lda #>HEAP_HANDLE_START_GFX
+    sta HEAP_TOP+1
+    rts
+_ha_text:
+    lda #<HEAP_HANDLE_START
+    sta HEAP_TOP
+    lda #>HEAP_HANDLE_START
+    sta HEAP_TOP+1
+    rts
+
+// -----------------------------------------------------------------------------
 // irq_handler — RAM-resident IRQ vector. Two entry paths:
 //
 //   1. Direct, via $FFFE in RAM ($01 has HIRAM=0): hardware pushes only
@@ -418,10 +459,10 @@ _nmi_save:
     sta $0400+4
 
     sec
-    lda #<HEAP_HANDLE_START
+    lda HEAP_TOP                       // dynamic ceiling (config-dependent)
     sbc NEXT_HANDLE
     sta W0
-    lda #>HEAP_HANDLE_START
+    lda HEAP_TOP+1
     sbc NEXT_HANDLE+1
     sta W0+1
     ldx #5

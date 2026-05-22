@@ -875,6 +875,7 @@ def h(built) -> Harness:
     harness = Harness(mpu=mpu, sym=syms)
     harness.call("rs_init")
     harness.call("fs_init")
+    harness.call("_heap_apply")  # sets HEAP_TOP from GFX_CONFIG (0 → $FFF8 text)
     harness.call("alloc_init")
     harness.call("rnd_init")
     return harness
@@ -910,6 +911,7 @@ def hfp(built) -> Harness:
     harness = Harness(mpu=mpu, sym=syms)
     harness.call("rs_init")
     harness.call("fs_init")
+    harness.call("_heap_apply")  # sets HEAP_TOP from GFX_CONFIG (0 → $FFF8 text)
     harness.call("alloc_init")
     harness.call("rnd_init")
     # Move handle area below BASIC ROM so allocations don't trample ROM bytes
@@ -940,6 +942,7 @@ def hd(built) -> Harness:
     harness.kernal_mock = KernalDiskMock(mpu)
     harness.call("rs_init")
     harness.call("fs_init")
+    harness.call("_heap_apply")  # sets HEAP_TOP from GFX_CONFIG (0 → $FFF8 text)
     harness.call("alloc_init")
     harness.call("rnd_init")
     return harness

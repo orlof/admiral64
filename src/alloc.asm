@@ -47,9 +47,11 @@ alloc_init:
     sta NEXT_DATA
     lda #>HEAP_DATA_START
     sta NEXT_DATA+1
-    lda #<HEAP_HANDLE_START
+    // Handle ceiling is config-dependent: boot's _heap_apply set HEAP_TOP to
+    // HEAP_HANDLE_START ($FFF8, text) or HEAP_HANDLE_START_GFX ($DC00, graphics).
+    lda HEAP_TOP
     sta NEXT_HANDLE
-    lda #>HEAP_HANDLE_START
+    lda HEAP_TOP+1
     sta NEXT_HANDLE+1
     lda #0
     sta FREE_HEAD

@@ -1902,6 +1902,20 @@ _call_jsr:
     sta W3+1
     jmp postamble_set_rv_int32
 
+// =============================================================================
+// builtin_reboot(graphics_capable) — warm-restart Admiral into a heap config.
+//   falsy  → text/full-heap (handle ceiling $FFF8).
+//   truthy → graphics-capable: reserve $DC00-$FFFF for a hi-res bitmap +
+//            matrix (handle ceiling $DC00).
+// Sets GFX_CONFIG, then JMPs to boot. NEVER returns (re-enters the REPL); boot
+// resets the HW stack + RS/FS and re-snapshots the recovery state. The
+// workspace is wiped (it's a restart) — programs/data persist on disk.
+// =============================================================================
+builtin_reboot:
+    jsr preamble_call_1_1_w0     // W0 = arg0 handle
+    jsr val_truthy               // A = 0 (falsy) / 1 (truthy); leaf, no GC
+    sta GFX_CONFIG
+    jmp boot                     // never returns
 
 // =============================================================================
 // builtin_cursor([col, row]) — get/set cursor.

@@ -331,9 +331,23 @@
 // $8400-$87FF); handles grow DOWN from $FFF8 — one byte below the NMI vector
 // at $FFFA. Net usable heap: ~30 KB.
 .const HEAP_DATA_START   = $8800   // data heap grows UP from here
-.const HEAP_HANDLE_START = $FFF8   // handle table grows DOWN from here (just
-                                   // below the IRQ/NMI/RESET vectors at
-                                   // $FFFA-$FFFF — RAM with $01=$34)
+.const HEAP_HANDLE_START = $FFF8   // text-config handle ceiling: grows DOWN
+                                   // from here (just below the IRQ/NMI/RESET
+                                   // vectors at $FFFA-$FFFF — RAM with $01=$34)
+
+// Graphics-config handle ceiling. REBOOT(TRUE) reserves $DC00-$FFFF (~9KB) for
+// a VIC bank-3 hi-res bitmap + color matrix; the handle table then grows down
+// from $DC00 instead of $FFF8. The actual VIC setup + drawing are user-space
+// CALL-asm extensions (examples/{text,hires,mc}.admiral). Layout (for those
+// extensions / EXTENSIONS.md — not used by core):
+//   GFX_MATRIX_BASE  $DC00  color matrix (1000 B, $DC00-$DFE7)
+//   GFX_BITMAP_BASE  $E000  bitmap       (8000 B, $E000-$FF3F)
+//   GFX_YTBL         $FF40  free scratch ($FF40-$FFF9, ~186 B): row-addr table
+//                           + bit masks (below the vectors at $FFFA).
+.const HEAP_HANDLE_START_GFX = $DC00
+.const GFX_MATRIX_BASE       = $DC00
+.const GFX_BITMAP_BASE       = $E000
+.const GFX_YTBL              = $FF40
 
 // --- VIC-II / screen layout (bank 0 default) ---------------------------------
 // Text mode in VIC-II bank 0. See ARCHITECTURE.md for future bank-3 migration.
