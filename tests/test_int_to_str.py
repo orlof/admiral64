@@ -153,19 +153,6 @@ def test_large_value_under_tight_gc_pressure(h):
 #      came back all zeros.
 #   2. int_to_str's digit counter was 8-bit (B1), so any value rendering to
 #      > 255 decimal digits got truncated.
-# 2**1024 hits both: payload is 129 bytes, decimal form is 309 digits.
-
-def test_2_to_the_1024(h):
-    # 2**1024 little-endian: 128 zero bytes then 0x01. No sign-extension byte
-    # needed because the top byte (0x01) has bit 7 clear.
-    payload = [0x00] * 128 + [0x01]
-    assert run_to_str(h, payload, max_steps=20_000_000) == ascii_bytes(str(2 ** 1024))
-
-
-def test_neg_2_to_the_1024(h):
-    # -(2**1024) as variable-length two's-complement: 128 zero bytes then 0xFF.
-    # (Negating 2**1024 = "0...0 01" gives "0...0 FF" with one's-complement +1
-    # carries to a 129-byte all-FF-ish form; the canonical normalized
-    # representation is 128 zero bytes + 0xFF.)
-    payload = [0x00] * 128 + [0xFF]
-    assert run_to_str(h, payload, max_steps=20_000_000) == ascii_bytes("-" + str(2 ** 1024))
+# NOTE: arbitrary-precision tests (e.g. 2**1024) were removed with the move to
+# fixed 32-bit integers — such values now wrap mod 2³². Boundary coverage for
+# the 32-bit range lives in test_int_boundary.py.

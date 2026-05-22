@@ -18,30 +18,48 @@ O_HEADER = 2
 TYPE_INT = 0x20
 
 
-def place_int(h, addr: int, magnitude: list[int]) -> int:
-    """Hand-place an int handle+object pair starting at `addr`. Returns handle address.
+def _min_twos_complement(val: int) -> list[int]:
+    """Shortest little-endian two's-complement byte list for signed `val`.
 
-    Used for setting up test inputs without going through the allocator.
+    Matches the old variable-length normalization: 0 -> [0x00], 2 -> [0x02],
+    -1 -> [0xFF], 1000 -> [0xE8, 0x03], -128 -> [0x80], 128 -> [0x80, 0x00].
+    """
+    length = 1
+    while True:
+        try:
+            return list(val.to_bytes(length, "little", signed=True))
+        except OverflowError:
+            length += 1
+
+
+def place_int(h, addr: int, magnitude: list[int]) -> int:
+    """Hand-place an inline-int handle at `addr`. Returns the handle address.
+
+    Fixed 32-bit inline representation: the value lives in H_PTR (lo16) +
+    H_SIZE (hi16). `magnitude` is interpreted as a little-endian two's-
+    complement value (the old variable-length input form) and sign-extended
+    to 32 bits.
     """
     handle_addr = addr
-    object_addr = addr + SIZEOF_HANDLE
+    val = int.from_bytes(bytes(magnitude), "little", signed=True) if magnitude else 0
+    val &= 0xFFFFFFFF
 
-    h.write_word(handle_addr + H_PTR, object_addr)
-    h.write_word(handle_addr + H_SIZE, O_HEADER + len(magnitude))
+    h.write_word(handle_addr + H_PTR, val & 0xFFFF)
+    h.write_word(handle_addr + H_SIZE, (val >> 16) & 0xFFFF)
     h.write_word(handle_addr + H_NEXT, 0)
     h.mpu.memory[handle_addr + H_TYPE] = TYPE_INT
     h.mpu.memory[handle_addr + H_FLAGS] = 0
-
-    h.write_word(object_addr + O_LEN, len(magnitude))
-    h.write_bytes(object_addr + O_HEADER, magnitude)
     return handle_addr
 
 
 def read_int(h, handle_addr: int) -> list[int]:
-    """Follow a handle → heap object → payload. Returns the magnitude bytes."""
-    payload_ptr = h.read_word(handle_addr + H_PTR)
-    length = h.read_word(payload_ptr + O_LEN)
-    return h.read_bytes(payload_ptr + O_HEADER, length)
+    """Read an inline int → minimal little-endian two's-complement byte list."""
+    lo = h.read_word(handle_addr + H_PTR)
+    hi = h.read_word(handle_addr + H_SIZE)
+    val = lo | (hi << 16)
+    if val & 0x8000_0000:
+        val -= 0x1_0000_0000
+    return _min_twos_complement(val)
 
 
 def run_add(h, a_bytes: list[int], b_bytes: list[int]) -> list[int]:

@@ -30,6 +30,7 @@
 #import "stacks.asm"
 #import "preamble.asm"
 #import "handle.asm"
+#import "int_util.asm"
 #import "array.asm"
 #import "scope.asm"
 #import "dict.asm"
@@ -181,45 +182,8 @@ _ev_sub_dict:
     jmp postamble
 
 _ev_sub_arr:
-    // Extract int index as a 16-bit signed value, normalize negatives.
-    // Read int's first byte into B5 (low) and second byte (or sign-ext) into
-    // B6 (high). Then if MSB of B6 is set, idx += container length.
-    ldy #H_PTR
-    lda (W1),y
-    sta W2
-    iny
-    lda (W1),y
-    sta W2+1
-    ldy #O_LEN
-    lda (W2),y
-    pha                              // save int length across ptr advance
-    clc
-    lda W2
-    adc #O_HEADER
-    sta W2
-    bcc !+
-    inc W2+1
-!:
-    ldy #0
-    lda (W2),y
-    sta B5                           // B5 = idx low byte
-    pla                              // A = int length
-    cmp #1
-    beq _ev_sub_idx_1byte
-    iny
-    lda (W2),y
-    sta B6                           // B6 = idx high byte (from int payload)
-    jmp _ev_sub_idx_check
-_ev_sub_idx_1byte:
-    // 1-byte int: sign-extend low byte to fill high.
-    lda B5
-    bmi !neg+
-    lda #0
-    bpl !done+
-!neg:
-    lda #$FF
-!done:
-    sta B6
+    // Inline int index (W1) → signed 16-bit B5:B6; negative → add length.
+    jsr int_index_w1_b5b6
 _ev_sub_idx_check:
     // B5:B6 = signed 16-bit index. Negative → add container length.
     lda B6
@@ -248,42 +212,8 @@ _ev_sub_str:
     // it survives the alloc's potential GC.
     rs_push(W0)                      // RS: [..., container]
 
-    // Read int subscript (W1) into signed 16-bit (B5:B6).
-    ldy #H_PTR
-    lda (W1),y
-    sta W2
-    iny
-    lda (W1),y
-    sta W2+1
-    ldy #O_LEN
-    lda (W2),y
-    pha                              // save int O_LEN low across ptr advance
-    clc
-    lda W2
-    adc #O_HEADER
-    sta W2
-    bcc !+
-    inc W2+1
-!:
-    ldy #0
-    lda (W2),y
-    sta B5                           // B5 = idx low
-    pla
-    cmp #1
-    beq _ev_sub_str_1byte
-    iny
-    lda (W2),y
-    sta B6                           // B6 = idx high (2-byte int)
-    jmp _ev_sub_str_idx_check
-_ev_sub_str_1byte:
-    lda B5
-    bmi !neg+
-    lda #0
-    bpl !done+
-!neg:
-    lda #$FF
-!done:
-    sta B6
+    // Inline int subscript (W1) → signed 16-bit B5:B6.
+    jsr int_index_w1_b5b6
 _ev_sub_str_idx_check:
     lda B6
     bpl _ev_sub_str_idx_pos
@@ -514,43 +444,8 @@ _as_sub:
     jmp panic_type
 
 _as_sub_list:
-    // Read int subscript (W1) into signed 16-bit (B5:B6); negative → add
-    // container O_LEN.
-    ldy #H_PTR
-    lda (W1),y
-    sta W2
-    iny
-    lda (W1),y
-    sta W2+1
-    ldy #O_LEN
-    lda (W2),y
-    pha                              // int O_LEN low
-    clc
-    lda W2
-    adc #O_HEADER
-    sta W2
-    bcc !+
-    inc W2+1
-!:
-    ldy #0
-    lda (W2),y
-    sta B5
-    pla
-    cmp #1
-    beq _as_sub_list_1byte
-    iny
-    lda (W2),y
-    sta B6
-    jmp _as_sub_list_idx_check
-_as_sub_list_1byte:
-    lda B5
-    bmi !neg+
-    lda #0
-    bpl !done+
-!neg:
-    lda #$FF
-!done:
-    sta B6
+    // Inline int subscript (W1) → signed 16-bit B5:B6; negative → add O_LEN.
+    jsr int_index_w1_b5b6
 _as_sub_list_idx_check:
     lda B6
     bpl _as_sub_idx_pos

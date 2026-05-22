@@ -25,6 +25,7 @@
 #import "stacks.asm"
 #import "preamble.asm"
 #import "rnd.asm"
+#import "int_util.asm"
 
 // -----------------------------------------------------------------------------
 // basic_call(addr) / basic_binop(addr) — bank BASIC + KERNAL ROM in, JSR,
@@ -559,33 +560,32 @@ int_to_float:
     preamble_args(1, 0)
 
     rs_peek_at(W0, 0)
-    jsr deref_W0_to_W2          // W2 = int payload, A = length
-    sta B0                      // B0 = length
+    jsr int_load_a              // B0..B3 = 32-bit value (LE)
 
-    // Length 0 → value 0 (jump past mag/loop).
-    lda B0
-    bne _i2f_nonzero_input
-    jmp _i2f_zero_input
-_i2f_nonzero_input:
-
-    // Sign byte from MSB.
-    jsr sign_byte_W2            // A = $00 (non-neg) or $FF (neg)
-    sta B3                      // B3 = sign
-
-    bpl _i2f_have_mag
-
-    // Negative: re-push the int so int_negate can consume it, then root the
-    // magnitude. After this, RS top = magnitude.
-    rs_peek_at(W0, 0)
-    rs_push(W0)
-    jsr int_negate              // consumes top dup; RV = magnitude
-    rs_push(RV)
-
-    rs_peek_at(W0, 0)
-    jsr deref_W0_to_W2          // W2 = magnitude payload, A = length
+    // Sign → B7; magnitude into B0..B3 (negate if negative).
+    lda B3
+    bpl _i2f_pos
+    lda #$FF
+    sta B7
+    sec
+    lda #0
+    sbc B0
     sta B0
+    lda #0
+    sbc B1
+    sta B1
+    lda #0
+    sbc B2
+    sta B2
+    lda #0
+    sbc B3
+    sta B3
+    jmp _i2f_build
+_i2f_pos:
+    lda #0
+    sta B7
 
-_i2f_have_mag:
+_i2f_build:
     // FAC1 = 0
     lda #0
     ldx #5
@@ -594,64 +594,41 @@ _i2f_zero_fac1:
     dex
     bpl _i2f_zero_fac1
 
-    lda B0
-    sta B1                      // B1 = remaining count, MSB-first
-    beq _i2f_apply_sign         // empty magnitude → 0
-
+    // Process bytes MSB-first (B3,B2,B1,B0): FAC1 = FAC1*256 + byte.
+    // B5 = byte index 3 → 0; X used transiently to index B0,x ($18..$1B).
+    lda #3
+    sta B5
 _i2f_byte_loop:
-    // FAC1 *= 256: exponent += 8 (skip if zero).
-    lda FAC1
+    lda FAC1                    // FAC1 *= 256 (skip when still zero)
     beq _i2f_no_x256
     clc
     adc #8
     sta FAC1
 _i2f_no_x256:
-
-    // byte = magnitude[B1-1]
-    ldy B1
-    dey
-    lda (W2),y
+    ldx B5
+    lda B0,x
     beq _i2f_no_add
-    sta B2
+    sta B6                      // byte to add
 
-    // FAC2 = FAC1 (save accumulator).
-    ldx #5
+    ldx #5                      // FAC2 = FAC1
 _i2f_mov:
     lda FAC1,x
     sta FAC2,x
     dex
     bpl _i2f_mov
 
-    // FAC1 = byte (positive 8-bit promotes to signed 16-bit zero-extended).
-    // GIVAYF takes A=high byte, Y=low byte. Byte value 0..255 → A=0, Y=byte.
     lda #0
-    ldy B2
-    basic_call(BASIC_GIVAYF)
-
-    // FAC1 = FAC2 + FAC1. Both operands are positive in this loop, so the
-    // sign prep done by basic_binop simplifies to "$6F = 0", harmless.
-    basic_binop(BASIC_FADDT)
-
+    ldy B6
+    basic_call(BASIC_GIVAYF)    // FAC1 = byte (A=hi=0, Y=lo=byte)
+    basic_binop(BASIC_FADDT)    // FAC1 = FAC2 + FAC1
 _i2f_no_add:
-    dec B1
-    bne _i2f_byte_loop
+    dec B5
+    bpl _i2f_byte_loop
 
-_i2f_apply_sign:
-    lda B3
+    lda B7                      // apply sign
     bpl _i2f_pack
     basic_op(BASIC_NEGOP)
-
 _i2f_pack:
-    jmp _fp_alloc_pack_post
-
-_i2f_zero_input:
-    // Length 0: produce zero float.
-    lda #0
-    ldx #5
-_i2f_zfac:
-    sta FAC1,x
-    dex
-    bpl _i2f_zfac
     jmp _fp_alloc_pack_post
 
 // -----------------------------------------------------------------------------
@@ -685,149 +662,102 @@ float_to_int:
     jsr deref_W0_to_W2
     jsr _fp_unpack_to_fac1
 
-    // exp = 0 → result is zero.
+    // exp = 0 → zero.
     lda FAC1
     bne _f2i_nonzero
-    jmp _f2i_alloc_zero
+    jmp _f2i_zero
 _f2i_nonzero:
     sec
-    sbc #128                    // A = N (signed)
-    bcs _f2i_n_carry_ok
-    jmp _f2i_alloc_zero         // exp < 128 → |value| < 1 → 0
-_f2i_n_carry_ok:
+    sbc #128                    // A = N (binary-point position)
+    bcs _f2i_n_ok
+    jmp _f2i_zero               // exp < 128 → |value| < 1 → 0
+_f2i_n_ok:
     bne _f2i_n_nonzero
-    jmp _f2i_alloc_zero         // exp == 128 → |value| in [.5, 1) → 0
+    jmp _f2i_zero               // exp == 128 → [.5,1) → 0
 _f2i_n_nonzero:
     sta B0                      // B0 = N (1..127)
 
-    // byte_count = ceil(N / 8) = (N + 7) >> 3
-    clc
-    adc #7
-    lsr
-    lsr
-    lsr
-    sta B1                      // B1 = byte_count
-
-    // payload_size = max(byte_count + 1, 5) — need 5 minimum so the 32-bit
-    // mantissa fits at offsets 0..3 plus a sign byte at offset 4.
-    clc
-    adc #1                      // A = byte_count + 1
-    cmp #5
-    bcs _f2i_size_ok
-    lda #5
-_f2i_size_ok:
-    sta B3                      // B3 = payload size
-
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int               // RV = result handle (payload uninitialized)
-    rs_push(RV)                 // root
-    jsr deref_RV_to_W2
-
-    // Zero the payload (B3 bytes) so the high bytes start at zero.
-    ldy B3
-    lda #0
-_f2i_zero_loop:
-    dey
-    sta (W2),y
-    cpy #0
-    bne _f2i_zero_loop
-
-    // Place mantissa at offsets 0..3, LE. FAC1+1 has the explicit hidden bit.
-    ldy #0
+    // 32-bit mantissa magnitude → B4..B7 (LE). FAC1+1 holds the hidden bit.
     lda FAC1+4
-    sta (W2),y
-    iny
+    sta B4
     lda FAC1+3
-    sta (W2),y
-    iny
+    sta B5
     lda FAC1+2
-    sta (W2),y
-    iny
+    sta B6
     lda FAC1+1
-    sta (W2),y
+    sta B7
 
-    // Shift = N - 32 (signed): + → left, − → right by abs.
+    // shift = N - 32 : + → left, − → right by abs. Result wraps mod 2^32.
     lda B0
     sec
     sbc #32
-    beq _f2i_apply_sign         // N == 32: no shift
-    bpl _f2i_left_shift_setup
+    beq _f2i_sign
+    bpl _f2i_left
 
-    // N < 32: right-shift by (32 - N) = -A.
+    // right shift by (32 - N)
     eor #$FF
     clc
     adc #1
-    sta B2                      // B2 = right-shift count
-
-_f2i_right_shift_pass:
-    // One pass: shift B3 bytes right by 1 bit. Process MSB → LSB so the
-    // carry chain propagates downward.
-    ldx B3
-    ldy B3
-    dey                         // Y = MSB index
-    clc                         // bit 7 of MSB ← 0 (zero-extended sign)
-_f2i_rs_byte:
-    lda (W2),y
-    ror
-    sta (W2),y
-    dey
+    cmp #32
+    bcs _f2i_zero               // shifts everything out
+    tax
+_f2i_rloop:
+    lsr B7
+    ror B6
+    ror B5
+    ror B4
     dex
-    bne _f2i_rs_byte
-    dec B2
-    bne _f2i_right_shift_pass
-    jmp _f2i_apply_sign
+    bne _f2i_rloop
+    jmp _f2i_sign
 
-_f2i_left_shift_setup:
-    sta B2                      // B2 = left-shift count
-    beq _f2i_apply_sign         // (covered above, defensive)
-
-_f2i_left_shift_pass:
-    // One pass: shift B3 bytes left by 1 bit. Process LSB → MSB.
-    ldx B3
-    ldy #0
-    clc                         // bit 0 of LSB ← 0
-_f2i_ls_byte:
-    lda (W2),y
-    rol
-    sta (W2),y
-    iny
+_f2i_left:
+    cmp #32
+    bcs _f2i_zero               // all significant bits shifted past bit 31
+    tax
+_f2i_lloop:
+    asl B4
+    rol B5
+    rol B6
+    rol B7
     dex
-    bne _f2i_ls_byte
-    dec B2
-    bne _f2i_left_shift_pass
+    bne _f2i_lloop
 
-_f2i_apply_sign:
+_f2i_sign:
+    // magnitude → B0..B3
+    lda B4
+    sta B0
+    lda B5
+    sta B1
+    lda B6
+    sta B2
+    lda B7
+    sta B3
     lda FAC1+5
-    bpl _f2i_normalize          // positive → already correct sign-extended
-
-    // Negative: in-place two's-complement negate of B3 bytes.
-    sec
-    ldy #0
-    ldx B3
-_f2i_neg_byte:
+    bpl _f2i_store
+    sec                         // negate
     lda #0
-    sbc (W2),y
-    sta (W2),y
-    iny
-    dex
-    bne _f2i_neg_byte
-
-_f2i_normalize:
-    // RS top is still our result handle (rooted earlier). Push a duplicate
-    // for int_normalize to consume; the original stays for our postamble.
-    rs_peek(W0)
-    rs_push(W0)
-    jsr int_normalize           // RV = same handle, O_LEN possibly trimmed
+    sbc B0
+    sta B0
+    lda #0
+    sbc B1
+    sta B1
+    lda #0
+    sbc B2
+    sta B2
+    lda #0
+    sbc B3
+    sta B3
+_f2i_store:
+    jsr alloc_int_b0
     jmp postamble
 
-_f2i_alloc_zero:
-    lda #1
-    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
+_f2i_zero:
     lda #0
-    ldy #0
-    sta (W2),y
+    sta B0
+    sta B1
+    sta B2
+    sta B3
+    jsr alloc_int_b0
     jmp postamble
 
 // -----------------------------------------------------------------------------

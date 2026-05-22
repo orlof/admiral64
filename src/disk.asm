@@ -529,7 +529,9 @@ _dser_outer:
     jsr disk_byte_w
 
     // ---- Compute SIZE into B0:B1, emit ----
-    cmp #TYPE_LIST                    // A still = type
+    cmp #TYPE_INT                     // A still = type
+    beq _dser_size_int
+    cmp #TYPE_LIST
     beq _dser_size_container
     cmp #TYPE_TUPLE
     beq _dser_size_container
@@ -545,6 +547,14 @@ _dser_outer:
     iny
     lda (W0),y
     sbc #0
+    sta B1
+    jmp _dser_emit_size
+
+_dser_size_int:
+    // Inline int: fixed 4-byte record (the value bytes in H_PTR + H_SIZE).
+    lda #4
+    sta B0
+    lda #0
     sta B1
     jmp _dser_emit_size
 
@@ -565,6 +575,8 @@ _dser_emit_size:
 
     // ---- Emit DATA ----
     lda B5
+    cmp #TYPE_INT
+    beq _dser_data_int
     cmp #TYPE_LIST
     beq _dser_data_container
     cmp #TYPE_TUPLE
@@ -572,6 +584,17 @@ _dser_emit_size:
     cmp #TYPE_DICT
     beq _dser_data_container
     jmp _dser_data_scalar
+
+_dser_data_int:
+    // Emit the 4 inline value bytes (handle bytes 0..3 = H_PTR, H_SIZE).
+    ldy #0
+_dser_int_loop:
+    lda (W0),y
+    jsr disk_byte_w
+    iny
+    cpy #4
+    bne _dser_int_loop
+    jmp _dser_record_done
 
 _dser_data_scalar:
     // Stream B0:B1 bytes from payload — full 16-bit count. W2 advances by
@@ -716,6 +739,21 @@ _dsw_found:
 // -----------------------------------------------------------------------------
 disk_morph_w0:
     preamble_args(1, 0)
+
+    // Inline int: no payload to carve — just set the type tag; the 4 value
+    // bytes are written into H_PTR/H_SIZE by the data-read step.
+    lda B5
+    cmp #TYPE_INT
+    bne _dmw_boxed
+    rs_peek(W0)
+    ldy #H_TYPE
+    lda #TYPE_INT
+    sta (W0),y
+    ldy #H_FLAGS
+    lda #0
+    sta (W0),y
+    jmp postamble
+_dmw_boxed:
 
     lda B2
     sta ALLOC_SIZE
@@ -897,6 +935,8 @@ _dds_morph_existing:
 _dds_have_handle:
     // ---- Read DATA bytes ----
     lda B5
+    cmp #TYPE_INT
+    beq _dds_data_int
     cmp #TYPE_LIST
     beq _dds_data_container
     cmp #TYPE_TUPLE
@@ -924,6 +964,17 @@ _dds_scalar_loop:
     bne _dds_scalar_loop
     inc W2+1                           // Y wrapped — bump payload page
     jmp _dds_scalar_loop
+
+_dds_data_int:
+    // Read 4 value bytes into the inline handle's bytes 0..3 (H_PTR + H_SIZE).
+    ldy #0
+_dds_int_loop:
+    jsr disk_byte_r
+    sta (W0),y
+    iny
+    cpy #4
+    bne _dds_int_loop
+    jmp _dds_record_done
 
 _dds_data_container:
     // SIZE/2 children. Read each sub-ID, look up (or alloc placeholder),
@@ -1011,41 +1062,28 @@ _ddeser_lookup_old:
     ldy #0
     sty B6                             // B6 = current index
 _dlo_iter:
-    // W3[Y..Y+1] = int handle of this old_id slot
+    // W3[Y..Y+1] = inline-int handle of this old_id slot
     lda (W3),y
     sta W1
     iny
     lda (W3),y
-    sta W1+1                           // W1 = TYPE_INT handle of stored ID
+    sta W1+1                           // W1 = inline-int handle of stored ID
 
-    // Compare its 2-byte payload against B0:B1
-    txa                                 // save X (count)
-    pha
-    lda W3                              // save W3 (we'll deref into it)
-    pha
-    lda W3+1
-    pha
-    jsr deref_W1_to_W3                  // now W3 = stored-id payload (2 bytes)
+    // Compare its low 16 bits (handle bytes 0,1) against B0:B1.
     ldy #0
-    lda (W3),y
+    lda (W1),y
     cmp B0
     bne _dlo_no_match
     iny
-    lda (W3),y
+    lda (W1),y
     cmp B1
     beq _dlo_match
 _dlo_no_match:
-    pla
-    sta W3+1
-    pla
-    sta W3
-    pla
-    tax
-    // resume outer iteration: advance Y, dec X
+    // resume outer iteration: Y = (B6+1)*2, dec X (count)
     lda B6
     asl
     clc
-    adc #2                              // Y = (B6+1)*2
+    adc #2
     tay
     inc B6
     dex
@@ -1055,12 +1093,7 @@ _dlo_not_found:
     rts
 
 _dlo_match:
-    // Discard the saved W3+pla (we don't need it back; we want to fetch
-    // new_handles[matched_index] instead).
-    pla                                 // toss W3+1
-    pla                                 // toss W3
-    pla                                 // toss X
-    // Now fetch new_handles[B6] into W1.
+    // Fetch new_handles[B6] into W1.
     rs_peek(W1)                         // W1 = new_handles list (RS depth 0)
     jsr deref_W1_to_W3                  // W3 = new_handles payload
     lda B6
@@ -1089,6 +1122,8 @@ _dlo_match:
 // -----------------------------------------------------------------------------
 _ddeser_alloc_and_bind:
     lda B5
+    cmp #TYPE_INT
+    beq _dab_inline_int
     cmp #TYPE_LIST
     beq _dab_container
     cmp #TYPE_TUPLE
@@ -1106,6 +1141,16 @@ _ddeser_alloc_and_bind:
     jsr alloc                           // RV = new handle
     jmp _dab_register
 
+_dab_inline_int:
+    // Inline int placeholder; the 4 value bytes are filled by the data read.
+    lda #0
+    sta W2
+    sta W2+1
+    sta W3
+    sta W3+1
+    jsr alloc_inline_int                // RV = new inline int handle
+    jmp _dab_register
+
 _dab_container:
     // Container: _array_alloc_init(N=SIZE/2, type=B5). Caller must already
     // be inside a V4'-wrapped body (we are: deserialize's frame).
@@ -1118,15 +1163,15 @@ _dab_register:
     // Save new handle on RS so it survives the next list_appends.
     rs_push(RV)                         // RS: [..., old_ids, new_handles, new_handle]
 
-    // Allocate a 2-byte TYPE_INT to hold old_id.
-    lda #2
-    jsr alloc_int_a_deref_w2            // RV = int handle, W2 = payload
-    ldy #0
+    // Inline int holding old_id (16-bit; hi16 = 0).
     lda B0
-    sta (W2),y
-    iny
+    sta W2
     lda B1
-    sta (W2),y
+    sta W2+1
+    lda #0
+    sta W3
+    sta W3+1
+    jsr alloc_inline_int                // RV = int handle
     rs_push(RV)                         // RS: [..., old_ids, new_handles, new_handle, int_id]
 
     // Append int_id to old_ids list. RS: [..., old_ids, new_handles, new_handle, int_id]
@@ -1306,15 +1351,15 @@ _ddir_copy:
     bne _ddir_copy
 _ddir_copy_done:
 
-    // Allocate INT(2 bytes) holding block count.
-    lda #2
-    jsr alloc_int_a_deref_w2           // RV = int handle, W2 = payload
-    ldy #0
+    // Inline int holding block count (16-bit; hi16 = 0).
     lda B2
-    sta (W2),y
-    iny
+    sta W2
     lda B3
-    sta (W2),y
+    sta W2+1
+    lda #0
+    sta W3
+    sta W3+1
+    jsr alloc_inline_int               // RV = int handle
     rs_push(RV)                        // RS: [dict, name_str, int_blocks]
 
     // dict_set(dict, name_str, int_blocks). Push duplicates so the rooted

@@ -146,34 +146,27 @@ int_to_unsigned_byte_W0:
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_INT
-    beq _itub_ok
+    beq _itub_int
     cmp #TYPE_BOOL
     bne _itub_fail
-_itub_ok:
-    jsr deref_W0_to_W2           // A = length
-    pha
+    // BOOL is still a boxed singleton (payload byte 0/1) — deref + read it.
+    jsr deref_W0_to_W2
     ldy #0
-    lda (W2),y                   // candidate value
-    tax
-    pla
-    cmp #1
-    bne _itub_multi
-    txa
-    bmi _itub_fail               // 1-byte int with bit 7 set is negative
+    lda (W2),y
     sec
     rts
-_itub_multi:
-    // length >= 2: every byte above byte 0 must be zero (else the value is
-    // negative or > 255). Walk from MSB down to (but not including) byte 0.
-    sec
-    sbc #1
-    tay
-_itub_loop:
-    lda (W2),y
+_itub_int:
+    // Inline int: bytes 1..3 (high 24 bits) must all be zero, else the value
+    // is negative or > 255. Byte 0 is the result.
+    ldy #1
+    lda (W0),y
+    iny
+    ora (W0),y
+    iny
+    ora (W0),y
     bne _itub_fail
-    dey
-    bne _itub_loop
-    txa
+    ldy #0
+    lda (W0),y
     sec
     rts
 _itub_fail:

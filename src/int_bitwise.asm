@@ -1,172 +1,67 @@
 // -----------------------------------------------------------------------------
-// int_bitwise_not — variable-length signed integer bitwise complement.
-//   `~x` = `-x - 1`. We compute it directly by byte-wise EOR with $FF, which
-//   gives the same result for two's-complement representation and avoids the
-//   double-allocation of the `int_negate(x); int_sub(_, INT_1)` route.
+// int_bitwise_not / _and / _or / _xor — fixed 32-bit bitwise ops.
 //
-//   in:   1 handle on RS = TYPE_INT
-//   out:  RV = TYPE_INT handle holding ~x
+//   not:  in 1 handle on RS;          out RV = ~x
+//   and/or/xor: in 2 handles (a deeper, b top); out RV = a OP b
 //
-// Length: result has the same byte length as input. EOR-with-$FF preserves
-// canonical normalization (every payload byte flips, including the sign
-// byte), so int_normalize isn't needed.
+// and/or/xor share one body; the SMC opcode byte of a single `ORA B4,x`
+// (zero-page,x) is patched to AND/EOR. B0..B7 are contiguous ($18..$1F), so
+// `lda B0,x` / `OP B4,x` / `sta B0,x` with x=0..3 walk a vs b vs result.
 // -----------------------------------------------------------------------------
 
 #importonce
 #import "defs.asm"
 #import "stacks.asm"
 #import "preamble.asm"
-#import "handle.asm"
+#import "int_util.asm"
 
 int_bitwise_not:
     preamble_args(1, 0)
-
-    // Step 1: read source length so we know how big to allocate.
     rs_peek(W0)
-    jsr deref_W0_to_W2          // W2 = src payload, A = O_LEN low byte
-    sta B0                       // B0 = byte length
-
-    // Step 2: allocate result of same size.
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int               // RV = result handle (gc may have run)
-
-    // Step 3: re-deref source AND result. alloc_int may have triggered
-    // gc_compact, moving heap payloads.
-    rs_peek(W0)
-    jsr deref_W0_to_W2          // W2 = src payload (current)
-
-    // W3 = result payload base.
-    jsr deref_RV_to_W3
-
-    // Step 4: byte-wise invert.
-    ldy B0
-!loop:
-    dey
-    bmi !done+
-    lda (W2),y
+    jsr int_load_a               // B0..B3 = x
+    lda B0
     eor #$FF
-    sta (W3),y
-    jmp !loop-
-!done:
+    sta B0
+    lda B1
+    eor #$FF
+    sta B1
+    lda B2
+    eor #$FF
+    sta B2
+    lda B3
+    eor #$FF
+    sta B3
+    jsr alloc_int_b0
     jmp postamble
 
-// =============================================================================
-// int_bitwise_and / _or / _xor — variable-length signed bitwise binary ops.
-//
-//   in:  RS bottom→top: a, b. Both TYPE_INT handles.
-//   out: RV = TYPE_INT handle holding (a OP b).
-//
-// Algorithm:
-//   result_len = max(len_a, len_b)
-//   for i in 0..result_len-1:
-//     byte_a = a[i] if i < len_a else sign_a   (sign-extend shorter operand)
-//     byte_b = b[i] if i < len_b else sign_b
-//     result[i] = byte_a OP byte_b
-//   normalize
-//
-// Code-share via self-modifying code: the entry stubs patch the opcode of
-// a single `OP B5` instruction inside the shared body. ORA zp = $05;
-// AND zp = $25; EOR zp = $45 — same instruction shape, different first
-// byte. SMC is safe here: the body has no callbacks that could re-enter
-// these routines, and our parser-evaluator's recursion goes through the
-// LED layer (preamble/postamble) before any sibling bitwise call.
-// =============================================================================
-
-.const OPC_ORA_ZP = $05
-.const OPC_AND_ZP = $25
-.const OPC_EOR_ZP = $45
+// zero-page,x opcodes: ORA=$15, AND=$35, EOR=$55.
+.const OPC_ORA_ZPX = $15
+.const OPC_AND_ZPX = $35
+.const OPC_EOR_ZPX = $55
 
 int_bitwise_and:
-    lda #OPC_AND_ZP
+    lda #OPC_AND_ZPX
     bne _ibw_set
 int_bitwise_or:
-    lda #OPC_ORA_ZP
+    lda #OPC_ORA_ZPX
     bne _ibw_set
 int_bitwise_xor:
-    lda #OPC_EOR_ZP
+    lda #OPC_EOR_ZPX
 _ibw_set:
-    sta _ibw_op_inst
-    jmp _ibw_body
-
-_ibw_body:
+    sta _ibw_op
     preamble_args(2, 0)
-
-    // --- Read both operands' lengths and sign bytes. ---
     rs_peek_at(W0, 1)
-    jsr deref_W0_to_W2          // W2 = a payload, A = len_a
-    sta B0
-    jsr sign_byte_W2
-    sta B1                       // B1 = sign_a
-
+    jsr int_load_a               // B0..B3 = a
     rs_peek_at(W1, 0)
-    jsr deref_W1_to_W3          // W3 = b payload, A = len_b
-    sta B2
-    jsr sign_byte_W3
-    sta B3                       // B3 = sign_b
-
-    // --- result_len = max(len_a, len_b). ---
-    lda B0
-    cmp B2
-    bcs _ibw_use_a_len
-    lda B2
-_ibw_use_a_len:
-    sta B4                       // B4 = result_len
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int                // RV = result handle (gc may have run)
-
-    // --- Pass 1: result[i] = (i < len_a) ? a[i] : sign_a. ---
-    rs_peek_at(W0, 1)
-    jsr deref_W0_to_W2          // W2 = a payload (post-alloc)
-    jsr deref_RV_to_W3          // W3 = result payload
-
-    ldy #0
-_ibw_p1_loop:
-    cpy B4
-    beq _ibw_pass2_init
-    cpy B0
-    bcc _ibw_p1_use_a
-    lda B1                       // sign-extended
-    jmp _ibw_p1_store
-_ibw_p1_use_a:
-    lda (W2),y
-_ibw_p1_store:
-    sta (W3),y
-    iny
-    jmp _ibw_p1_loop
-
-_ibw_pass2_init:
-    // --- Pass 2: result[i] = result[i] OP byte_b. ---
-    rs_peek_at(W1, 0)
-    jsr deref_W1_to_W3          // W3 = b payload (post-alloc)
-    jsr deref_RV_to_W2          // W2 = result payload
-
-    ldy #0
-_ibw_p2_loop:
-    cpy B4
-    beq _ibw_done
-    cpy B2
-    bcc _ibw_p2_use_b
-    lda B3                       // sign-extended
-    jmp _ibw_p2_have_b
-_ibw_p2_use_b:
-    lda (W3),y
-_ibw_p2_have_b:
-    sta B5                       // B5 = byte_b (zero-page operand of the patched op)
-    lda (W2),y                   // A = byte_a (= current result byte)
-_ibw_op_inst:
-    and B5                       // SMC: opcode byte patched to ORA / AND / EOR
-    sta (W2),y
-    iny
-    jmp _ibw_p2_loop
-
-_ibw_done:
-    // Normalize: bitwise op on equal-length sign-extended operands may
-    // produce a redundant leading sign byte (e.g. `0xFF & 0xFF = 0xFF`,
-    // 1-byte = -1). val_eq compares lengths, so we must canonicalize.
-    rs_push(RV)
-    jsr int_normalize            // consumes 1 RS arg; RV unchanged
+    jsr int_load_b               // B4..B7 = b
+    ldx #0
+_ibw_loop:
+    lda B0,x
+_ibw_op:
+    ora B4,x                     // SMC: opcode patched to AND/ORA/EOR zp,x
+    sta B0,x
+    inx
+    cpx #4
+    bne _ibw_loop
+    jsr alloc_int_b0
     jmp postamble

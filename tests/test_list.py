@@ -170,7 +170,7 @@ def test_append_to_empty_list_grows_and_writes(h):
     """Empty list (capacity 0) → append must grow to floor capacity 4."""
     L = h.alloc_list(0)
     h.rs_push(L)               # root before allocating child
-    child = h.alloc_int(1)
+    child = h.alloc_str(1)
     child_obj = h.read_word(child + H_PTR)
     h.write_bytes(child_obj + O_HEADER, [0x42])
     h.rs_push(child)
@@ -214,7 +214,7 @@ def test_append_at_capacity_triggers_grow(h):
     h_size_before = h.read_word(L + H_SIZE)
 
     h.rs_push(L)
-    child = h.alloc_int(1)
+    child = h.alloc_str(1)
     child_obj = h.read_word(child + H_PTR)
     h.write_bytes(child_obj + O_HEADER, [0x99])
     # Don't drop the pin — the append call needs L on RS too. Re-stage:
@@ -242,7 +242,7 @@ def test_grow_preserves_existing_elements(h):
     h.write_word(obj + O_HEADER + 2, b)
     # capacity == 2, O_LEN == 2 → next append grows.
     h.rs_push(L)
-    new_child = h.alloc_int(1)
+    new_child = h.alloc_str(1)
     new_obj = h.read_word(new_child + H_PTR)
     h.write_bytes(new_obj + O_HEADER, [0xCC])
     h.rs_pop()
@@ -264,7 +264,7 @@ def test_repeated_appends_grow_amortized(h):
     appended = []
     for i in range(10):
         h.rs_push(L)            # pin L for this iteration's alloc + call
-        child = h.alloc_int(1)  # safe: nothing GC-triggers between this and the rs_push below
+        child = h.alloc_str(1)  # safe: nothing GC-triggers between this and the rs_push below
         child_obj = h.read_word(child + H_PTR)
         h.mpu.memory[child_obj + O_HEADER] = i + 1
         appended.append(child)
@@ -327,7 +327,7 @@ def test_val_eq_list_ne_tuple_same_payload(h):
 
 def test_rooted_list_children_survive_gc(h):
     """List traced like tuple — children marked transitively."""
-    child = h.alloc_int(2)
+    child = h.alloc_str(2)
     obj = h.read_word(child + H_PTR)
     h.write_bytes(obj + O_HEADER, [0xDE, 0xAD])
     h.rs_push(child)
@@ -354,7 +354,7 @@ def test_grow_old_payload_orphaned_then_compacted(h):
     # Force several grows so we definitely orphan some payload bytes.
     for i in range(5):
         h.rs_pop()
-        child = h.alloc_int(1)
+        child = h.alloc_str(1)
         h.rs_push(L)
         h.rs_push(child)
         h.call("list_append")

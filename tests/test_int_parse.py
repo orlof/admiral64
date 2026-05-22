@@ -9,18 +9,29 @@ from __future__ import annotations
 import pytest
 
 from conftest import RV, W0, TYPE_INT
-from test_int_add import H_PTR, H_TYPE, O_HEADER, O_LEN
+from test_int_add import H_PTR, H_SIZE, H_TYPE, O_HEADER, O_LEN
 
 
 def _read_int(h, handle: int) -> int:
-    """Read a TYPE_INT handle's payload as a signed integer."""
+    """Read a handle as a small signed integer.
+
+    TYPE_INT is the inline 32-bit value. For boxed types (BOOL, STR, ...) this
+    reads the payload bytes as a signed little-endian int — the historical
+    behavior many tests rely on (BOOL → 0/1, 1-char STR → its byte value).
+    """
+    if h.mpu.memory[handle + H_TYPE] == TYPE_INT:
+        lo = h.read_word(handle + H_PTR)
+        hi = h.read_word(handle + H_SIZE)
+        val = lo | (hi << 16)
+        if val & 0x8000_0000:
+            val -= 0x1_0000_0000
+        return val
     obj = h.read_word(handle + H_PTR)
     length = h.read_word(obj + O_LEN)
     payload = bytes(h.read_bytes(obj + O_HEADER, length))
     if not payload:
         return 0
-    val = int.from_bytes(payload, "little", signed=True)
-    return val
+    return int.from_bytes(payload, "little", signed=True)
 
 
 def _stage_span(h, text: str, addr: int = 0x8500) -> int:
@@ -83,7 +94,7 @@ def test_int_parse_dec_returns_type_int(h):
     ("0xff", 255),
     ("0xFF", 255),
     ("0x100", 256),
-    ("0xDeadBeef", 0xDEADBEEF),
+    ("0xDeadBeef", 0xDEADBEEF - 0x1_0000_0000),  # 32-bit signed: -559038737
     ("0X1A", 26),
     ("0x12345678", 0x12345678),
 ])

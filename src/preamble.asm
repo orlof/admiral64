@@ -434,24 +434,34 @@ postamble:
 // 128..255 land in a 2-byte INT with high byte 0 so the result stays
 // non-negative. Used by builtin_ord and builtin_peek.
 // -----------------------------------------------------------------------------
+// Unsigned 0..255 → inline int (high 24 bits zero, always non-negative).
 postamble_set_rv_uint8_b0:
     lda B0
-    bpl postamble_set_rv_int_b0
-    lda #2
-    jsr alloc_int_a_deref_w2     // Y = 0 at exit
-    lda B0
-    sta (W2),y
-    iny
+    sta W2
     lda #0
-    sta (W2),y
+    sta W2+1
+    sta W3
+    sta W3+1
+    jsr alloc_inline_int
     jmp postamble
+// Signed -128..127 → inline int (sign-extend B0 to 32 bits).
 postamble_set_rv_int_b0:
-    lda #1
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int
-    jsr deref_RV_to_W2           // Y = 0 at exit
     lda B0
-    sta (W2),y
+    sta W2
+    lda #0
+    sta W2+1
+    sta W3
+    sta W3+1
+    lda B0
+    bpl _psib_alloc
+    lda #$FF
+    sta W2+1
+    sta W3
+    sta W3+1
+_psib_alloc:
+    jsr alloc_inline_int
+    jmp postamble
+// W2:W3 (lo16:hi16) already holds the 32-bit value → inline int.
+postamble_set_rv_int32:
+    jsr alloc_inline_int
     jmp postamble

@@ -82,11 +82,12 @@ def test_empty_str_ne_none(h):
 # --- Length mismatch --------------------------------------------------------
 
 
-def test_short_int_ne_long_int(h):
+def test_int_eq_same_value_any_input_width(h):
+    # Fixed 32-bit ints have a single canonical form: [0x01] and [0x01,0x00]
+    # both denote 1 and compare equal (no representation-width quirk).
     a = place_int(h, 0x8500, [0x01])
-    b = place_int(h, 0x9100, [0x01, 0x00])  # not a normalized form, but val_eq
-                                            # treats representations literally
-    assert run_val_eq(h, a, b) == 0
+    b = place_int(h, 0x9100, [0x01, 0x00])
+    assert run_val_eq(h, a, b) == 1
 
 
 def test_short_str_ne_long_str(h):

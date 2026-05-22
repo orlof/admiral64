@@ -331,13 +331,9 @@ def test_many_inserts_stay_sorted(h):
     insert_order = [5, 1, 9, 3, 7, 2, 8, 4, 6, 0]
     for k_val in insert_order:
         h.rs_push(d)
-        key = h.alloc_int(1)
-        ko = h.read_word(key + H_PTR)
-        h.mpu.memory[ko + O_HEADER] = k_val
+        key = h.make_int(k_val)
         h.rs_push(key)
-        value = h.alloc_int(1)
-        vo = h.read_word(value + H_PTR)
-        h.mpu.memory[vo + O_HEADER] = 0x80 + k_val
+        value = h.make_int(0x80 + k_val)
         h.rs_pop(); h.rs_pop()  # drop our pins
         call_dict_set(h, d, key, value)
         keys_values.append((k_val, key, value))
@@ -402,13 +398,9 @@ def test_dict_pair_survives_gc(h):
     """Dict's pair tuples + their key/value handles all survive a collect."""
     d = h.alloc_dict()
     h.rs_push(d)
-    k = h.alloc_int(1)
+    k = h.make_int(0x42)
     h.rs_push(k)
-    ko = h.read_word(k + H_PTR)
-    h.mpu.memory[ko + O_HEADER] = 0x42
-    v = h.alloc_int(1)
-    vo = h.read_word(v + H_PTR)
-    h.mpu.memory[vo + O_HEADER] = 0x99
+    v = h.make_int(0x99)
     h.rs_pop(); h.rs_pop()  # drop direct pins; key/value reachable via dict only after set
 
     call_dict_set(h, d, k, v)
@@ -416,7 +408,7 @@ def test_dict_pair_survives_gc(h):
     h.rs_push(d)
     h.call("gc_collect")
 
-    # Re-read through the dict — handles are stable, payloads may have moved.
+    # Re-read through the dict — inline-int handles are stable across GC.
     assert call_dict_get(h, d, k) == v
-    new_v_obj = h.read_word(v + H_PTR)
-    assert h.mpu.memory[new_v_obj + O_HEADER] == 0x99
+    assert h.read_word(v + H_PTR) == 0x99      # inline value (lo16) intact
+    assert h.read_word(v + H_SIZE) == 0        # hi16

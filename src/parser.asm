@@ -24,6 +24,7 @@
 #import "stacks.asm"
 #import "preamble.asm"
 #import "handle.asm"
+#import "int_util.asm"
 
 // -----------------------------------------------------------------------------
 // LBP precedence levels. Higher binds tighter. Levels are spaced so future
@@ -375,43 +376,12 @@ _sd_subscript:
     jmp panic_type
 
 _sd_list_del:
-    // Extract signed int index from int handle RV → 16-bit word (B5:B6).
-    // Negative → add container O_LEN.
-    ldy #H_PTR
-    lda (RV),y
-    sta W2
-    iny
-    lda (RV),y
-    sta W2+1
-    ldy #O_LEN
-    lda (W2),y
-    pha                              // save int O_LEN low across ptr advance
-    clc
-    lda W2
-    adc #O_HEADER
-    sta W2
-    bcc !+
-    inc W2+1
-!:
-    ldy #0
-    lda (W2),y
-    sta B5                           // B5 = idx low
-    pla                              // A = int O_LEN low
-    cmp #1
-    beq _sld_idx_1byte
-    iny
-    lda (W2),y
-    sta B6                           // B6 = idx high (2-byte int)
-    jmp _sld_idx_check
-_sld_idx_1byte:
-    lda B5
-    bmi !neg+
-    lda #0
-    bpl !done+
-!neg:
-    lda #$FF
-!done:
-    sta B6
+    // Inline int index (RV) → signed 16-bit B5:B6; negative → add O_LEN.
+    lda RV
+    sta W1
+    lda RV+1
+    sta W1+1
+    jsr int_index_w1_b5b6
 _sld_idx_check:
     lda B6
     bpl _sld_idx_pos
@@ -2912,22 +2882,20 @@ _llb_slice:
     jsr deref_W0_to_W2                // A = O_LEN low byte
     sta B6                            // B6 = container len (temporary)
 
-    // B4 = start (normalize: if raw byte is negative, add len).
+    // B4 = start (inline int low byte; if negative, add len).
     rs_peek_at(W0, 1)
-    jsr deref_W0_to_W2
     ldy #0
-    lda (W2),y
+    lda (W0),y
     bpl _slh_start_pos
     clc
     adc B6
 _slh_start_pos:
     sta B4
 
-    // B5 = stop (normalize negative).
+    // B5 = stop (inline int low byte; normalize negative).
     rs_peek_at(W0, 0)
-    jsr deref_W0_to_W2
     ldy #0
-    lda (W2),y
+    lda (W0),y
     bpl _slh_stop_pos
     clc
     adc B6

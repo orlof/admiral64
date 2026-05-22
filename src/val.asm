@@ -39,7 +39,7 @@ val_truthy:
     cmp #TYPE_NONE
     beq _vt_false
     cmp #TYPE_INT
-    beq _vt_byte_scan
+    beq _vt_int                  // inline: scan the 4 value bytes
     cmp #TYPE_BOOL
     beq _vt_byte_scan
     cmp #TYPE_FLOAT
@@ -58,10 +58,22 @@ val_truthy:
     beq _vt_false
     bne _vt_true
 
+_vt_int:
+    // Inline int: truthy iff any of the 4 value bytes is non-zero.
+    ldy #0
+    lda (W0),y
+    iny
+    ora (W0),y
+    iny
+    ora (W0),y
+    iny
+    ora (W0),y
+    bne _vt_true
+    beq _vt_false
+
 _vt_byte_scan:
     // Scan all payload bytes; truthy iff any byte is non-zero. Works for
-    // BOOL (1 byte) / INT (variable) / FLOAT (5 bytes — first byte is exp,
-    // which is 0 iff value is 0).
+    // BOOL (1 byte) / FLOAT (5 bytes — first byte is exp, 0 iff value is 0).
     ldy #H_PTR
     lda (W0),y
     sta W2
@@ -136,6 +148,21 @@ _veq_not_same_handle:
     jmp postamble_a_zero
 
 _veq_types_match:
+    // Inline ints: compare the 4 value bytes directly (no payload to deref).
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_INT
+    bne _veq_not_int
+    ldy #0
+_veq_int_loop:
+    lda (W0),y
+    cmp (W1),y
+    bne _veq_not_equal
+    iny
+    cpy #4
+    bne _veq_int_loop
+    jmp postamble_a_one
+_veq_not_int:
     jsr deref_W0_to_W2           // A:X = O_LEN word of W0
     sta B0
     stx B1                       // B0:B1 = length of W0 (16-bit)
@@ -272,7 +299,7 @@ _vc_same_type:
     cmp #TYPE_INT
     beq _vc_int
     cmp #TYPE_BOOL
-    beq _vc_int                  // bool stored same as 1-byte int; int_cmp works
+    beq _vc_bool                 // bool is still boxed (payload byte 0/1)
     cmp #TYPE_STR
     beq _vc_str
     cmp #TYPE_NAME
@@ -298,6 +325,19 @@ _vc_pos:
 _vc_int:
     jsr int_cmp                  // result in A: $FF / $00 / $01
     jmp postamble
+
+// --- TYPE_BOOL — compare the boxed payload byte (0/1) ----------------------
+_vc_bool:
+    jsr deref_W0_to_W2           // W2 = a payload
+    jsr deref_W1_to_W3           // W3 = b payload
+    ldy #0
+    lda (W2),y
+    cmp (W3),y
+    beq _vc_bool_eq
+    bcs _vc_pos                  // a > b
+    jmp postamble_a_ff           // a < b
+_vc_bool_eq:
+    jmp postamble_a_zero
 
 // --- TYPE_FLOAT --------------------------------------------------------------
 // float_cmp pops two handles from RS — exactly the args still rooted at our

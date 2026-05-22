@@ -119,19 +119,15 @@ boot:
     rs_push(W0)
     jsr print_str
 
-    // Allocate a 2-byte TYPE_INT holding B1:B0 (lo, hi).
-    lda #2
-    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
-    ldy #0
+    // Inline int holding the 16-bit heap-free count (B0=lo, B1=hi; hi16 = 0).
     lda B0
-    sta (W2),y
-    iny
+    sta W2
     lda B1
-    sta (W2),y
-
-    // Normalize (strips leading zero high byte if value < 256), then print.
-    rs_push(RV)
-    jsr int_normalize
+    sta W2+1
+    lda #0
+    sta W3
+    sta W3+1
+    jsr alloc_inline_int
     rs_push(RV)
     jsr print_int
 
@@ -560,7 +556,7 @@ _nmi_nib:
 #import "handle.asm"
 #import "alloc.asm"
 #import "gc.asm"
-#import "int_normalize.asm"
+#import "int_util.asm"
 #import "int_negate.asm"
 #import "int_add.asm"
 #import "int_sub.asm"

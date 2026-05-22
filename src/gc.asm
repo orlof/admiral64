@@ -391,6 +391,14 @@ gc_compact_loop:
     ora W0+1
     beq gc_compact_done
 
+    // Inline ints (TYPE_INT) carry their 32-bit value in H_PTR+H_SIZE and own
+    // no heap payload — skip them entirely (no copy, no GC_DEST advance, no
+    // H_PTR rewrite, which would corrupt the value).
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_INT
+    beq gc_compact_advance
+
     // W2 = source = W0.H_PTR
     ldy #H_PTR
     lda (W0),y

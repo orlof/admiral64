@@ -59,7 +59,7 @@ def test_compact_empty_heap_is_noop(h):
 
 
 def test_compact_single_live_handle_stays_in_place(h):
-    handle = h.alloc_int(4)                 # payload at $8500, 4+2=6 bytes
+    handle = h.alloc_str(4)                 # payload at $8500, 4+2=6 bytes
     ptr_before = _h_ptr(h, handle)
     h.call("gc_compact")
     assert _h_ptr(h, handle) == ptr_before
@@ -69,7 +69,7 @@ def test_compact_single_live_handle_stays_in_place(h):
 # --- packed live data → no moves --------------------------------------------
 
 def test_compact_contiguous_live_handles_stay_put(h):
-    handles = [h.alloc_int(n) for n in (4, 6, 8)]
+    handles = [h.alloc_str(n) for n in (4, 6, 8)]
     ptrs_before = [_h_ptr(h, x) for x in handles]
     next_data_before = h.read_word(NEXT_DATA_ZP)
     h.call("gc_compact")
@@ -81,8 +81,8 @@ def test_compact_contiguous_live_handles_stay_put(h):
 # --- holes get closed (via sweep-then-compact) -----------------------------
 
 def test_compact_slides_survivor_over_freed_block(h):
-    h.alloc_int(10)                         # garbage
-    live = h.alloc_int(4)
+    h.alloc_str(10)                         # garbage
+    live = h.alloc_str(4)
     _mark(h, live)                          # simulate post-mark state
     h.call("gc_sweep")                      # garbage → free; live stays live
     h.call("gc_compact")
@@ -91,8 +91,8 @@ def test_compact_slides_survivor_over_freed_block(h):
 
 
 def test_compact_preserves_payload_bytes(h):
-    h.alloc_int(10)                         # garbage
-    live = h.alloc_int(4)
+    h.alloc_str(10)                         # garbage
+    live = h.alloc_str(4)
     live_payload = _h_ptr(h, live) + O_HEADER
     h.write_bytes(live_payload, [0xAA, 0xBB, 0xCC, 0xDD])
     _mark(h, live)
@@ -105,10 +105,10 @@ def test_compact_preserves_payload_bytes(h):
 
 
 def test_compact_closes_multiple_holes(h):
-    a = h.alloc_int(4)                      # $8500, 6 bytes
-    b = h.alloc_int(4)                      # $8506, 6 bytes
-    c = h.alloc_int(4)                      # $850C, 6 bytes
-    d = h.alloc_int(4)                      # $8512, 6 bytes
+    a = h.alloc_str(4)                      # $8500, 6 bytes
+    b = h.alloc_str(4)                      # $8506, 6 bytes
+    c = h.alloc_str(4)                      # $850C, 6 bytes
+    d = h.alloc_str(4)                      # $8512, 6 bytes
     # b and d survive; a and c are garbage.
     _mark(h, b)
     _mark(h, d)
@@ -124,8 +124,8 @@ def test_compact_closes_multiple_holes(h):
 def test_compact_ignores_free_list_handles(h):
     """Sweep moves a handle to the free list; compact must not touch it,
     even though FREE_HEAD is a distinct pointer from RESERVED_HEAD."""
-    garbage = h.alloc_int(10)
-    live = h.alloc_int(4)
+    garbage = h.alloc_str(10)
+    live = h.alloc_str(4)
     _mark(h, live)
     h.call("gc_sweep")
     # After sweep: garbage on free list, live on reserved list.
@@ -143,11 +143,11 @@ def test_compact_handles_addresses_distinct_from_h_ptr_order(h):
     """After free-list reuse, handle addresses and H_PTRs can diverge. As
     long as the reserved list is in H_PTR-ascending order (alloc's invariant),
     compact works correctly."""
-    h1 = h.alloc_int(4)                     # handle $CFF8, data $8800
-    h2 = h.alloc_int(4)                     # handle $CFF0, data $8806
+    h1 = h.alloc_str(4)                     # handle $CFF8, data $8800
+    h2 = h.alloc_str(4)                     # handle $CFF0, data $8806
     h.call("gc_sweep")                      # both freed (no marks)
-    reused2 = h.alloc_int(4)                # reuses h2 (LIFO pop)
-    reused1 = h.alloc_int(4)                # reuses h1
+    reused2 = h.alloc_str(4)                # reuses h2 (LIFO pop)
+    reused1 = h.alloc_str(4)                # reuses h1
     # Reserved list order = alloc order = H_PTR order ($880C, $8812).
     assert _reserved_list(h) == [reused2, reused1]
     assert _h_ptr(h, reused2) == HEAP_DATA_START + 12
@@ -161,7 +161,7 @@ def test_compact_handles_addresses_distinct_from_h_ptr_order(h):
 # --- idempotence ------------------------------------------------------------
 
 def test_compact_is_idempotent(h):
-    handles = [h.alloc_int(n) for n in (4, 6, 8)]
+    handles = [h.alloc_str(n) for n in (4, 6, 8)]
     _mark(h, handles[0])
     _mark(h, handles[2])
     h.call("gc_sweep")                      # handles[1] moves to free
@@ -178,9 +178,9 @@ def test_compact_is_idempotent(h):
 # --- full gc_collect cycle --------------------------------------------------
 
 def test_gc_collect_compacts_after_sweep(h):
-    a = h.alloc_int(100)
-    b = h.alloc_int(50)
-    c = h.alloc_int(30)
+    a = h.alloc_str(100)
+    b = h.alloc_str(50)
+    c = h.alloc_str(30)
     h.rs_push(b)                            # only b is rooted
     h.call("gc_collect")                    # mark + sweep + compact
     assert _h_ptr(h, b) == HEAP_DATA_START
@@ -198,7 +198,7 @@ def test_gc_collect_compacts_after_sweep(h):
 def test_compact_enables_large_alloc_after_freeing_live_data(h):
     """Stage-4 payoff: compaction reclaims data bytes, letting a subsequent
     alloc exceed what was possible before GC."""
-    h.alloc_int(12000)                      # unrooted
-    result = h.alloc_int(10_000)
+    h.alloc_str(12000)                      # unrooted
+    result = h.alloc_str(10_000)
     assert result != 0
     assert h.read_word(FREE_HEAD_ZP) == 0

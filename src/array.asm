@@ -1021,55 +1021,30 @@ array_repeat:
     jmp _arep_type_err
 _arep_n_type_ok:
 
-    // Read N as a 16-bit unsigned multiplier in B5:B3. Negative or zero →
-    // empty result. Reject magnitudes >= 32768 (word bit 15 set is
-    // ambiguous with sign).
-    jsr deref_W0_to_W2                // A:X = O_LEN word, W2 = payload
-    cpx #0
-    beq !ok+
-    jmp _arep_overflow                // O_LEN > 255: absurdly large int
-!ok:
-    cmp #0
-    bne _arep_n_check_sign
-    jmp _arep_n_zero                  // O_LEN = 0
-_arep_n_check_sign:
-    sta B6                            // B6 = O_LEN low (scratch)
-    jsr sign_byte_W2                  // A = $FF if negative
+    // Read N as a 16-bit unsigned multiplier in B5:B3 from the inline int in
+    // W0. Negative → empty. Value >= 65536 (bytes 2/3 set) or >= 32768 (bit 15)
+    // → overflow.
+    ldy #3
+    lda (W0),y
     bpl !pos+
-    jmp _arep_n_zero
+    jmp _arep_n_zero                  // bit 31 set → negative → empty
 !pos:
-    ldy #0
-    lda (W2),y
-    sta B5                            // B5 = N low
-    lda #0
-    sta B3                            // B3 = N high (default 0)
-    lda B6
-    cmp #2
-    bcs !rd2+
-    jmp _arep_check_n
-!rd2:
-    // O_LEN ≥ 2 → read byte 1 as N high.
-    ldy #1
-    lda (W2),y
-    sta B3
-    bpl !ok+
-    jmp _arep_overflow                // word's bit 15 set → ambiguous sign
-!ok:
-    // For O_LEN > 2, surplus bytes must be 0 (positive sign extension).
-    lda B6
-    cmp #3
-    bcs !chk+
-    jmp _arep_check_n
-!chk:
-    ldy #2
-_arep_chk_msb:
-    lda (W2),y
-    beq !ok+
+    ldy #2                            // bytes 2 and 3 must be zero (< 65536)
+    lda (W0),y
+    ldy #3
+    ora (W0),y
+    beq !lo+
     jmp _arep_overflow
+!lo:
+    ldy #1
+    lda (W0),y
+    bpl !ok+
+    jmp _arep_overflow                // bit 15 set → ambiguous sign
 !ok:
-    iny
-    cpy B6
-    bcc _arep_chk_msb
+    sta B3                            // N high
+    ldy #0
+    lda (W0),y
+    sta B5                            // N low
 _arep_check_n:
     lda B5
     ora B3

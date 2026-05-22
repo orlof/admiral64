@@ -159,7 +159,7 @@ def test_tuple_set_leaf_writes_slot(h):
 
 def test_rooted_tuple_children_survive_gc(h):
     """A tuple's children must be marked transitively, not just the tuple."""
-    child = h.alloc_int(2)
+    child = h.alloc_str(2)
     child_obj = h.read_word(child + H_PTR)
     h.write_bytes(child_obj + O_HEADER, [0xDE, 0xAD])
     h.rs_push(child)                # pin while building tuple
@@ -184,7 +184,7 @@ def test_rooted_tuple_children_survive_gc(h):
 def test_unrooted_tuple_and_children_collected(h):
     """A tuple not rooted on RS gets freed; its children (if not otherwise
     referenced) get freed too."""
-    child = h.alloc_int(2)
+    child = h.alloc_str(2)
     t = h.alloc_tuple(1)
     t_obj = h.read_word(t + H_PTR)
     h.write_word(t_obj + O_HEADER, child)
@@ -193,15 +193,15 @@ def test_unrooted_tuple_and_children_collected(h):
     h.call("gc_collect")
 
     # Re-allocating should reuse the freed handles (LIFO, child was freed last).
-    reused = h.alloc_int(1)
+    reused = h.alloc_str(1)
     assert reused in (t, child)
-    reused2 = h.alloc_int(1)
+    reused2 = h.alloc_str(1)
     assert reused2 in (t, child) and reused2 != reused
 
 
 def test_nested_tuple_traces_all_levels(h):
     """A tuple inside a tuple — gc_mark must follow the full chain."""
-    leaf = h.alloc_int(1)
+    leaf = h.alloc_str(1)
     leaf_obj = h.read_word(leaf + H_PTR)
     h.write_bytes(leaf_obj + O_HEADER, [0x77])
     h.rs_push(leaf)
@@ -240,7 +240,7 @@ def test_tuple_with_null_slot_does_not_crash_gc(h):
 
 def test_partial_fill_traces_only_set_children(h):
     """Mixed: tuple has one real child and one null. Real child survives."""
-    child = h.alloc_int(2)
+    child = h.alloc_str(2)
     child_obj = h.read_word(child + H_PTR)
     h.write_bytes(child_obj + O_HEADER, [0xCA, 0xFE])
     h.rs_push(child)
@@ -260,7 +260,7 @@ def test_partial_fill_traces_only_set_children(h):
 
 def test_no_gray_bit_remains_on_reserved_handles(h):
     """After gc_mark, every reserved handle is black (MARKED, !GRAY)."""
-    child = h.alloc_int(1)
+    child = h.alloc_str(1)
     h.rs_push(child)
     t = h.alloc_tuple(1)
     t_obj = h.read_word(t + H_PTR)

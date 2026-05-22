@@ -63,15 +63,14 @@ builtin_len:
     bcs _blen_2byte
     jmp postamble_set_rv_int_b0
 _blen_2byte:
-    lda #2
-    jsr alloc_int_a_deref_w2     // RV = TYPE_INT(2 bytes); W2 = payload
-    lda B0
-    ldy #0
-    sta (W2),y
-    iny
+    lda B0                       // 16-bit length → inline int (hi16 = 0)
+    sta W2
     lda B1
-    sta (W2),y
-    jmp postamble
+    sta W2+1
+    lda #0
+    sta W3
+    sta W3+1
+    jmp postamble_set_rv_int32
 
 // =============================================================================
 // builtin_range — Python-style range, bignum-aware.
@@ -148,28 +147,24 @@ _br_typecheck:
     sta W0
     lda B5
     sta W0+1
-    jsr deref_W0_to_W2           // A = O_LEN (byte) of step's payload
-    sta B7                       // B7 free now (arity dispatch done)
-    cmp #0
-    beq _br_step_zero            // O_LEN==0 should never happen, treat as 0
-    tay
-_br_zero_check:
-    dey
-    lda (W2),y
+    // step is inline (W0 = step handle). Zero → empty list. Else sign = bit 31.
+    ldy #0
+    lda (W0),y
+    iny
+    ora (W0),y
+    iny
+    ora (W0),y
+    iny
+    ora (W0),y
     bne _br_step_nonzero
-    cpy #0
-    bne _br_zero_check
-    // All bytes zero → step is 0; return empty list immediately.
 _br_step_zero:
     lda #0
     jsr list_alloc               // RV = empty list
     jmp postamble                // postamble preserves RV
 
 _br_step_nonzero:
-    // MSB sign bit at (W2)[O_LEN-1] determines direction.
-    ldy B7
-    dey
-    lda (W2),y
+    ldy #3
+    lda (W0),y                   // high byte → sign bit
     bmi _br_neg_step
     lda #$FF                     // step > 0 → continue while curr < end
     .byte $2C                    // BIT abs — skip the next `lda #$01`
@@ -267,10 +262,11 @@ builtin_abs:
     jmp panic_type
 
 _babs_int:
-    jsr arg0_w0_deref
-    jsr sign_byte_W2             // A = $00 if non-neg, $FF if neg
-    cmp #$00
-    beq _babs_passthrough
+    ldy #0
+    jsr arg_get_w0               // W0 = arg0 handle
+    ldy #3
+    lda (W0),y                   // high byte of inline int (bit 31 = sign)
+    bpl _babs_passthrough
     jsr arg0_w0_push
     jsr int_negate               // consumes pushed arg, RV = magnitude
     jmp postamble
@@ -302,10 +298,20 @@ builtin_chr:
     beq _bchr_ok
     jmp panic_type
 _bchr_ok:
-    jsr deref_W0_to_W2           // Y = 0 at exit
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_INT
+    bne _bchr_boxed
+    ldy #0
+    lda (W0),y                   // inline int: low byte
+    sta B0
+    jmp _bchr_alloc
+_bchr_boxed:
+    jsr deref_W0_to_W2           // BOOL: boxed payload byte
+    ldy #0
     lda (W2),y
-    sta B0                       // B0 = char byte
-
+    sta B0
+_bchr_alloc:
     lda #1
     sta ALLOC_SIZE
     lda #0
@@ -1084,14 +1090,16 @@ _brnd_arg0_ok:
     cmp #TYPE_FLOAT
     beq _brnd_one_float
 
-    // rnd(end) INT: random_of_size(end_payload_len + 1) % end.
-    jsr arg0_w0_deref
-    sta B0                            // B0 = end's payload byte length
-    clc
-    lda B0
-    adc #1
-    jsr _brnd_alloc_rand              // RV = rand INT, (B0+1) bytes
+    // rnd(end) INT: rand31 % end.
+    jsr _brnd_alloc_rand              // RV = non-negative 31-bit rand
     rs_push(RV)                       // RS: [args, rand]
+    // Re-deref the args tuple into W3 — _brnd_alloc_rand's alloc clobbered it.
+    rs_peek_at(W0, 1)                 // W0 = args tuple
+    jsr deref_W0_to_W2
+    lda W2
+    sta W3
+    lda W2+1
+    sta W3+1
     jsr arg0_w0_push                       // RS: [args, rand, end]
     jsr int_mod                       // RV = rand % end
     jmp postamble
@@ -1139,13 +1147,7 @@ _brnd_arg1_ok:
     jsr int_sub                       // RV = end - start
     rs_push(RV)                       // RS: [args, start, end, diff]
 
-    // Allocate rand of (diff_size + 1) bytes.
-    rs_peek(W0)                       // diff
-    jsr deref_W0_to_W2
-    sta B0
-    clc
-    lda B0
-    adc #1
+    // Allocate a non-negative 31-bit rand.
     jsr _brnd_alloc_rand              // RV = rand
     rs_push(RV)                       // RS: [args, start, end, diff, rand]
 
@@ -1187,26 +1189,20 @@ _brnd_two_float:
     jsr float_add                     // RV = start + scaled
     jmp postamble
 
-// Leaf helper: allocate an INT of A bytes filled with rand8 entropy in
-// bytes 0..A-2, with byte A-1 = 0 (sign byte to ensure non-negative).
-//   in:  A = total byte count (A ≥ 2 expected).
-//   out: RV = new INT handle. Bytes 0..A-2 = rand8(); byte A-1 = 0.
-//   clobbers: A, X, Y, W2. Preserves W0/W1/B0..B7 — alloc_int is V4'.
+// Leaf helper: build a non-negative 31-bit random inline INT.
+//   out: RV = new INT handle (0 .. 2^31-1).
+//   clobbers: A, X, Y, B0..B3, W2/W3. (rand8 preserves X/Y/ZP.)
 _brnd_alloc_rand:
-    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
-
-    ldy ALLOC_SIZE
-    dey
-    lda #0
-    sta (W2),y                        // top byte = 0 (sign-extension byte)
-_brnd_fill_loop:
-    dey
-    bmi _brnd_fill_done
     jsr rand8
-    sta (W2),y
-    jmp _brnd_fill_loop
-_brnd_fill_done:
-    rts
+    sta B0
+    jsr rand8
+    sta B1
+    jsr rand8
+    sta B2
+    jsr rand8
+    and #$7F                          // clear bit 31 → non-negative
+    sta B3
+    jmp alloc_int_b0                  // tail: RV = inline int, returns to caller
 
 // =============================================================================
 // builtin_sort(S [, reverse]) — return a sorted version of S.
@@ -1447,19 +1443,14 @@ builtin_type:
 // =============================================================================
 builtin_id:
     jsr preamble_call_1_1_w0
-
-    lda #3
-    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
-    ldy #0
-    lda W0
-    sta (W2),y
-    iny
+    lda W0                       // 16-bit handle address → inline int (hi16 = 0)
+    sta W2
     lda W0+1
-    sta (W2),y
-    iny
+    sta W2+1
     lda #0
-    sta (W2),y
-    jmp postamble
+    sta W3
+    sta W3+1
+    jmp postamble_set_rv_int32
 
 // =============================================================================
 // builtin_globals() / builtin_locals() — return a scope dict.
@@ -1508,23 +1499,14 @@ builtin_mem:
     sec
     lda NEXT_HANDLE
     sbc NEXT_DATA
-    sta B0
+    sta W2
     lda NEXT_HANDLE+1
     sbc NEXT_DATA+1
-    sta B1
-
-    lda #2
-    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
-    lda B0
-    ldy #0
-    sta (W2),y
-    iny
-    lda B1
-    sta (W2),y
-
-    rs_push(RV)
-    jsr int_normalize
-    jmp postamble
+    sta W2+1
+    lda #0                       // free count is 16-bit non-negative → hi16 = 0
+    sta W3
+    sta W3+1
+    jmp postamble_set_rv_int32
 
 // =============================================================================
 // builtin_cmp(a, b) — three-way compare via val_cmp.
@@ -1536,18 +1518,12 @@ builtin_cmp:
     rs_push(W1)
     jsr val_cmp                        // A = $FF / $00 / $01; consumes pushed args
     sta B0
-
-    lda #1
-    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
-    lda B0
-    ldy #0
-    sta (W2),y
-    jmp postamble
+    jmp postamble_set_rv_int_b0        // signed byte → inline int (-1/0/1)
 
 // =============================================================================
-// builtin_hex(x) — render INT/BOOL as a hex string. Format: "0xDDDD…" for
-// non-negative values, "-0xDDDD…" for negatives. Two hex chars per
-// magnitude byte (no leading-zero trim).
+// builtin_hex(x) — render INT/BOOL as a hex string. Format: "0xDD…" for
+// non-negative values, "-0xDD…" for negatives. Two hex chars per significant
+// magnitude byte (leading all-zero bytes trimmed; minimum one byte → "0x00").
 // =============================================================================
 builtin_hex:
     jsr preamble_call_1_1_w0
@@ -1555,96 +1531,110 @@ builtin_hex:
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_INT
-    beq !ok+
+    beq _bhex_int
     cmp #TYPE_BOOL
-    beq !ok+
+    beq _bhex_bool
     jmp panic_type
-!ok:
-
-    jsr deref_W0_to_W2                 // W2 = payload, A = O_LEN
-    sta B0                              // B0 = mag len
-    jsr sign_byte_W2                    // A = $FF if negative else $00
-    sta B6                              // B6 = sign
-
-    bmi _bhex_negative
-
-    // Positive — magnitude IS the original. Push it for uniform re-deref below.
-    jsr arg0_w0_push                         // RS: [args_tuple, magnitude=orig]
-    jmp _bhex_have_mag
-
-_bhex_negative:
-    // Negate to get magnitude, root it on RS for GC.
-    jsr arg0_w0_push
-    jsr int_negate
-    rs_push(RV)                         // RS: [args_tuple, magnitude]
-    rs_peek(W0)
+_bhex_bool:
+    // Boxed BOOL: value = payload byte (0/1) into B0..B3.
     jsr deref_W0_to_W2
-    sta B0                              // B0 = magnitude len (post-negate normalization)
-_bhex_have_mag:
+    ldy #0
+    lda (W2),y
+    sta B0
+    lda #0
+    sta B1
+    sta B2
+    sta B3
+    jmp _bhex_value
+_bhex_int:
+    jsr int_load_a                      // B0..B3 = value
+_bhex_value:
+    // Sign → B6; magnitude into B0..B3.
+    lda B3
+    bpl _bhex_pos
+    lda #$FF
+    sta B6
+    sec
+    lda #0
+    sbc B0
+    sta B0
+    lda #0
+    sbc B1
+    sta B1
+    lda #0
+    sbc B2
+    sta B2
+    lda #0
+    sbc B3
+    sta B3
+    jmp _bhex_sig
+_bhex_pos:
+    lda #0
+    sta B6
+_bhex_sig:
+    // Highest non-zero byte index → B7 (sig_len = B7 + 1; minimum 1).
+    ldx #3
+_bhex_findsig:
+    lda B0,x
+    bne _bhex_found
+    dex
+    bne _bhex_findsig
+_bhex_found:
+    stx B7
 
-    // ALLOC_SIZE = 2 ("0x") + (1 if negative else 0) + 2 * mag_len.
-    lda B6
-    bpl !p+
-    lda #3
-    jmp !d+
-!p:
-    lda #2
-!d:
-    sta B1                              // B1 = base length (0x or -0x)
-    lda B0
-    asl                                  // 2 * mag_len
+    // ALLOC_SIZE = (2 or 3 for "0x"/"-0x") + 2*(B7+1).
+    txa
     clc
-    adc B1
+    adc #1
+    asl                                  // 2 * sig_len
+    sta B5
+    lda B6
+    bpl _bhex_plen
+    lda #3
+    jmp _bhex_dlen
+_bhex_plen:
+    lda #2
+_bhex_dlen:
+    clc
+    adc B5
     sta ALLOC_SIZE
     lda #0
     sta ALLOC_SIZE+1
     lda #TYPE_STR
     sta ALLOC_TYPE
-    jsr alloc                           // RV = new STR
-
-    // Re-deref magnitude after alloc (GC may have moved data).
-    rs_peek(W0)
-    jsr deref_W0_to_W2                  // W2 = magnitude payload
-
-    jsr deref_RV_to_W3                  // dst = RV's payload base
+    jsr alloc                           // RV = new STR (B regs preserved — V4')
+    jsr deref_RV_to_W3                  // W3 = dst payload base
 
     ldy #0
     lda B6
-    bpl !p+
-    lda #$2D                            // '-' (ASCII / shared with screencode)
+    bpl _bhex_no_minus
+    lda #$2D                            // '-'
     sta (W3),y
     iny
-!p:
+_bhex_no_minus:
     lda #$30                            // '0'
     sta (W3),y
     iny
-    lda #$78                            // 'x' (ASCII; KickAss `'x'` literal would
-                                        // be screencode and disagree with ASCII)
+    lda #$78                            // 'x'
     sta (W3),y
     iny
 
-    // Emit magnitude bytes from MSB to LSB.
-    ldx B0
-    dex
+    // Emit magnitude bytes from B7 (MSB) down to 0. X = byte index, Y = output
+    // offset (carried across _bhex_emit_digit, which only iny's and clobbers A).
+    ldx B7
 _bhex_byte_loop:
-    bmi _bhex_done
-    sty B5                              // save output offset
-    txa
-    tay
-    lda (W2),y                          // mag[X]
-    ldy B5                              // restore output offset
-    pha                                  // save byte
+    lda B0,x
+    pha
     lsr
     lsr
     lsr
-    lsr                                  // hi nibble
+    lsr
     jsr _bhex_emit_digit
     pla
-    and #$0F                             // lo nibble
+    and #$0F
     jsr _bhex_emit_digit
     dex
-    jmp _bhex_byte_loop
-_bhex_done:
+    bpl _bhex_byte_loop
     jmp postamble
 
 // Leaf: emit hex digit (A=0..15) at (W3),Y; bump Y. Clobbers A only.
@@ -1891,12 +1881,13 @@ _bcur_get:
 //   out: RV = new TYPE_INT handle.
 //   clobbers: A, X, Y, W2.
 _bcur_alloc_int_b0:
-    lda #1
-    jsr alloc_int_a_deref_w2     // size in A → alloc TYPE_INT, deref RV→W2
-    lda B0
-    ldy #0
-    sta (W2),y
-    rts
+    lda B0                       // 0..255 → inline int (hi24 = 0)
+    sta W2
+    lda #0
+    sta W2+1
+    sta W3
+    sta W3+1
+    jmp alloc_inline_int         // tail call: sets RV, returns to our caller
 
 
 // =============================================================================
@@ -2793,30 +2784,29 @@ _bfind_args_done_pop:
     lda RV+1
     sta B1
 
-    // If RV == $FFFF → return -1 (2-byte int, both bytes $FF).
+    // If RV == $FFFF → return -1.
     cmp #$FF
     bne _bfind_alloc
     lda B0
     cmp #$FF
     bne _bfind_alloc
-    // Not found → -1. Use 1-byte int $FF.
-    lda #1
-    jsr alloc_int_a_deref_w2
-    ldy #0
+    // Not found → -1 (all $FF).
     lda #$FF
-    sta (W2),y
-    jmp postamble
+    sta W2
+    sta W2+1
+    sta W3
+    sta W3+1
+    jmp postamble_set_rv_int32
 _bfind_alloc:
-    // Found (0..0xFFFE). Allocate 2-byte signed INT (so positions ≥ 128 stay positive).
-    lda #2
-    jsr alloc_int_a_deref_w2
-    ldy #0
+    // Found (0..0xFFFE) → inline int (16-bit position, hi16 = 0).
     lda B0
-    sta (W2),y
-    iny
+    sta W2
     lda B1
-    sta (W2),y
-    jmp postamble
+    sta W2+1
+    lda #0
+    sta W3
+    sta W3+1
+    jmp postamble_set_rv_int32
 
 // Helper: read signed int handle in W0 → A:X = sign-extended 16-bit value.
 // 1-byte int → sign-extend low byte. 2-byte int → take both bytes verbatim.
@@ -2825,28 +2815,14 @@ _bfind_alloc:
 //   out: A = low, X = high.
 //   clobbers: W2, Y, B2.
 _bfind_read_signed_int:
-    jsr deref_W0_to_W2                // A=O_LEN low, X=O_LEN high, W2=payload
-    sta B2                            // B2 = O_LEN low
+    // Inline int: low 16 bits are handle bytes 0 (lo) and 1 (hi).
     ldy #0
-    lda (W2),y                        // A = byte 0
-    cpx #0
-    bne _bfri_2byte                   // O_LEN >= 256 → byte 1 is at offset 1
-    ldx B2
-    cpx #2
-    bcs _bfri_2byte
-    // 1-byte: sign-extend.
-    ldx #0
-    cmp #$80
-    bcc _bfri_done
-    ldx #$FF
-    rts
-_bfri_2byte:
+    lda (W0),y
     pha
-    ldy #1
-    lda (W2),y
+    iny
+    lda (W0),y
     tax
     pla
-_bfri_done:
     rts
 
 // --- str.startswith(prefix) -------------------------------------------------
@@ -3621,19 +3597,14 @@ builtin_list_insert:
     arg_get(1, W2)                    // idx handle (use W2 to avoid clobbering W3 yet)
     arg_get(2, W1)                    // item
 
-    // Extract idx byte from int handle → fs_push as a word.
-    ldy #H_PTR
+    // Inline int idx → 16-bit word on FS (low 16 bits of the value).
+    ldy #0
     lda (W2),y
     sta W3
     iny
     lda (W2),y
     sta W3+1
-    ldy #O_HEADER
-    lda (W3),y                        // A = idx byte
-    sta W2
-    lda #0
-    sta W2+1
-    fs_push(W2)
+    fs_push(W3)
 
     rs_push(W0)                       // RS: [args_tuple, me]
     rs_push(W1)                       // RS: [args_tuple, me, item]

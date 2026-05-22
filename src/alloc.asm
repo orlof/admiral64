@@ -231,18 +231,27 @@ alloc_populate:
 !:
 
     // 6. Append W0 (new handle) to the reserved list. H_NEXT was already 0'd
-    //    in step 2c, so the new entry is a valid tail. Empty-list case: set
-    //    both HEAD and TAIL; otherwise patch the old tail's H_NEXT.
+    //    in step 2c, so the new entry is a valid tail.
+    jsr _reserved_append
+    jmp postamble
+
+// -----------------------------------------------------------------------------
+// _reserved_append — append the handle in W0 to the tail of the RESERVED list.
+// W0.H_NEXT must already be 0. Empty-list case sets both HEAD and TAIL;
+// otherwise patches the old tail's H_NEXT. Shared by alloc and alloc_inline_int.
+//   clobbers: A, Y, W1.
+// -----------------------------------------------------------------------------
+_reserved_append:
     lda RESERVED_TAIL
     ora RESERVED_TAIL+1
-    bne alloc_append_link
+    bne _ra_link
     // Empty list: RESERVED_HEAD = W0.
     lda W0
     sta RESERVED_HEAD
     lda W0+1
     sta RESERVED_HEAD+1
-    jmp alloc_set_tail
-alloc_append_link:
+    jmp _ra_set_tail
+_ra_link:
     // old_tail.H_NEXT = W0
     lda RESERVED_TAIL
     sta W1
@@ -254,13 +263,12 @@ alloc_append_link:
     iny
     lda W0+1
     sta (W1),y
-alloc_set_tail:
+_ra_set_tail:
     lda W0
     sta RESERVED_TAIL
     lda W0+1
     sta RESERVED_TAIL+1
-
-    jmp postamble
+    rts
 
 // -----------------------------------------------------------------------------
 // alloc_int — convenience wrapper: alloc() with type = TYPE_INT.
@@ -271,6 +279,131 @@ alloc_int:
     lda #TYPE_INT
     sta ALLOC_TYPE
     jmp alloc
+
+// -----------------------------------------------------------------------------
+// alloc_inline_int — allocate a TYPE_INT handle whose 32-bit value lives INLINE
+// in H_PTR (low 16 bits) + H_SIZE (high 16 bits). No data-heap payload is
+// carved and no O_LEN header is written, so NEXT_DATA is untouched.
+//
+//   in:  W2 = value low 16 bits, W3 = value high 16 bits
+//   out: RV = new handle. OOM is a fatal panic, not a return value.
+//
+// Only a handle slot is needed: reuse from FREE_HEAD, or carve SIZEOF_HANDLE
+// from NEXT_HANDLE if the free list is empty. gc_sweep reclaims it like any
+// handle (H_NEXT/H_FLAGS only); gc_compact skips TYPE_INT (no payload to move).
+// -----------------------------------------------------------------------------
+alloc_inline_int:
+    preamble_args(0, 0)
+    // Stash the value on FS: gc_mark/gc_sweep/gc_collect are not V4' and clobber
+    // W0-W3, so the value cannot ride in W2:W3 across a GC. FS is untouched by
+    // GC (it lives below $8400; GC works the heap at $8800+). Popped back into
+    // W2:W3 at aii_populate, after all GC paths. Balanced → postamble-clean.
+    fs_push(W2)
+    fs_push(W3)
+    lda #0
+    sta ALLOC_GC_TRIED
+
+    // Periodic GC parity with alloc: every 256th alloc, mark+sweep.
+    dec GC_COUNTER
+    bne aii_check
+    jsr gc_mark
+    jsr gc_sweep
+
+aii_check:
+    // A handle slot is only needed if the free list is empty.
+    lda FREE_HEAD
+    ora FREE_HEAD+1
+    bne aii_acquire               // reusable handle → always fits
+    // Carve path: need gap (NEXT_HANDLE - NEXT_DATA) >= SIZEOF_HANDLE.
+    sec
+    lda NEXT_HANDLE
+    sbc NEXT_DATA
+    sta W0
+    lda NEXT_HANDLE+1
+    sbc NEXT_DATA+1
+    sta W0+1
+    lda W0+1
+    bne aii_acquire               // gap >= 256 → plenty
+    lda W0
+    cmp #SIZEOF_HANDLE
+    bcs aii_acquire
+
+aii_oom:
+    lda ALLOC_GC_TRIED
+    bne aii_really_oom
+    inc ALLOC_GC_TRIED
+    jsr gc_collect
+    jmp aii_check
+aii_really_oom:
+    jmp panic_oom
+
+aii_acquire:
+    // Acquire handle into W0: reuse FREE_HEAD or carve from NEXT_HANDLE.
+    lda FREE_HEAD
+    ora FREE_HEAD+1
+    beq aii_carve
+    lda FREE_HEAD
+    sta W0
+    lda FREE_HEAD+1
+    sta W0+1
+    ldy #H_NEXT
+    lda (W0),y
+    sta FREE_HEAD
+    iny
+    lda (W0),y
+    sta FREE_HEAD+1
+    jmp aii_populate
+aii_carve:
+    sec
+    lda NEXT_HANDLE
+    sbc #SIZEOF_HANDLE
+    sta NEXT_HANDLE
+    sta W0
+    lda NEXT_HANDLE+1
+    sbc #0
+    sta NEXT_HANDLE+1
+    sta W0+1
+
+aii_populate:
+    // Restore the stashed value (LIFO: W3 was pushed last).
+    fs_pop(W3)
+    fs_pop(W2)
+    // H_PTR = value low 16 (W2).
+    ldy #H_PTR
+    lda W2
+    sta (W0),y
+    iny
+    lda W2+1
+    sta (W0),y
+    // H_SIZE = value high 16 (W3).
+    ldy #H_SIZE
+    lda W3
+    sta (W0),y
+    iny
+    lda W3+1
+    sta (W0),y
+    // H_NEXT = 0.
+    lda #0
+    ldy #H_NEXT
+    sta (W0),y
+    iny
+    sta (W0),y
+    // H_TYPE = TYPE_INT.
+    lda #TYPE_INT
+    ldy #H_TYPE
+    sta (W0),y
+    // H_FLAGS = 0.
+    lda #0
+    ldy #H_FLAGS
+    sta (W0),y
+    // RV = W0.
+    lda W0
+    sta RV
+    lda W0+1
+    sta RV+1
+    // Append to reserved list (H_NEXT already 0).
+    jsr _reserved_append
+    jmp postamble
 
 // -----------------------------------------------------------------------------
 // alloc_int_a_deref_w2 — combined "size in A → 1-byte ALLOC_SIZE; alloc_int;

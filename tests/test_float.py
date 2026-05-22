@@ -356,12 +356,12 @@ def _decode_signed_le(bs: list[int]) -> int:
 
 
 def test_float_to_int_2_to_31(hfp):
-    """2³¹ = 2147483648 — needs 5 bytes signed (would have overflowed QINT)."""
+    """2³¹ wraps to INT_MIN in fixed 32-bit (low 32 bits, signed)."""
     f = place_python_float(hfp, 0x8500, 2_147_483_648.0)
     hfp.rs_push(f)
     hfp.call("float_to_int")
     bs = read_int(hfp, hfp.read_word(RV))
-    assert _decode_signed_le(bs) == 2_147_483_648
+    assert _decode_signed_le(bs) == -2_147_483_648
 
 
 def test_float_to_int_neg_2_to_31(hfp):
@@ -374,30 +374,33 @@ def test_float_to_int_neg_2_to_31(hfp):
 
 
 def test_float_to_int_2_to_32(hfp):
-    """2³² = 4294967296 — out of QINT range, must work via bigint path."""
+    """2³² wraps to 0 (low 32 bits are all zero)."""
     f = place_python_float(hfp, 0x8500, 4_294_967_296.0)
     hfp.rs_push(f)
     hfp.call("float_to_int")
     bs = read_int(hfp, hfp.read_word(RV))
-    assert _decode_signed_le(bs) == 4_294_967_296
+    assert _decode_signed_le(bs) == 0
 
 
 def test_float_to_int_neg_3_billion(hfp):
-    """|x| > 2³¹ — previously would have panicked with ERR_OVERFLOW."""
+    """|x| > 2³¹ wraps mod 2³²: -3e9 → 1294967296."""
     f = place_python_float(hfp, 0x8500, -3_000_000_000.0)
     hfp.rs_push(f)
     hfp.call("float_to_int")
     bs = read_int(hfp, hfp.read_word(RV))
-    assert _decode_signed_le(bs) == -3_000_000_000
+    assert _decode_signed_le(bs) == (-3_000_000_000) & 0xFFFFFFFF
 
 
 def test_float_to_int_one_e_12(hfp):
-    """1e12 = 10¹² — well beyond 32-bit, exact in MS-Basic float (40 bits)."""
+    """1e12 wraps to its low 32 bits, interpreted signed."""
     f = place_python_float(hfp, 0x8500, 1e12)
     hfp.rs_push(f)
     hfp.call("float_to_int")
     bs = read_int(hfp, hfp.read_word(RV))
-    assert _decode_signed_le(bs) == 1_000_000_000_000
+    expected = 1_000_000_000_000 & 0xFFFFFFFF
+    if expected & 0x8000_0000:
+        expected -= 0x1_0000_0000
+    assert _decode_signed_le(bs) == expected
 
 
 def test_float_to_int_just_below_overflow(hfp):

@@ -19,39 +19,33 @@
 #importonce
 #import "defs.asm"
 
+// Inline-int statics: the 32-bit value lives in H_PTR (lo16) + H_SIZE (hi16),
+// just like a heap-allocated inline int. No _OBJ payload. gc_compact skips
+// TYPE_INT, and statics aren't on the reserved list anyway.
+
 // INT_0 — used for "is this zero?" comparisons, default values, etc.
 INT_0:
-    .word INT_0_OBJ          // H_PTR
-    .word 3                  // H_SIZE (O_HEADER + 1)
-    .word 0                  // H_NEXT (never on a list)
+    .word 0                  // H_PTR  = value lo16
+    .word 0                  // H_SIZE = value hi16
+    .word 0                  // H_NEXT
     .byte TYPE_INT           // H_TYPE
     .byte 0                  // H_FLAGS
-INT_0_OBJ:
-    .word 1                  // O_LEN
-    .byte 0                  // payload
 
 // INT_1 — unit value, loop counters, sign markers.
 INT_1:
-    .word INT_1_OBJ
-    .word 3
+    .word 1
+    .word 0
     .word 0
     .byte TYPE_INT
     .byte 0
-INT_1_OBJ:
-    .word 1
-    .byte 1
 
-// INT_10 — decimal divisor for int_to_str. Pinned so every divmod in the
-// digit-extraction loop reuses the same handle (no per-call allocation).
+// INT_10 — decimal divisor (legacy callers); inline value 10.
 INT_10:
-    .word INT_10_OBJ
-    .word 3
+    .word 10
+    .word 0
     .word 0
     .byte TYPE_INT
     .byte 0
-INT_10_OBJ:
-    .word 1
-    .byte 10
 
 // STR_BANNER — boot banner line 1, printed by admiral.asm's boot sequence.
 // Mimics the C64's BASIC startup screen (`**** COMMODORE 64 BASIC V2 ****`)

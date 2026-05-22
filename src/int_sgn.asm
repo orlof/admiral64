@@ -1,44 +1,31 @@
 // -----------------------------------------------------------------------------
-// int_sgn — return the sign of a signed int.
-//
+// int_sgn — sign of a fixed 32-bit int.
 //   in:  handle on RS (top)
-//   out: A = $00 (zero) / $01 (positive) / $FF (negative).
-//
-// A is preserved through postamble so the caller gets the byte directly in A.
+//   out: A = $00 (zero) / $01 (positive) / $FF (negative). A survives postamble.
 // -----------------------------------------------------------------------------
 
 #importonce
 #import "defs.asm"
 #import "stacks.asm"
 #import "preamble.asm"
+#import "int_util.asm"
 
 int_sgn:
     preamble_args(1, 0)
-
     rs_peek(W0)
-    jsr deref_W0_to_W2        // W2 = payload, A = length
-    tay                        // Y = length
-    dey                        // Y = MSB index
-    lda (W2),y                 // A = MSB
+    jsr int_load_a               // B0..B3 = value
+    lda B3
     bmi _sgn_neg
-    bne _sgn_pos
-
-    // MSB == 0. Normalized zero has length 1.
-    tya                        // A = Y = length - 1
-    bne _sgn_pos               // length > 1 → positive (e.g. [$FF, $00])
-    lda #0                     // length == 1 and MSB == 0 → zero
-    sta B0
-    jmp _sgn_done
-
-_sgn_pos:
+    lda B0
+    ora B1
+    ora B2
+    ora B3
+    beq _sgn_zero
     lda #1
-    sta B0
-    jmp _sgn_done
-
+    jmp postamble
+_sgn_zero:
+    lda #0
+    jmp postamble
 _sgn_neg:
     lda #$FF
-    sta B0
-
-_sgn_done:
-    lda B0                     // reload sign into A
-    jmp postamble              // preserves A across the restore loop
+    jmp postamble

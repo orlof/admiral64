@@ -739,9 +739,21 @@ class Harness:
         return self.read_word(RV)
 
     def alloc_int(self, size: int) -> int:
-        """Call alloc_int with the given payload size. Returns RV."""
+        """Call alloc_int with the given payload size. Returns RV.
+
+        NOTE: this allocates a *boxed* TYPE_INT (legacy shape). Real ints are
+        inline now — use make_int(value) to create one holding a value.
+        """
         self.write_word(ALLOC_SIZE_ZP, size & 0xFFFF)
         self.call("alloc_int")
+        return self.read_word(RV)
+
+    def make_int(self, value: int) -> int:
+        """Allocate an inline TYPE_INT holding `value` (signed 32-bit). Returns RV."""
+        value &= 0xFFFFFFFF
+        self.write_word(W2, value & 0xFFFF)
+        self.write_word(W3, (value >> 16) & 0xFFFF)
+        self.call("alloc_inline_int")
         return self.read_word(RV)
 
     def alloc_str(self, size: int) -> int:
@@ -791,7 +803,10 @@ class Harness:
             raise ValueError(
                 f"gap={gap} exceeds max reachable ({full - 10} bytes)"
             )
-        handle = self.alloc_int(payload)
+        # Use a STR (boxed payload) rather than an int: inline ints carry no
+        # heap payload and gc_compact skips them, so an int fill would be
+        # "recoverable" and defeat the unrecoverable-gap intent.
+        handle = self.alloc_str(payload)
         self.rs_push(handle)
         return handle
 
