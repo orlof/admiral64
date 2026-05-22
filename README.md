@@ -31,7 +31,8 @@ Admiral64 is a self-hosted environment that boots from a `.PRG` on disk and give
  - a 1541 floppy filesystem with object-graph `save()` / `load()`,
  - 32-bit signed integers (two's-complement, wraparound on overflow), 48-bit floats, lists, tuples, dicts, booleans, and `None`,
  - a mark-and-sweep garbage collector for the dynamic heap,
- - native 6510 extensions via `call()` — drop to machine code for inner loops (see [EXTENSIONS.md](EXTENSIONS.md)).
+ - native 6510 extensions via `call()` — drop to machine code for inner loops (see [EXTENSIONS.md](EXTENSIONS.md)),
+ - hi-res (320×200) and multicolor (160×200) bitmap graphics via a `reboot()` memory-mode switch plus on-disk drawing libraries (`hires`, `mc`, `text`).
 
 Everything is written in 6510 assembly and assembles into one ~30 KB `admiral.prg`. There is no operating system underneath — Admiral *is* the operating system once it loads.
 
@@ -67,4 +68,4 @@ This is a personal-fun project, not a polished product:
  - The interpreter is one-pass and could be a lot faster.
  - Integers are fixed 32-bit and wrap on overflow (no arbitrary precision); only division by zero traps.
  - Error reporting is minimal. You get a one-byte error code and a recovery to the prompt.
- - There is no virtual memory, no multitasking, no colour graphics, no sound. Just enough to play with the language.
+ - Bitmap graphics exist (hi-res + multicolor) but switching into them is a `reboot()` into a smaller-heap memory config, not a live mode flip. No sprites, no sound, no virtual memory, no multitasking. Just enough to play with the language.
