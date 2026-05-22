@@ -2870,7 +2870,9 @@ _llb_slice:
     jsr lexer_next                    // consume ':'
     lda #0
     sta B7
-    jsr expression                    // RV = stop
+    jsr expression                    // RV = lazy stop
+    rs_push(RV)
+    jsr eval                          // force stop (e.g. a variable/expression)
     rs_push(RV)                       // RS: [container, start, stop]
     lda #TK_RBRACK
     jsr lexer_advance                 // consume ']'

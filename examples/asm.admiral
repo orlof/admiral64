@@ -1,0 +1,94 @@
+# ASM - A MINIMAL TWO-PASS 6510 ASSEMBLER, WRITTEN IN ADMIRAL.
+#
+# TURNS ASSEMBLY TEXT INTO A BYTE STRING YOU CAN RUN WITH CALL():
+#
+#   A = LOAD("ASM")()
+#   CODE = A.GO(SRC="LDY #0\nLDA ($10),Y\nASL\nSTA $10\nLDA #0\nSTA $11\nRTS")
+#   PRINT CALL(CODE, 21)        -- 42  (doubles its int argument)
+#
+# SYNTAX (DELIBERATELY SMALL):
+#   - ONE INSTRUCTION OR ONE "LABEL:" PER LINE; ";" STARTS A COMMENT.
+#   - BRANCHES (BNE/BEQ/...) TAKE A LABEL AND ARE PC-RELATIVE.
+#   - OPERANDS: #$NN #N #<EXPR #>EXPR  ($ZP),Y  ($ZP,X)  $NN[,X|,Y]
+#     $NNNN[,X|,Y]  SYM[+N]  WHERE SYM IS A REGISTER NAME OR A LABEL.
+#   - NO INTRA-BLOB JSR/JMP TO YOUR OWN LABELS (CODE IS RELOCATABLE);
+#     ABSOLUTE OPERANDS MUST BE LITERALS OR ZERO-PAGE REGISTER NAMES.
+#
+# MODE CODES: 0=IMP 1=IMM 2=ZP 3=ZPX 4=ZPY 5=ABS 6=ABX 7=ABY 8=(ZP),Y 9=(ZP,X)
+
+A = <
+  "OPC": <
+    "LDA": <1: 169, 2: 165, 3: 181, 5: 173, 6: 189, 7: 185, 8: 177, 9: 161>,
+    "LDX": <1: 162, 2: 166, 4: 182, 5: 174, 7: 190>,
+    "LDY": <1: 160, 2: 164, 3: 180, 5: 172, 6: 188>,
+    "STA": <2: 133, 3: 149, 5: 141, 6: 157, 7: 153, 8: 145, 9: 129>,
+    "STX": <2: 134, 4: 150, 5: 142>,
+    "STY": <2: 132, 3: 148, 5: 140>,
+    "ADC": <1: 105, 2: 101, 3: 117, 5: 109, 8: 113>,
+    "SBC": <1: 233, 2: 229, 5: 237, 8: 241>,
+    "AND": <1: 41, 2: 37, 5: 45, 8: 49>,
+    "ORA": <1: 9, 2: 5, 5: 13, 8: 17>,
+    "EOR": <1: 73, 2: 69, 5: 77, 8: 81>,
+    "CMP": <1: 201, 2: 197, 5: 205, 8: 209>,
+    "CPX": <1: 224, 2: 228, 5: 236>,
+    "CPY": <1: 192, 2: 196, 5: 204>,
+    "INC": <2: 230, 3: 246, 5: 238>,
+    "DEC": <2: 198, 3: 214, 5: 206>,
+    "ASL": <0: 10, 2: 6, 5: 14>,
+    "LSR": <0: 74, 2: 70, 5: 78>,
+    "ROL": <0: 42, 2: 38, 5: 46>,
+    "ROR": <0: 106, 2: 102, 5: 110>,
+    "BIT": <2: 36, 5: 44>,
+    "JMP": <5: 76>,
+    "JSR": <5: 32>,
+    "INX": <0: 232>,
+    "INY": <0: 200>,
+    "DEX": <0: 202>,
+    "DEY": <0: 136>,
+    "TAX": <0: 170>,
+    "TAY": <0: 168>,
+    "TXA": <0: 138>,
+    "TYA": <0: 152>,
+    "CLC": <0: 24>,
+    "SEC": <0: 56>,
+    "PHA": <0: 72>,
+    "PLA": <0: 104>,
+    "NOP": <0: 234>,
+    "RTS": <0: 96>
+  >,
+  "BRA": <"BNE": 208, "BEQ": 240, "BCC": 144, "BCS": 176, "BMI": 48, "BPL": 16, "BVC": 80, "BVS": 112>,
+  "REG": <"W0": 16, "W1": 18, "W2": 20, "W3": 22, "B0": 24, "B1": 25, "B2": 26, "B3": 27, "B4": 28, "B5": 29, "B6": 30, "B7": 31, "RV": 14>,
+  "LBL": <>,
+
+  # GO(SRC) - assemble SRC, return the machine-code byte string.
+  "GO": "ME.LBL = <>\nFOR K, V IN ME.REG:\n  ME.LBL[K] = V\nLNS = SRC.SPLIT(CHR(10))\nPC = 0\nFOR LN IN LNS:\n  T = ME.TRIM(L=LN)\n  IF LEN(T) == 0:\n    PASS\n  ELIF ORD(T[LEN(T)-1]) == 58:\n    ME.LBL[T[0:LEN(T)-1]] = PC\n  ELSE:\n    PC = PC + ME.SIZE(T=T)\nOUT = \"\"\nPC = 0\nFOR LN IN LNS:\n  T = ME.TRIM(L=LN)\n  IF LEN(T) == 0:\n    PASS\n  ELIF ORD(T[LEN(T)-1]) == 58:\n    PASS\n  ELSE:\n    OUT = OUT + ME.EMIT(T=T, PC=PC)\n    PC = PC + ME.SIZE(T=T)\nRETURN OUT",
+
+  # TRIM(L) - drop a ';' comment and surrounding spaces.
+  "TRIM": "P = L.FIND(CHR(59))\nIF P >= 0:\n  L = L[0:P]\nI = 0\nWHILE I < LEN(L) AND ORD(L[I]) == 32:\n  I += 1\nJ = LEN(L)\nWHILE J > I AND ORD(L[J-1]) == 32:\n  J = J - 1\nRETURN L[I:J]",
+
+  # PARTS(T) - split a trimmed line into [MNEMONIC, OPERAND].
+  "PARTS": "SP = T.FIND(CHR(32))\nIF SP < 0:\n  RETURN [T, \"\"]\nRETURN [T[0:SP], ME.LTRIM(L=T[SP+1:LEN(T)])]",
+
+  "LTRIM": "I = 0\nWHILE I < LEN(L) AND ORD(L[I]) == 32:\n  I += 1\nRETURN L[I:LEN(L)]",
+
+  # MLEN(M) - byte length of an instruction with mode M.
+  "MLEN": "IF M == 0:\n  RETURN 1\nIF M == 5 OR M == 6 OR M == 7:\n  RETURN 3\nRETURN 2",
+
+  # SIZE(T) - byte length of the instruction on trimmed line T.
+  "SIZE": "PR = ME.PARTS(T=T)\nMN = PR[0]\nIF MN IN ME.BRA:\n  RETURN 2\nRETURN ME.MLEN(M=ME.CLASS(OP=PR[1])[0])",
+
+  # CLASS(OP) - classify an operand string into [MODE, VALUE].
+  "CLASS": "N = LEN(OP)\nIF N == 0:\n  RETURN [0, 0]\nF = ORD(OP[0])\nIF F == 35:\n  R = OP[1:N]\n  IF ORD(R[0]) == 60:\n    RETURN [1, ME.NUM(E=R[1:LEN(R)]) & 255]\n  IF ORD(R[0]) == 62:\n    RETURN [1, (ME.NUM(E=R[1:LEN(R)]) >> 8) & 255]\n  RETURN [1, ME.NUM(E=R) & 255]\nIF F == 40:\n  IF OP.ENDSWITH(CHR(41) + CHR(44) + CHR(89)):\n    RETURN [8, ME.NUM(E=OP[1:N-3])]\n  RETURN [9, ME.NUM(E=OP[1:N-3])]\nIF OP.ENDSWITH(CHR(44) + CHR(88)):\n  V = ME.NUM(E=OP[0:N-2])\n  IF V > 255:\n    RETURN [6, V]\n  RETURN [3, V]\nIF OP.ENDSWITH(CHR(44) + CHR(89)):\n  V = ME.NUM(E=OP[0:N-2])\n  IF V > 255:\n    RETURN [7, V]\n  RETURN [4, V]\nV = ME.NUM(E=OP)\nIF V > 255:\n  RETURN [5, V]\nRETURN [2, V]",
+
+  # NUM(E) - evaluate an operand expression: $hex, decimal, SYM, or SYM+N.
+  "NUM": "P = E.FIND(CHR(43))\nIF P >= 0:\n  RETURN ME.NUM(E=E[0:P]) + ME.NUM(E=E[P+1:LEN(E)])\nIF ORD(E[0]) == 36:\n  RETURN ME.HEX(S=E[1:LEN(E)])\nIF E IN ME.LBL:\n  RETURN ME.LBL[E]\nRETURN ME.DEC(S=E)",
+
+  "HEX": "V = 0\nI = 0\nWHILE I < LEN(S):\n  C = ORD(S[I])\n  D = 0\n  IF C >= 48 AND C <= 57:\n    D = C - 48\n  ELIF C >= 65 AND C <= 70:\n    D = C - 55\n  ELIF C >= 97 AND C <= 102:\n    D = C - 87\n  V = V * 16 + D\n  I += 1\nRETURN V",
+
+  "DEC": "V = 0\nI = 0\nWHILE I < LEN(S):\n  V = V * 10 + (ORD(S[I]) - 48)\n  I += 1\nRETURN V",
+
+  # EMIT(T, PC) - emit the machine-code bytes for trimmed line T at offset PC.
+  "EMIT": "PR = ME.PARTS(T=T)\nMN = PR[0]\nOP = PR[1]\nIF MN IN ME.BRA:\n  TG = ME.LBL[OP]\n  D = TG - (PC + 2)\n  IF D < 0:\n    D = D + 256\n  RETURN CHR(ME.BRA[MN]) + CHR(D)\nR = ME.CLASS(OP=OP)\nM = R[0]\nV = R[1]\nOC = ME.OPC[MN][M]\nIF M == 0:\n  RETURN CHR(OC)\nIF M == 5 OR M == 6 OR M == 7:\n  RETURN CHR(OC) + CHR(V & 255) + CHR((V >> 8) & 255)\nRETURN CHR(OC) + CHR(V & 255)"
+>
+
+RETURN A

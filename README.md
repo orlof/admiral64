@@ -30,7 +30,8 @@ Admiral64 is a self-hosted environment that boots from a `.PRG` on disk and give
  - a gap-buffer text editor (`edit()`) for writing programs without leaving Admiral,
  - a 1541 floppy filesystem with object-graph `save()` / `load()`,
  - 32-bit signed integers (two's-complement, wraparound on overflow), 48-bit floats, lists, tuples, dicts, booleans, and `None`,
- - a mark-and-sweep garbage collector for the dynamic heap.
+ - a mark-and-sweep garbage collector for the dynamic heap,
+ - native 6510 extensions via `call()` — drop to machine code for inner loops (see [EXTENSIONS.md](EXTENSIONS.md)).
 
 Everything is written in 6510 assembly and assembles into one ~30 KB `admiral.prg`. There is no operating system underneath — Admiral *is* the operating system once it loads.
 
