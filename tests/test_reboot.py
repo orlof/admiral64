@@ -86,3 +86,56 @@ def test_reboot_truthy_int_selects_graphics(h):
 def test_reboot_zero_int_selects_text(h):
     h.mpu.memory[h.sym["GFX_CONFIG"]] = 1
     assert _reboot_via_eval(h, "REBOOT(0)") == 0
+
+
+# -----------------------------------------------------------------------------
+# _vic_toggle — the F8-handler swap routine. The IRQ buffer-scan that invokes
+# it can't run in py65 (no real IRQs), but the swap itself is just memory
+# writes and is fully exercisable: prime the VIC regs and the SAVED_* cells,
+# JSR _vic_toggle, assert.
+# -----------------------------------------------------------------------------
+
+def _set_vic(h, d018: int, d011: int, d016: int, dd00: int) -> None:
+    h.mpu.memory[0xD018] = d018
+    h.mpu.memory[0xD011] = d011
+    h.mpu.memory[0xD016] = d016
+    h.mpu.memory[0xDD00] = dd00
+
+
+def test_vic_toggle_text_to_gfx_uses_saved(h):
+    # Start in text mode ($D011 BMM clear). The SAVED_* cells were assembled
+    # with the hi-res defaults ($78/$3B/$C8/$00), so a toggle from here lands
+    # in mono hi-res; other $DD00 bits stay put.
+    _set_vic(h, 0x15, 0x1B, 0xC8, 0x97)
+    h.call("_vic_toggle")
+    assert h.mpu.memory[0xD018] == 0x78
+    assert h.mpu.memory[0xD011] == 0x3B
+    assert h.mpu.memory[0xD016] == 0xC8
+    assert (h.mpu.memory[0xDD00] & 0x03) == 0x00
+    assert (h.mpu.memory[0xDD00] & 0xFC) == 0x94
+
+
+def test_vic_toggle_gfx_to_text_saves_live_state(h):
+    # Pretend HIRES.SHOW just ran. A toggle captures those values into SAVED_*
+    # and writes text values to VIC.
+    _set_vic(h, 0x78, 0x3B, 0xC8, 0x94)
+    h.call("_vic_toggle")
+    assert h.mpu.memory[0xD018] == 0x15
+    assert h.mpu.memory[0xD011] == 0x1B
+    assert h.mpu.memory[0xD016] == 0xC8
+    assert (h.mpu.memory[0xDD00] & 0x03) == 0x03
+    assert h.mpu.memory[h.sym["SAVED_D018"]] == 0x78
+    assert h.mpu.memory[h.sym["SAVED_D011"]] == 0x3B
+    assert h.mpu.memory[h.sym["SAVED_D016"]] == 0xC8
+    assert h.mpu.memory[h.sym["SAVED_DD00_BANK"]] == 0x00
+
+
+def test_vic_toggle_round_trip_preserves_mc(h):
+    # MC mode: $D016 = $D8 (MCM set). Round-trip must restore MC, not hi-res.
+    _set_vic(h, 0x78, 0x3B, 0xD8, 0x94)
+    h.call("_vic_toggle")                          # gfx -> text
+    assert h.mpu.memory[0xD016] == 0xC8
+    assert h.mpu.memory[h.sym["SAVED_D016"]] == 0xD8
+    h.call("_vic_toggle")                          # text -> gfx
+    assert h.mpu.memory[0xD016] == 0xD8
+    assert (h.mpu.memory[0xDD00] & 0x03) == 0x00

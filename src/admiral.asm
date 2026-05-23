@@ -426,6 +426,29 @@ irq_handler:
     sta STOP_REQUESTED
 
     jsr KERNAL_SCNKEY                 // populate $0277 buffer for kbd_getchar
+
+    // F8 = "peek at the text REPL" toggle. KERNAL just decoded shift state and
+    // wrote PETSCII into the buffer at $0277-$0280 (count at $C6). If F8
+    // ($8C) is anywhere in the buffer, drop the whole buffer (F8 is consumed)
+    // and flip VIC between the live state and the saved state — see
+    // _vic_toggle below. Works from anywhere (REPL, mid-eval, mid-CALL)
+    // because we ride the existing 60 Hz IRQ.
+    ldx $C6
+    beq _irq_no_tg
+_irq_tg_scan:
+    dex
+    lda $0277,x
+    cmp #$8C
+    beq _irq_tg_hit
+    cpx #0
+    bne _irq_tg_scan
+    beq _irq_no_tg
+_irq_tg_hit:
+    lda #0
+    sta $C6
+    jsr _vic_toggle
+_irq_no_tg:
+
     lda $DC0D                         // ack CIA1 timer-A IRQ source
     pla
     sta $01                           // restore prev bank
@@ -435,6 +458,61 @@ irq_handler:
     tax
     pla
     rti
+
+// -----------------------------------------------------------------------------
+// _vic_toggle — swap VIC between live and saved state. Called from irq_handler
+// at $01=$36 (KERNAL+I/O on). If currently in a bitmap mode ($D011 BMM set),
+// captures the live VIC regs into SAVED_* and writes the text-mode values; if
+// currently in text, restores SAVED_* to the VIC regs. The cells are seeded
+// with the standard hi-res values, so a first toggle from a freshly booted
+// graphics config takes the user straight to hi-res. After any HIRES.SHOW or
+// MC.SHOW, the toggle round-trips correctly because the *current* registers
+// are captured on the way out.
+// -----------------------------------------------------------------------------
+_vic_toggle:
+    lda $D011
+    and #$20                          // BMM bit
+    beq _vt_to_gfx
+    // currently graphics → save state, switch to text
+    lda $D018
+    sta SAVED_D018
+    lda $D011
+    sta SAVED_D011
+    lda $D016
+    sta SAVED_D016
+    lda $DD00
+    and #$03
+    sta SAVED_DD00_BANK
+    lda #$15
+    sta $D018
+    lda #$1B
+    sta $D011
+    lda #$C8
+    sta $D016
+    lda $DD00
+    ora #$03
+    sta $DD00
+    rts
+_vt_to_gfx:
+    lda SAVED_D018
+    sta $D018
+    lda SAVED_D011
+    sta $D011
+    lda SAVED_D016
+    sta $D016
+    lda $DD00
+    and #$FC
+    ora SAVED_DD00_BANK
+    sta $DD00
+    rts
+
+// Cells assembled with default hi-res values so the first text→gfx toggle
+// after boot (or after the user has never SHOWN anything) lands in clean
+// mono hi-res. Subsequent toggles capture whatever mode was actually live.
+SAVED_D018:      .byte $78          // matrix $DC00, bitmap $E000
+SAVED_D011:      .byte $3B          // BMM+DEN+RSEL, yscroll 3
+SAVED_D016:      .byte $C8          // 40-col, MCM=0 (mono)
+SAVED_DD00_BANK: .byte $00          // CIA2 bank bits = bank 3
 
 // -----------------------------------------------------------------------------
 // nmi_handler — RESTORE key = pause + status banner. Press RESTORE once to
