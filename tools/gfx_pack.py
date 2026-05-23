@@ -20,45 +20,9 @@ EXAMPLES = os.path.join(ROOT, "examples")
 # (label, end-label) — end defaults to label + "_END".
 END = {"GFX_CLS": "GFX_CLS_END"}
 
-# DRAW is an Admiral-level Bresenham line that calls the native PLOT primitive
-# (high-level loop, native per-point plot). _PLOTCALL is the per-point call
-# (with the mode's extra args). Generated as a plain Admiral method body.
-def _draw_body(plotcall: str) -> str:
-    return "\n".join([
-        "TX = X1 - X0",
-        "IF TX < 0:",
-        "  DX = 0 - TX",
-        "  SX = 0 - 1",
-        "ELSE:",
-        "  DX = TX",
-        "  SX = 1",
-        "TY = Y1 - Y0",
-        "IF TY < 0:",
-        "  DY = TY",
-        "  SY = 0 - 1",
-        "ELSE:",
-        "  DY = 0 - TY",
-        "  SY = 1",
-        "ER = DX + DY",
-        "WHILE TRUE:",
-        "  " + plotcall,
-        "  IF X0 == X1:",
-        "    IF Y0 == Y1:",
-        "      BREAK",
-        "  E2 = ER + ER",
-        "  IF E2 >= DY:",
-        "    ER = ER + DY",
-        "    X0 = X0 + SX",
-        "  IF E2 <= DX:",
-        "    ER = ER + DX",
-        "    Y0 = Y0 + SY",
-    ])
-
-HIRES_DRAW = _draw_body("ME.PLOT(X=X0, Y=Y0)")
-MC_DRAW = _draw_body("ME.PLOT(X=X0, Y=Y0, INK=INK)")
-
 # Per output file: header comment, dict var, and the (method, code-label,
-# call-args) rows. code-label None means a pure Admiral method.
+# call-args) rows. All graphics primitives are native asm — line drawing in
+# Admiral-level code is far too slow for a 1 MHz 6510.
 FILES = {
     "text.admiral": dict(
         var="T",
@@ -93,8 +57,8 @@ FILES = {
         rows=[("SHOW", "MC_SHOW", ""),
               ("CLEAR", "GFX_CLS", ""),
               ("COLOR", "MC_COLOR", "C01, C10, C11"),
-              ("PLOT", "MC_PLOT", "X, Y, INK")],
-        extra=[("DRAW", MC_DRAW)],  # M.DRAW(X0=,Y0=,X1=,Y1=,INK=)
+              ("PLOT", "MC_PLOT", "X, Y, INK"),
+              ("DRAW", "MC_DRAW", "X0, Y0, X1, Y1, INK")],
     ),
 }
 
@@ -137,8 +101,6 @@ def gen(bytes_of):
             # methods from auto-printing the W0 return value.
             call = f"ME._{method}(" + args + ")\\nNONE"
             out.append(f'{var}["{method}"] = "{call}"')
-        for method, body in spec.get("extra", []):
-            out.append(f'{var}["{method}"] = "{body.replace(chr(10), chr(92) + "n")}"')
         out.append(f"RETURN {var}")
         out.append("")
         path = os.path.join(EXAMPLES, fname)

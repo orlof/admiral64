@@ -691,3 +691,365 @@ mc_set:
         sta (W0),y
         rts
 MC_PLOT_END:
+
+// ===== MC_DRAW(x0=W1, y0=W2, x1=W3, y1=B0:B1, ink=B2:B3): MC Bresenham line =
+// Port of xcb3 lib_gfx's DrawMC. Same dispatcher/relay structure as
+// HIRES_DRAW: the dispatcher picks x-major if dx >= dy, jumping to
+// mc_x_major via a backward indirect-JMP through DLOOP (the forward distance
+// is past relative-branch reach). The x-loop tail uses the same `jmp (DLOOP)`
+// trick for its backward loop since the body is also too large.
+//
+// Pixels are 2 bits wide; the mask walks $C0 -> $30 -> $0C -> $03 -> wrap as
+// x increases (right), or the reverse as x decreases (left). The lib_gfx
+// trick (`lsr B4; ror B4` / `asl B4; rol B4`) reduces to lsr/asl for the
+// three non-wrap cases and naturally detects the wrap via the carry chain.
+//
+// Scratch:
+//   W0 = current pixel-byte pointer
+//   W1 = dx (byte; MC x range 0..159 -> dx <= 159)
+//   W2 = count (byte)
+//   B0 = dy
+//   B1 = Xi ($00 right, $FF left)
+//   B2 = Yi ($00 down,  $FF up)
+//   B3 = pattern = ink * $55  (ink replicated across all 4 fields)
+//   B4 = current mask in {$C0, $30, $0C, $03}
+//   B5:B6 = saved load address (for the DLOOP rebinds in each axis)
+//   B7    = mask-and-pattern plot scratch
+//   DERR = 16-bit Bresenham error
+//   Y    = within-cell row (0..7)
+MC_DRAW:
+        // Save load address into B5:B6 for the in-routine recompute, set
+        // DLOOP = mc_x_major up front for the dispatcher relay.
+        lda W0
+        sta B5
+        lda W0+1
+        sta B6
+        clc
+        lda B5
+        adc #<(mc_x_major - MC_DRAW)
+        sta DLOOP
+        lda B6
+        adc #>(mc_x_major - MC_DRAW)
+        sta DLOOP+1
+
+        // Read args into ARG_* (reuses HIRES_DRAW's scratch cells).
+        ldy #0
+        lda (W1),y
+        sta ARG_X0
+        lda (W2),y
+        sta ARG_Y0
+        lda (W3),y
+        sta ARG_X1
+        lda (B0),y
+        sta ARG_Y1
+        lda (B2),y                   // ink
+        and #$03
+
+        // pattern = ink replicated 4 times = ink | ink<<2 | ink<<4 | ink<<6.
+        sta B3
+        asl
+        asl
+        ora B3
+        sta B3                       // bits 3-0 = ink:ink
+        asl
+        asl
+        asl
+        asl
+        ora B3
+        sta B3                       // bits 7-0 = ink:ink:ink:ink
+
+        // dx = |x1-x0|, Xi in {0, $FF}.
+        ldx #0
+        ldy #0
+        lda ARG_X1
+        sec
+        sbc ARG_X0
+        bcs mc_dx_pos
+        dex
+        eor #$FF
+        adc #1                       // C=0 here -> +1
+mc_dx_pos:
+        sta W1
+
+        lda ARG_Y1
+        sec
+        sbc ARG_Y0
+        bcs mc_dy_pos
+        dey
+        eor #$FF
+        adc #1
+mc_dy_pos:
+        sta B0
+
+        stx B1
+        sty B2
+
+        // Initial bitmap pointer W0, Y = y0 & 7, initial mask B4.
+        lda ARG_Y0
+        and #$07
+        tay
+        eor ARG_Y0                   // y0 & ~7 = charrow * 8
+        lsr
+        lsr                          // charrow * 2
+        tax
+
+        lda #0
+        sta W0+1                     // for the asl/rol carry chain
+        lda ARG_X0
+        and #$FC
+        asl                          // (x & ~3) * 2; C = old bit 7
+        rol W0+1                     // carry into W0+1
+        adc YTBL,x
+        sta W0
+        lda YTBL+1,x
+        adc W0+1
+        sta W0+1
+
+        // Initial mask = $C0 >> (2 * (x0 & 3)).
+        lda ARG_X0
+        and #$03
+        tax
+        lda #$C0
+mc_mk_loop:
+        cpx #0
+        beq mc_mk_done
+        lsr
+        lsr
+        dex
+        bne mc_mk_loop
+mc_mk_done:
+        sta B4
+
+        // Plot the first point.
+        and B3
+        sta B7
+        lda B4
+        eor #$FF
+        and (W0),y
+        ora B7
+        sta (W0),y
+
+        // Local relay (mc_x_major is past forward branch reach).
+        clv
+        bvc _mc_past_relay
+mc_x_relay:
+        jmp (DLOOP)
+_mc_past_relay:
+
+        // Pick major axis: x-major if dx >= dy.
+        lda W1
+        cmp B0
+        bcs mc_x_relay
+
+        // ===== y-major: count = dy, each step moves y; sometimes also x =====
+        // Body sits past relative-branch reach (~130 bytes); rebind DLOOP to
+        // mc_y_loop and JMP-indirect at the tail (same trick as mc_x_loop).
+        clc
+        lda B5
+        adc #<(mc_y_loop - MC_DRAW)
+        sta DLOOP
+        lda B6
+        adc #>(mc_y_loop - MC_DRAW)
+        sta DLOOP+1
+
+        lda B0
+        sta W2
+        lsr
+        sta DERR
+        lda #0
+        sta DERR+1
+
+mc_y_loop:
+        lda B2
+        bmi mc_y_up
+mc_y_down:
+        iny
+        cpy #8
+        bcc mc_y_err
+        ldy #0
+        lda W0
+        adc #$3F                     // C=1 from cpy #8 -> +$40
+        sta W0
+        lda W0+1
+        adc #1
+        bcc mc_y_base_hi
+mc_y_up:
+        dey
+        bpl mc_y_err
+        ldy #7
+        sec
+        lda W0
+        sbc #$40
+        sta W0
+        lda W0+1
+        sbc #1
+mc_y_base_hi:
+        sta W0+1
+
+mc_y_err:
+        // Same phantom-hi trick as HIRES_DRAW: err = byte; the test "err >= dy"
+        // is done as a byte add+sub keeping a 1-bit overflow flag in X.
+        ldx #0
+        lda DERR
+        clc
+        adc W1                       // err += dx
+        sta DERR
+        bcs mc_y_sub
+        inx
+        sec
+mc_y_sub:
+        sbc B0                       // tentative err - dy
+        bcs mc_y_step_x
+        dex
+        beq mc_y_plot
+mc_y_step_x:
+        sta DERR
+        lda B1
+        bmi mc_y_left
+mc_y_right:
+        lsr B4
+        ror B4
+        bcc mc_y_plot
+        ror B4
+        clc
+        lda W0
+        adc #8
+        sta W0
+        bcc mc_y_plot
+        inc W0+1
+        bne mc_y_plot
+mc_y_left:
+        asl B4
+        rol B4
+        bcc mc_y_plot
+        rol B4
+        sec
+        lda W0
+        sbc #8
+        sta W0
+        bcs mc_y_plot
+        dec W0+1
+
+mc_y_plot:
+        lda B4
+        and B3
+        sta B7
+        lda B4
+        eor #$FF
+        and (W0),y
+        ora B7
+        sta (W0),y
+
+        dec W2
+        beq mc_y_done
+        jmp (DLOOP)
+mc_y_done:
+        rts
+
+        // ===== x-major: count = dx, each step moves x; sometimes also y =====
+mc_x_major:
+        // DLOOP = base + (mc_x_loop - MC_DRAW). Base is in B5:B6.
+        clc
+        lda B5
+        adc #<(mc_x_loop - MC_DRAW)
+        sta DLOOP
+        lda B6
+        adc #>(mc_x_loop - MC_DRAW)
+        sta DLOOP+1
+
+        lda W1
+        sta W2
+        bne mc_x_have_count          // dx > 0 — proceed
+        rts                          // dx == 0 — first point already plotted
+mc_x_have_count:
+
+        lsr                          // err = dx / 2
+        sta DERR
+        lda #0
+        sta DERR+1
+
+mc_x_loop:
+        lda B1
+        bmi mc_x_left
+mc_x_right:
+        lsr B4
+        ror B4
+        bcc mc_x_err
+        ror B4
+        clc
+        lda W0
+        adc #8
+        sta W0
+        bcc mc_x_err
+        inc W0+1
+        bne mc_x_err
+mc_x_left:
+        asl B4
+        rol B4
+        bcc mc_x_err
+        rol B4
+        sec
+        lda W0
+        sbc #8
+        sta W0
+        bcs mc_x_err
+        dec W0+1
+
+mc_x_err:
+        // err += dy; if err >= dx, err -= dx and step y.  dx is byte (hi=0).
+        lda DERR
+        clc
+        adc B0
+        sta DERR
+        bcc mc_x_test
+        inc DERR+1
+mc_x_test:
+        sec
+        sbc W1                       // A still = DERR low
+        tax
+        lda DERR+1
+        sbc #0
+        bcc mc_x_plot
+        stx DERR
+        sta DERR+1
+        lda B2
+        bmi mc_x_up
+mc_x_down:
+        iny
+        cpy #8
+        bcc mc_x_plot
+        ldy #0
+        lda W0
+        adc #$3F
+        sta W0
+        lda W0+1
+        adc #1
+        bcc mc_x_base_hi
+mc_x_up:
+        dey
+        bpl mc_x_plot
+        ldy #7
+        lda W0
+        sbc #$40
+        sta W0
+        lda W0+1
+        sbc #1
+mc_x_base_hi:
+        sta W0+1
+
+mc_x_plot:
+        lda B4
+        and B3
+        sta B7
+        lda B4
+        eor #$FF
+        and (W0),y
+        ora B7
+        sta (W0),y
+
+        dec W2
+        beq mc_x_done
+        jmp (DLOOP)
+mc_x_done:
+        rts
+MC_DRAW_END:

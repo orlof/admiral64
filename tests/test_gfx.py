@@ -191,5 +191,60 @@ def test_hires_draw_fullscreen_diagonal(h):
 
 def test_mc_draw_horizontal(h):
     # (0..3, 0) ink 3 -> byte $E000 all four fields = $FF.
-    _run(h, MC + "\nM.SHOW()\nM.CLEAR()\nM.DRAW(X0=0, Y0=0, X1=3, Y1=0, INK=3)\n0", max_steps=80_000_000)
+    _run(h, MC + "\nM.SHOW()\nM.CLEAR()\nM.DRAW(X0=0, Y0=0, X1=3, Y1=0, INK=3)\n0")
     assert _byte(h, 0xE000) == 0xFF
+
+
+def test_mc_draw_diagonal(h):
+    # (0,0)(1,1)(2,2) ink 2 -> $E000 field0 ($80), $E001 field1 ($20), $E002 field2 ($08).
+    _run(h, MC + "\nM.SHOW()\nM.CLEAR()\nM.DRAW(X0=0, Y0=0, X1=2, Y1=2, INK=2)\n0")
+    assert _byte(h, 0xE000) == 0x80
+    assert _byte(h, 0xE001) == 0x20
+    assert _byte(h, 0xE002) == 0x08
+
+
+def test_mc_draw_vertical(h):
+    # Vertical at x=0, y=0..3, ink=1 -> $E000..$E003 each field0 ($40).
+    _run(h, MC + "\nM.SHOW()\nM.CLEAR()\nM.DRAW(X0=0, Y0=0, X1=0, Y1=3, INK=1)\n0")
+    for off in range(4):
+        assert _byte(h, 0xE000 + off) == 0x40, f"byte $E00{off}"
+
+
+def test_mc_draw_reversed(h):
+    # Reversed direction: (3,0)->(0,0) ink 3 -> same as forward.
+    _run(h, MC + "\nM.SHOW()\nM.CLEAR()\nM.DRAW(X0=3, Y0=0, X1=0, Y1=0, INK=3)\n0")
+    assert _byte(h, 0xE000) == 0xFF
+
+
+def test_mc_draw_long_horizontal_crosses_byte(h):
+    # 8-pixel horizontal at y=4 ink=3: spans bytes $E004 ($00 cell 0) and $E00C
+    # (cell 1), each becomes $FF.
+    _run(h, MC + "\nM.SHOW()\nM.CLEAR()\nM.DRAW(X0=0, Y0=4, X1=7, Y1=4, INK=3)\n0")
+    assert _byte(h, 0xE004) == 0xFF
+    assert _byte(h, 0xE00C) == 0xFF
+
+
+def test_mc_draw_crosses_charrow(h):
+    # (0,7)->(1,8) ink=3: jumps from char row 0 (byte $E007 field0=$C0) to
+    # char row 1 ((1,8) -> byte $E140, field1=$30).
+    _run(h, MC + "\nM.SHOW()\nM.CLEAR()\nM.DRAW(X0=0, Y0=7, X1=1, Y1=8, INK=3)\n0")
+    assert _byte(h, 0xE007) == 0xC0
+    assert _byte(h, 0xE140) == 0x30
+
+
+def test_mc_draw_high_x(h):
+    # Regression: x_mc range crosses the 128 boundary. Horizontal at y=0,
+    # x=120..159 ink=3 -> bytes $E0F0..$E138 all $FF (10 bytes, 4 px each).
+    _run(h, MC + "\nM.SHOW()\nM.CLEAR()\nM.DRAW(X0=120, Y0=0, X1=159, Y1=0, INK=3)\n0")
+    for off in (0xF0, 0xF8, 0x100, 0x108, 0x110, 0x118, 0x120, 0x128, 0x130, 0x138):
+        assert _byte(h, 0xE000 + off) == 0xFF, f"byte $E0{off:02X}"
+
+
+def test_mc_draw_fullscreen_diagonal(h):
+    # (0,0)->(159,199) ink=3 — biggest line case. Should terminate and plot
+    # both endpoints.
+    _run(h, MC + "\nM.SHOW()\nM.CLEAR()\nM.DRAW(X0=0, Y0=0, X1=159, Y1=199, INK=3)\n0", max_steps=20_000_000)
+    assert _byte(h, 0xE000) != 0                # (0,0) plotted (field 0)
+    # endpoint (159,199): charrow=24, y&7=7, x&3=3 -> byte ytbl[24]+($9C*2)+7
+    # ytbl[24] = $E000 + 24*$140 = $FE00; + (156*2)=$138; +7 = $FF3F.
+    assert _byte(h, 0xFF3F) & 0x03 != 0         # field 3 set somewhere in that byte
