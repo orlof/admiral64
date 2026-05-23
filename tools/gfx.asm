@@ -254,28 +254,32 @@ hd_dxpos:
 hd_dxdone:
 
         // --- DDY = -|y1-y0|, DSY in {+1,-1} ---
+        // Compute ty = y1-y0 as a 16-bit signed value first — y can be 0..199
+        // so |ty| can be up to 199, well past the signed-8-bit range. Doing
+        // this in a byte and reading bit 7 as the sign would say (e.g.)
+        // ty=$C7 is negative — wrong, that's +199.
         sec
         lda DY1
         sbc DY0
-        sta B5                   // ty = y1-y0 (signed byte)
-        bpl hd_typos
-        // ty < 0: DDY = ty (sign-extended), DSY = -1
         sta DDY
-        lda #$FF
+        lda #0
+        sbc #0                   // sign-extend the borrow into the high byte
         sta DDY+1
-        lda #$FF
-        sta DSY
-        bne hd_dydone
-hd_typos:
-        // ty >= 0: DDY = -ty (16-bit), DSY = +1
+        bmi hd_tyneg             // DDY's high byte: bit 7 = sign of ty
+        // ty >= 0: negate DDY to get -|ty|; DSY = +1
         sec
         lda #0
-        sbc B5
+        sbc DDY
         sta DDY
         lda #0
-        sbc #0
+        sbc DDY+1
         sta DDY+1
         lda #1
+        sta DSY
+        bne hd_dydone            // always (A=1)
+hd_tyneg:
+        // ty < 0: DDY already holds ty = -|ty|; DSY = -1
+        lda #$FF
         sta DSY
 hd_dydone:
 

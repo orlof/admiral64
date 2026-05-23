@@ -160,6 +160,17 @@ def test_hires_draw_crosses_charrow(h):
     assert _byte(h, 0xE140) == 0x40
 
 
+def test_hires_draw_fullscreen_diagonal(h):
+    # Regression: (0,0)->(319,199) used to hang. The DDY computation was
+    # treating y1-y0 as signed-byte, but for y up to 199 the diff exceeds 127
+    # and bit 7 wrongly read as the sign — DSY/DDY came out inverted, y
+    # under-ran, charrow indexed past the row table into DLOOP, JMP (DLOOP)
+    # jumped to a wild address.
+    _run(h, HIRES + "\nH.SHOW()\nH.CLEAR()\nH.DRAW(X0=0, Y0=0, X1=319, Y1=199)\n0", max_steps=30_000_000)
+    assert _byte(h, 0xE000) == 0x80                   # (0,0) plotted
+    assert _byte(h, 0xFF3F) != 0                      # last bitmap byte touched (endpoint area)
+
+
 def test_mc_draw_horizontal(h):
     # (0..3, 0) ink 3 -> byte $E000 all four fields = $FF.
     _run(h, MC + "\nM.SHOW()\nM.CLEAR()\nM.DRAW(X0=0, Y0=0, X1=3, Y1=0, INK=3)\n0", max_steps=80_000_000)
