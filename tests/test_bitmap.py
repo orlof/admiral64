@@ -1,11 +1,11 @@
-"""Tests for REBOOT(graphics_capable) + the dynamic heap ceiling.
+"""Tests for BITMAP(graphics_capable) + the dynamic heap ceiling.
 
-REBOOT warm-restarts into one of two memory configs by setting GFX_CONFIG and
+BITMAP warm-restarts into one of two memory configs by setting GFX_CONFIG and
 re-entering `boot`; boot's `_heap_apply` turns that into HEAP_TOP, which
 `alloc_init` uses as the handle-table ceiling. Two angles:
   - the heap-config selection (`_heap_apply` + `alloc_init`) lands NEXT_HANDLE
     at $FFF8 (text) or $DC00 (graphics);
-  - `builtin_reboot` maps its arg's truthiness to GFX_CONFIG, then JMPs to boot
+  - `builtin_bitmap` maps its arg's truthiness to GFX_CONFIG, then JMPs to boot
     (it never RTSes, so we run until PC reaches `boot` and inspect the flag).
 
 The VIC bitmap / banking itself is not testable in py65 (CPU+RAM only, no VIC,
@@ -45,9 +45,9 @@ def test_heap_top_word_set(h):
     assert h.read_word(h.sym["HEAP_TOP"]) == TEXT_CEIL
 
 
-def _reboot_via_eval(h, source: str) -> int:
-    """Evaluate `source` (a REBOOT(...) call); run until PC reaches boot and
-    return GFX_CONFIG. builtin_reboot JMPs to boot and never returns."""
+def _bitmap_via_eval(h, source: str) -> int:
+    """Evaluate `source` (a BITMAP(...) call); run until PC reaches boot and
+    return GFX_CONFIG. builtin_bitmap JMPs to boot and never returns."""
     payload = list(source.encode("ascii"))
     handle = h.alloc_str(len(payload))
     h.write_bytes(h.read_word(handle) + 2, payload)
@@ -65,27 +65,27 @@ def _reboot_via_eval(h, source: str) -> int:
         if h.mpu.pc == boot:
             return h.mpu.memory[h.sym["GFX_CONFIG"]]
         if h.mpu.pc == sentinel + 1:
-            raise AssertionError("parser_eval returned without rebooting")
+            raise AssertionError("parser_eval returned without bitmaping")
         h.mpu.step()
     raise TimeoutError("did not reach boot")
 
 
-def test_reboot_true_selects_graphics(h):
-    assert _reboot_via_eval(h, "REBOOT(TRUE)") == 1
+def test_bitmap_true_selects_graphics(h):
+    assert _bitmap_via_eval(h, "BITMAP(TRUE)") == 1
 
 
-def test_reboot_false_selects_text(h):
+def test_bitmap_false_selects_text(h):
     h.mpu.memory[h.sym["GFX_CONFIG"]] = 1   # prove it gets cleared
-    assert _reboot_via_eval(h, "REBOOT(FALSE)") == 0
+    assert _bitmap_via_eval(h, "BITMAP(FALSE)") == 0
 
 
-def test_reboot_truthy_int_selects_graphics(h):
-    assert _reboot_via_eval(h, "REBOOT(5)") == 1
+def test_bitmap_truthy_int_selects_graphics(h):
+    assert _bitmap_via_eval(h, "BITMAP(5)") == 1
 
 
-def test_reboot_zero_int_selects_text(h):
+def test_bitmap_zero_int_selects_text(h):
     h.mpu.memory[h.sym["GFX_CONFIG"]] = 1
-    assert _reboot_via_eval(h, "REBOOT(0)") == 0
+    assert _bitmap_via_eval(h, "BITMAP(0)") == 0
 
 
 # -----------------------------------------------------------------------------
