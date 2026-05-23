@@ -6,6 +6,14 @@ TOP     := admiral
 
 EXAMPLES_DIR := examples
 PACK         := tools/pack_str_record.py
+# pack_object.py serializes a .admiral file's RETURN value (a dict) via the
+# real admiral.prg in py65 so LOAD returns the object directly. Used for the
+# graphics-mode libraries; needs the .venv (py65) and the freshly built PRG.
+PACK_OBJ     := tools/pack_object.py
+VENV_PY      := .venv/bin/python3
+# Extensions packed as serialized objects (not source strings). Each must
+# correspond to an examples/<name>.admiral whose body ends with `RETURN <var>`.
+OBJECT_EXAMPLES := text hires mc
 # VICE's c1541 — install VICE and the binary is at this path on macOS.
 # Override with `make C1541=/path/to/c1541` for other locations.
 C1541        := /Applications/vice-arm64-gtk3-3.9/bin/c1541
@@ -37,9 +45,19 @@ $(PRG): $(SOURCES) | $(BUILD)
 	$(KICKASS) -odir $(BUILD) -vicesymbols $(SRC)/$(TOP).asm
 
 # Pack one .admiral source into a single-record TYPE_STR stream that
-# `LOAD("<name>")` deserializes into a callable/editable string.
+# `LOAD("<name>")` deserializes into a callable/editable string. The
+# explicit rules below override this for OBJECT_EXAMPLES.
 $(BUILD)/%.bin: $(EXAMPLES_DIR)/%.admiral $(PACK) | $(BUILD)
 	$(PYTHON) $(PACK) $< $@
+
+# Object-serialized extensions: run the source through admiral.prg in py65,
+# call SAVE on its RETURN value, capture the on-disk bytes. The user does
+# `LOAD("HIRES")` (no parens) and gets the dict directly.
+define OBJECT_RULE
+$$(BUILD)/$1.bin: $$(EXAMPLES_DIR)/$1.admiral $$(PACK_OBJ) $$(PRG) | $$(BUILD)
+	$$(VENV_PY) $$(PACK_OBJ) $$< $$@ $(shell echo $1 | tr a-z A-Z)
+endef
+$(foreach name,$(OBJECT_EXAMPLES),$(eval $(call OBJECT_RULE,$(name))))
 
 # Bundle admiral.prg + every examples/*.admiral (packed) into a fresh .d64
 # via VICE's c1541. `-format` creates a blank disk; subsequent `-write`
