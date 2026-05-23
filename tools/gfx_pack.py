@@ -131,7 +131,11 @@ def gen(bytes_of):
         for method, label, _ in spec["rows"]:
             out.append(f'{var}["_{method}"] = "{esc(bytes_of(label))}"')
         for method, label, args in spec["rows"]:
-            call = f"CALL(ME._{method}" + (", " + args if args else "") + ")"
+            # `\\nNONE` so the method evaluates to NONE rather than whatever
+            # garbage W0 held at the routine's RTS (zero-extended to an int by
+            # CALL). Without it, side-effect calls like H.CLEAR() auto-print a
+            # confusing return value at the REPL.
+            call = f"CALL(ME._{method}" + (", " + args if args else "") + ")\\nNONE"
             out.append(f'{var}["{method}"] = "{call}"')
         for method, body in spec.get("extra", []):
             out.append(f'{var}["{method}"] = "{body.replace(chr(10), chr(92) + "n")}"')
