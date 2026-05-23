@@ -22,6 +22,10 @@
 .const W1 = $12
 .const W2 = $14
 .const W3 = $16
+.const B0 = $18
+.const B1 = $19
+.const B2 = $1A
+.const B3 = $1B
 .const B4 = $1C
 .const B5 = $1D
 .const B6 = $1E
@@ -31,19 +35,14 @@
 .const MATRIX = $DC00
 .const YTBL   = $FF40
 
-// DRAW Bresenham scratch (absolute RAM, in the free $FF72-$FFF9 gap above the
-// row table). Touched only by DRAW; safe in the graphics memory config.
-.const DX0    = $FF72   // word — current x
-.const DY0    = $FF74   // byte — current y
-.const DX1    = $FF75   // word — end x
-.const DY1    = $FF77   // byte — end y
-.const DDX    = $FF78   // word, >= 0  — |x1-x0|
-.const DDY    = $FF7A   // word, <= 0  — -|y1-y0|
-.const DSX    = $FF7C   // word, signed (+1 / -1)
-.const DSY    = $FF7E   // byte, signed (+1 / -1)
-.const DERR   = $FF7F   // word, signed — Bresenham error
-.const DE2    = $FF81   // word, signed — 2*err per iteration
-.const DLOOP  = $FF83   // word — JMP-indirect target (= loop_top abs)
+// HIRES_DRAW scratch in the free $FF72+ gap (above the 50-byte row table).
+// We only need 8 bytes total: 6 for the args (read once at entry, then dead)
+// and 2 for the Bresenham error term (live across the loop).
+.const ARG_X0   = $FF72       // word
+.const ARG_Y0   = $FF74       // byte
+.const ARG_X1   = $FF75       // word
+.const ARG_Y1   = $FF77       // byte
+.const DERR     = $FF78       // word, signed
 
 * = $1000   // arbitrary; routines are position-independent
 
@@ -191,213 +190,305 @@ hp_set:
 HIRES_PLOT_END:
 
 // ===== HIRES_DRAW(x0=W0, y0=W1, x1=W2, y1=W3): Bresenham line ===============
-// Standard integer Bresenham with the inlined hi-res plot. The per-iteration
-// body is well over 127 bytes, so a backward branch can't reach the top — we
-// finish each iteration with JMP (DLOOP) (the only "JMP" PI code may use:
-// indirect through fixed RAM, not absolute into our own bytes). builtin_call
-// hands us our own load address in $FB:$FC, so DLOOP = $FB:$FC + (hd_loop -
-// HIRES_DRAW) is an assembly-time-known offset.
+// Port of xcb3 lib_gfx's `Draw` (single-buffer, set-mode-only). The original
+// is a count-driven Bresenham with two specialised loops (x-major and
+// y-major) and an incrementally-maintained bitmap pointer + bit mask — the
+// loop body is small enough that the tail's backward BNE reaches the top,
+// no JMP-indirect needed. The PI translation just drops the mode-SMC and
+// replaces the original's absolute jmps with branches / RTS.
+//
+// State (W0/W1/W2/B0..B3 = ZP, DERR = absolute RAM scratch):
+//   W0 (16-bit) = current bitmap pointer (cell-base; pixel byte = W0 + Y)
+//   W1 (16-bit) = dx = |x1-x0|
+//   W2 (16-bit) = loop count
+//   B0  = dy = |y1-y0|   (0..199 fits in a byte unsigned)
+//   B1  = Xi: $00 = right, $FF = left
+//   B2  = Yi: $00 = down,  $FF = up
+//   B3  = current bit mask within the cell byte
+//   DERR (16-bit) = Bresenham error term
+//   Y reg = current within-cell row (0..7)
 HIRES_DRAW:
-        clc
-        lda $FB
-        adc #<(hd_loop - HIRES_DRAW)
-        sta DLOOP
-        lda $FC
-        adc #>(hd_loop - HIRES_DRAW)
-        sta DLOOP+1
-
-        // --- read args ---
+        // --- read args into scratch (W0..W3 will be repurposed) ---
         ldy #0
         lda (W0),y
-        sta DX0
+        sta ARG_X0
         iny
         lda (W0),y
-        sta DX0+1
+        sta ARG_X0+1
         ldy #0
         lda (W1),y
-        sta DY0
+        sta ARG_Y0
         lda (W2),y
-        sta DX1
+        sta ARG_X1
         iny
         lda (W2),y
-        sta DX1+1
+        sta ARG_X1+1
         ldy #0
         lda (W3),y
-        sta DY1
+        sta ARG_Y1
 
-        // --- DDX = |x1-x0|, DSX in {+1,-1} ---
-        sec
-        lda DX1
-        sbc DX0
-        sta DDX
-        lda DX1+1
-        sbc DX0+1
-        sta DDX+1
-        bpl hd_dxpos
-        // negative: negate DDX, DSX = -1
-        sec
-        lda #0
-        sbc DDX
-        sta DDX
-        lda #0
-        sbc DDX+1
-        sta DDX+1
-        lda #$FF
-        sta DSX
-        sta DSX+1
-        bne hd_dxdone            // A=$FF -> always taken
-hd_dxpos:
-        lda #1
-        sta DSX
-        lda #0
-        sta DSX+1
-hd_dxdone:
+        // --- dx = |x1-x0|, Xi in {0,$FF}; dy = |y1-y0|, Yi in {0,$FF} ---
+        ldx #0                       // Xi default = right
+        ldy #0                       // Yi default = down
 
-        // --- DDY = -|y1-y0|, DSY in {+1,-1} ---
-        // Compute ty = y1-y0 as a 16-bit signed value first — y can be 0..199
-        // so |ty| can be up to 199, well past the signed-8-bit range. Doing
-        // this in a byte and reading bit 7 as the sign would say (e.g.)
-        // ty=$C7 is negative — wrong, that's +199.
+        lda ARG_X1                   // dx = x1 - x0 (16-bit)
         sec
-        lda DY1
-        sbc DY0
-        sta DDY
+        sbc ARG_X0
+        sta W1
+        lda ARG_X1+1
+        sbc ARG_X0+1
+        sta W1+1
+        bcs hd_dx_pos                // C=1 -> x1 >= x0 (unsigned) -> dx >= 0
+        dex                          // Xi = $FF (left)
+        lda #1                       // dx = abs(dx)  (carry-aware 2's-comp)
+        sbc W1
+        sta W1
         lda #0
-        sbc #0                   // sign-extend the borrow into the high byte
-        sta DDY+1
-        bmi hd_tyneg             // DDY's high byte: bit 7 = sign of ty
-        // ty >= 0: negate DDY to get -|ty|; DSY = +1
+        sbc W1+1
+        sta W1+1
+hd_dx_pos:
+
+        lda ARG_Y1                   // dy = y1 - y0 (byte unsigned via BCS)
         sec
-        lda #0
-        sbc DDY
-        sta DDY
-        lda #0
-        sbc DDY+1
-        sta DDY+1
-        lda #1
-        sta DSY
-        bne hd_dydone            // always (A=1)
-hd_tyneg:
-        // ty < 0: DDY already holds ty = -|ty|; DSY = -1
-        lda #$FF
-        sta DSY
-hd_dydone:
+        sbc ARG_Y0
+        bcs hd_dy_pos
+        dey                          // Yi = $FF (up)
+        eor #$FF                     // dy = abs(dy)
+        adc #1
+hd_dy_pos:
+        sta B0                       // B0 = dy
 
-        // --- DERR = DDX + DDY ---
-        clc
-        lda DDX
-        adc DDY
-        sta DERR
-        lda DDX+1
-        adc DDY+1
-        sta DERR+1
+        stx B1                       // B1 = Xi
+        sty B2                       // B2 = Yi
 
-hd_loop:
-        // --- inline plot(DX0, DY0) ---
-        lda DY0
+        // --- initial bitmap pointer in W0, Y = y0 & 7, mask in B3 ---
+        lda ARG_Y0
         and #$07
-        sta B5
-        lda DY0
+        tay                          // Y = within-cell row
+        eor ARG_Y0                   // A = y0 & ~7 = charrow * 8
         lsr
-        lsr
-        lsr
-        asl
+        lsr                          // A = charrow * 2 (byte offset into YTBL)
         tax
-        lda YTBL,x
-        sta $FB
+
+        clc                          // (LSR cleared C; explicit clc for clarity)
+        lda ARG_X0
+        and #$F8                     // x0_lo & ~7 (byte offset within row)
+        adc YTBL,x
+        sta W0
         lda YTBL+1,x
-        clc
-        adc DX0+1
-        sta $FC
-        lda DX0
-        and #$F8
-        ora B5
-        tay
-        lda DX0
+        adc ARG_X0+1                 // + x0_hi (carry from low add)
+        sta W0+1
+
+        lda ARG_X0
         and #$07
-        tax
+        tax                          // X = x0 & 7 (mask shift count)
         lda #$80
-hd_mk:
+hd_mk_loop:
         dex
-        bmi hd_mset
+        bmi hd_mk_done
         lsr
-        bpl hd_mk
-hd_mset:
-        ora ($FB),y
-        sta ($FB),y
+        bpl hd_mk_loop               // LSR clears N -> always taken
+hd_mk_done:
+        sta B3                       // B3 = mask
 
-        // --- termination: if DX0==DX1 && DY0==DY1, rts ---
-        lda DX0
-        cmp DX1
-        bne hd_more
-        lda DX0+1
-        cmp DX1+1
-        bne hd_more
-        lda DY0
-        cmp DY1
-        bne hd_more
+        // --- plot the first point ---
+        ora (W0),y                   // A still = mask
+        sta (W0),y
+
+        // --- choose major axis: x-major if dx >= dy (16-bit dx vs 8-bit dy) ---
+        lda W1+1
+        bne hd_x_major               // dx > 255 -> definitely x-major
+        lda W1
+        cmp B0
+        bcs hd_x_major               // dx_lo >= dy -> x-major
+
+        // ===== y-major: count = dy, each step moves y; sometimes also x =====
+        lda B0                       // single point already plotted (dx==0 here,
+        beq hd_done                  //   and dy==0 reaches us via x-major path)
+        sta W2                       // W2 = count = dy (byte; W2+1 ignored)
+        lsr
+        sta DERR                     // err = dy/2
+
+hd_y_loop:
+        lda B2                       // Yi
+        bmi hd_y_up
+hd_y_down:
+        iny
+        cpy #8
+        bcc hd_y_err                 // Y still 0..7, no cell crossing
+        ldy #0
+        lda W0
+        adc #$3F                     // C still 1 from cpy #8 -> +$40
+        sta W0
+        lda W0+1
+        adc #1                       // overall W0 += $0140 = +320 (next row)
+        bcc hd_y_base_hi             // (won't underflow within the bitmap)
+hd_y_up:
+        dey
+        bpl hd_y_err                 // Y still in 0..6, no cell crossing
+        ldy #7
+        sec
+        lda W0
+        sbc #$40
+        sta W0
+        lda W0+1
+        sbc #1                       // overall W0 -= $0140
+hd_y_base_hi:
+        sta W0+1
+
+hd_y_err:
+        // err += dx; if err >= dy, err -= dy and step x.
+        // X holds a "phantom high bit of err": 1 if the low add didn't carry
+        // (err_hi stays 0), 0 if it did (err_hi went to 1). After SBC dy of
+        // the low byte, DEX gives 0 in the no-carry-and-also-lo<dy case (skip
+        // step-x); $FF when lo carried but lo<dy after sbc (still step-x).
+        ldx #0
+        lda DERR
+        clc
+        adc W1                       // err_lo += dx_lo
+        sta DERR
+        bcs hd_y_sub
+        inx                          // no low-carry -> phantom hi = 1
+        sec                          // restore C for the next SBC
+hd_y_sub:
+        sbc B0                       // tentative err_lo - dy
+        bcs hd_y_step_x
+        dex
+        beq hd_y_plot                // no low-carry AND lo<dy -> skip step-x
+hd_y_step_x:
+        sta DERR                     // commit subtracted err_lo
+        lda B1                       // Xi
+        bmi hd_y_left
+hd_y_right:
+        lsr B3                       // mask >>= 1
+        bcc hd_y_plot
+        ror B3                       // mask wrapped -> $80 again
+        lda W0
+        adc #8                       // (C=0 after ROR with C=0)
+        sta W0
+        bcc hd_y_plot
+        inc W0+1
+        bne hd_y_plot                // BNE always (inc rarely lands on 0)
+hd_y_left:
+        asl B3                       // mask <<= 1
+        bcc hd_y_plot
+        rol B3                       // mask wrapped -> $01 again
+        lda W0
+        sbc #7                       // C=0 after ROL -> effective -8
+        sta W0
+        bcs hd_y_plot
+        dec W0+1
+
+hd_y_plot:
+        lda B3
+        ora (W0),y
+        sta (W0),y
+
+        dec W2
+        bne hd_y_loop
         rts
-hd_more:
 
-        // --- DE2 = 2 * DERR ---
-        lda DERR
-        asl
-        sta DE2
-        lda DERR+1
-        rol
-        sta DE2+1
+        // ===== x-major: count = dx (16-bit), each step moves x; sometimes y =====
+hd_x_major:
+        lda W1                       // count = dx
+        sta W2
+        lda W1+1
+        sta W2+1
+        ora W2
+        beq hd_done                  // dx == 0 -> single point (already plotted)
 
-        // --- if DE2 >= DDY (signed): DERR += DDY; DX0 += DSX ---
-        sec
-        lda DE2
-        sbc DDY
-        lda DE2+1
-        sbc DDY+1
-        bvc hd_cx_ok
-        eor #$80
-hd_cx_ok:
-        bmi hd_skip_x
-        clc
-        lda DERR
-        adc DDY
-        sta DERR
-        lda DERR+1
-        adc DDY+1
+        lda W1+1                     // err = dx / 2
+        lsr
         sta DERR+1
-        clc
-        lda DX0
-        adc DSX
-        sta DX0
-        lda DX0+1
-        adc DSX+1
-        sta DX0+1
-hd_skip_x:
-
-        // --- if DE2 <= DDX (signed): DERR += DDX; DY0 += DSY ---
-        // i.e. DDX - DE2 >= 0 (signed). If negative -> DE2 > DDX -> skip.
-        sec
-        lda DDX
-        sbc DE2
-        lda DDX+1
-        sbc DE2+1
-        bvc hd_cy_ok
-        eor #$80
-hd_cy_ok:
-        bmi hd_skip_y
-        clc
-        lda DERR
-        adc DDX
+        lda W1
+        ror
         sta DERR
-        lda DERR+1
-        adc DDX+1
-        sta DERR+1
-        lda DY0
-        clc
-        adc DSY
-        sta DY0
-hd_skip_y:
 
-        jmp (DLOOP)
+hd_x_loop:
+        lda B1                       // Xi
+        bmi hd_x_left
+hd_x_right:
+        lsr B3
+        bcc hd_x_err
+        ror B3
+        lda W0
+        adc #8
+        sta W0
+        bcc hd_x_err
+        inc W0+1
+        bne hd_x_err
+hd_x_left:
+        asl B3
+        bcc hd_x_err
+        rol B3
+        lda W0
+        sbc #7
+        sta W0
+        bcs hd_x_err
+        dec W0+1
+
+hd_x_err:
+        // err += dy (8-bit into 16-bit DERR)
+        lda DERR
+        clc
+        adc B0
+        sta DERR
+        bcc hd_x_test_dx
+        inc DERR+1
+hd_x_test_dx:
+        // if err >= dx, err -= dx and step y
+        sec
+        sbc W1                       // A still = DERR (sta doesn't change A)
+        tax
+        lda DERR+1
+        sbc W1+1
+        bcc hd_x_plot                // err < dx -> no y step
+        stx DERR
+        sta DERR+1
+        lda B2                       // Yi
+        bmi hd_x_up
+hd_x_down:
+        iny
+        cpy #8
+        bcc hd_x_plot
+        ldy #0
+        lda W0
+        adc #$3F
+        sta W0
+        lda W0+1
+        adc #1
+        bcc hd_x_base_hi
+hd_x_up:
+        dey
+        bpl hd_x_plot
+        ldy #7
+        lda W0
+        sbc #$40
+        sta W0
+        lda W0+1
+        sbc #1
+hd_x_base_hi:
+        sta W0+1
+
+hd_x_plot:
+        lda B3
+        ora (W0),y
+        sta (W0),y
+
+        // 16-bit dec count, exit when both bytes zero. (Works for count up to
+        // $01FF — our dx range tops at 319 = $013F, well within this.)
+        ldx W2
+        bne hd_x_dec_lo
+        dec W2+1
+        bne hd_done                  // hi went from 1 to 0 means lo wraps next iter
+hd_x_dec_lo:
+        dex
+        stx W2
+        bne hd_x_loop
+        ldx W2+1
+        bne hd_x_loop
+hd_done:
+        rts
 HIRES_DRAW_END:
 
 // ===== MC_SHOW: VIC -> multicolor bitmap mode (row table from REBOOT) ======
