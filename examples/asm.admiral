@@ -1,10 +1,10 @@
 # ASM - A MINIMAL TWO-PASS 6510 ASSEMBLER, WRITTEN IN ADMIRAL.
 #
-# TURNS ASSEMBLY TEXT INTO A BYTE STRING YOU CAN RUN WITH CALL():
+# TURNS ASSEMBLY TEXT INTO A TYPE_CODE VALUE YOU CAN CALL DIRECTLY:
 #
 #   A = LOAD("ASM")()
-#   CODE = A.GO(SRC="LDY #0\nLDA ($10),Y\nASL\nSTA $10\nLDA #0\nSTA $11\nRTS")
-#   PRINT CALL(CODE, 21)        -- 42  (doubles its int argument)
+#   CODE = A.GO(SRC="LDY #0\nLDA ($12),Y\nASL\nSTA $10\nLDA #0\nSTA $11\nRTS")
+#   PRINT CODE(21)              -- 42  (doubles its int argument; W1 = arg1)
 #
 # SYNTAX (DELIBERATELY SMALL):
 #   - ONE INSTRUCTION OR ONE "LABEL:" PER LINE; ";" STARTS A COMMENT.
@@ -61,7 +61,7 @@ A = <
   "LBL": <>,
 
   # GO(SRC) - assemble SRC, return the machine-code byte string.
-  "GO": "ME.LBL = <>\nFOR K, V IN ME.REG:\n  ME.LBL[K] = V\nLNS = SRC.SPLIT(CHR(10))\nPC = 0\nFOR LN IN LNS:\n  T = ME.TRIM(L=LN)\n  IF LEN(T) == 0:\n    PASS\n  ELIF ORD(T[LEN(T)-1]) == 58:\n    ME.LBL[T[0:LEN(T)-1]] = PC\n  ELSE:\n    PC = PC + ME.SIZE(T=T)\nOUT = \"\"\nPC = 0\nFOR LN IN LNS:\n  T = ME.TRIM(L=LN)\n  IF LEN(T) == 0:\n    PASS\n  ELIF ORD(T[LEN(T)-1]) == 58:\n    PASS\n  ELSE:\n    OUT = OUT + ME.EMIT(T=T, PC=PC)\n    PC = PC + ME.SIZE(T=T)\nRETURN OUT",
+  "GO": "ME.LBL = <>\nFOR K, V IN ME.REG:\n  ME.LBL[K] = V\nLNS = SRC.SPLIT(CHR(10))\nPC = 0\nFOR LN IN LNS:\n  T = ME.TRIM(L=LN)\n  IF LEN(T) == 0:\n    PASS\n  ELIF ORD(T[LEN(T)-1]) == 58:\n    ME.LBL[T[0:LEN(T)-1]] = PC\n  ELSE:\n    PC = PC + ME.SIZE(T=T)\nOUT = \"\"\nPC = 0\nFOR LN IN LNS:\n  T = ME.TRIM(L=LN)\n  IF LEN(T) == 0:\n    PASS\n  ELIF ORD(T[LEN(T)-1]) == 58:\n    PASS\n  ELSE:\n    OUT = OUT + ME.EMIT(T=T, PC=PC)\n    PC = PC + ME.SIZE(T=T)\nRETURN CODE(OUT)",
 
   # TRIM(L) - drop a ';' comment and surrounding spaces.
   "TRIM": "P = L.FIND(CHR(59))\nIF P >= 0:\n  L = L[0:P]\nI = 0\nWHILE I < LEN(L) AND ORD(L[I]) == 32:\n  I += 1\nJ = LEN(L)\nWHILE J > I AND ORD(L[J-1]) == 32:\n  J = J - 1\nRETURN L[I:J]",

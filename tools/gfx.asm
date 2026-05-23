@@ -43,6 +43,7 @@
 .const ARG_X1   = $FF75       // word
 .const ARG_Y1   = $FF77       // byte
 .const DERR     = $FF78       // word, signed
+.const DLOOP    = $FF7A       // word — HIRES_DRAW x-loop indirect-JMP target
 
 * = $1000   // arbitrary; routines are position-independent
 
@@ -109,26 +110,26 @@ gc_tail:
         rts
 GFX_CLS_END:
 
-// ===== HIRES_COLOR(fg=W0, bg=W1): fill matrix with (fg<<4)|bg ================
+// ===== HIRES_COLOR(fg=W1, bg=W2): fill matrix with (fg<<4)|bg ================
 HIRES_COLOR:
         ldy #0
-        lda (W0),y              // fg
+        lda (W1),y              // fg
         asl
         asl
         asl
         asl
-        sta W2
-        lda (W1),y              // bg
+        sta B4                  // B4 = fg<<4 (avoid clobbering W2 = bg arg)
+        lda (W2),y              // bg
         and #$0F
-        ora W2
-        sta W2                  // color byte
+        ora B4
+        sta B4                  // B4 = color byte
         lda #0
-        sta W0
+        sta W0                  // W0 (base) is no longer needed → reuse as ptr
         lda #>MATRIX
         sta W0+1
         ldx #3                  // 3 pages: $DC00-$DEFF
         ldy #0
-        lda W2
+        lda B4
 hc_pg:
         sta (W0),y
         iny
@@ -145,16 +146,16 @@ hc_tail:
         rts
 HIRES_COLOR_END:
 
-// ===== HIRES_PLOT(x=W0 16-bit, y=W1): set the pixel bit ======================
+// ===== HIRES_PLOT(x=W1 16-bit, y=W2): set the pixel bit ======================
 HIRES_PLOT:
         ldy #0
-        lda (W0),y              // x lo
+        lda (W1),y              // x lo
         sta B6
         iny
-        lda (W0),y              // x hi
+        lda (W1),y              // x hi
         sta B7
         ldy #0
-        lda (W1),y              // y
+        lda (W2),y              // y
         sta B4
         and #$07
         sta B5                  // y & 7
@@ -189,15 +190,13 @@ hp_set:
         rts
 HIRES_PLOT_END:
 
-// ===== HIRES_DRAW(x0=W0, y0=W1, x1=W2, y1=W3): Bresenham line ===============
-// Port of xcb3 lib_gfx's `Draw` (single-buffer, set-mode-only). The original
-// is a count-driven Bresenham with two specialised loops (x-major and
-// y-major) and an incrementally-maintained bitmap pointer + bit mask — the
-// loop body is small enough that the tail's backward BNE reaches the top,
-// no JMP-indirect needed. The PI translation just drops the mode-SMC and
-// replaces the original's absolute jmps with branches / RTS.
+// ===== HIRES_DRAW(x0=W1, y0=W2, x1=W3, y1=B0:B1): Bresenham line =============
+// Port of xcb3 lib_gfx's `Draw` (single-buffer, set-mode-only). Count-driven,
+// x-major / y-major split, incremental pointer — the body fits in backward-
+// branch range so no JMP-indirect / DLOOP cell is needed (and W0 — the code
+// base in the new ABI — is therefore free to repurpose as the bitmap ptr).
 //
-// State (W0/W1/W2/B0..B3 = ZP, DERR = absolute RAM scratch):
+// State (after args are read into scratch):
 //   W0 (16-bit) = current bitmap pointer (cell-base; pixel byte = W0 + Y)
 //   W1 (16-bit) = dx = |x1-x0|
 //   W2 (16-bit) = loop count
@@ -208,23 +207,39 @@ HIRES_PLOT_END:
 //   DERR (16-bit) = Bresenham error term
 //   Y reg = current within-cell row (0..7)
 HIRES_DRAW:
-        // --- read args into scratch (W0..W3 will be repurposed) ---
+        // W0 = our load address. The x-major loop body AND the dispatcher-to-
+        // hd_x_major distance both sit just past 127 bytes, so we use one
+        // DLOOP cell + JMP-indirect for both. Save the base in B5:B6 for the
+        // mid-routine recompute, and set DLOOP = hd_x_major up front.
+        lda W0
+        sta B5
+        lda W0+1
+        sta B6
+        clc
+        lda B5
+        adc #<(hd_x_major - HIRES_DRAW)
+        sta DLOOP
+        lda B6
+        adc #>(hd_x_major - HIRES_DRAW)
+        sta DLOOP+1
+
+        // --- read args into ARG_* scratch (then ZP regs are free to reuse) ---
         ldy #0
-        lda (W0),y
+        lda (W1),y                  // x0 lo
         sta ARG_X0
         iny
-        lda (W0),y
+        lda (W1),y                  // x0 hi
         sta ARG_X0+1
         ldy #0
-        lda (W1),y
+        lda (W2),y                  // y0
         sta ARG_Y0
-        lda (W2),y
+        lda (W3),y                  // x1 lo
         sta ARG_X1
         iny
-        lda (W2),y
+        lda (W3),y                  // x1 hi
         sta ARG_X1+1
         ldy #0
-        lda (W3),y
+        lda (B0),y                  // y1   (arg 4 → B0:B1 indirect)
         sta ARG_Y1
 
         // --- dx = |x1-x0|, Xi in {0,$FF}; dy = |y1-y0|, Yi in {0,$FF} ---
@@ -295,16 +310,25 @@ hd_mk_done:
         ora (W0),y                   // A still = mask
         sta (W0),y
 
+        // Local relay: hd_x_major is past the relative-branch reach, so the
+        // dispatch branches BACKWARD to this short JMP indirect (DLOOP holds
+        // hd_x_major's address at this point — set at entry).
+        clv
+        bvc _past_relay
+hd_x_relay:
+        jmp (DLOOP)
+_past_relay:
+
         // --- choose major axis: x-major if dx >= dy (16-bit dx vs 8-bit dy) ---
         lda W1+1
-        bne hd_x_major               // dx > 255 -> definitely x-major
+        bne hd_x_relay
         lda W1
         cmp B0
-        bcs hd_x_major               // dx_lo >= dy -> x-major
+        bcs hd_x_relay
 
         // ===== y-major: count = dy, each step moves y; sometimes also x =====
-        lda B0                       // single point already plotted (dx==0 here,
-        beq hd_done                  //   and dy==0 reaches us via x-major path)
+        // (dy == 0 can't reach here — that case took the bcs hd_x_major path.)
+        lda B0
         sta W2                       // W2 = count = dy (byte; W2+1 ignored)
         lsr
         sta DERR                     // err = dy/2
@@ -390,12 +414,24 @@ hd_y_plot:
 
         // ===== x-major: count = dx (16-bit), each step moves x; sometimes y =====
 hd_x_major:
+        // DLOOP = base + (hd_x_loop - HIRES_DRAW). The base was saved into
+        // B5:B6 at entry; W0 itself has been overwritten by the bitmap ptr.
+        clc
+        lda B5
+        adc #<(hd_x_loop - HIRES_DRAW)
+        sta DLOOP
+        lda B6
+        adc #>(hd_x_loop - HIRES_DRAW)
+        sta DLOOP+1
+
         lda W1                       // count = dx
         sta W2
         lda W1+1
         sta W2+1
         ora W2
-        beq hd_done                  // dx == 0 -> single point (already plotted)
+        bne _xm_have_count           // dx > 0 — proceed
+        rts                           // dx == 0 — single point (already plotted)
+_xm_have_count:
 
         lda W1+1                     // err = dx / 2
         lsr
@@ -484,9 +520,10 @@ hd_x_plot:
 hd_x_dec_lo:
         dex
         stx W2
-        bne hd_x_loop
-        ldx W2+1
-        bne hd_x_loop
+        txa
+        ora W2+1
+        beq hd_done
+        jmp (DLOOP)                  // body is past branch range; indirect JMP
 hd_done:
         rts
 HIRES_DRAW_END:
@@ -517,20 +554,20 @@ MC_SHOW:
         rts
 MC_SHOW_END:
 
-// ===== MC_COLOR(c01=W0, c10=W1, c11=W2): matrix nibbles + color RAM ==========
+// ===== MC_COLOR(c01=W1, c10=W2, c11=W3): matrix nibbles + color RAM ==========
 MC_COLOR:
         ldy #0
-        lda (W0),y              // c01
+        lda (W1),y              // c01
         asl
         asl
         asl
         asl
         sta B4
-        lda (W1),y              // c10
+        lda (W2),y              // c10
         and #$0F
         ora B4
         sta B4                  // matrix byte = (c01<<4)|c10
-        lda (W2),y              // c11
+        lda (W3),y              // c11
         and #$0F
         sta B5                  // color-RAM byte
         // fill matrix $DC00-$DFE7 (1000) with B4
@@ -582,14 +619,14 @@ mcc_ctail:
         rts
 MC_COLOR_END:
 
-// ===== MC_PLOT(x=W0 0..159, y=W1, ink=W2 0..3): set the 2-bit pixel ==========
+// ===== MC_PLOT(x=W1 0..159, y=W2, ink=W3 0..3): set the 2-bit pixel ==========
 MC_PLOT:
         ldy #0
-        lda (W0),y              // x (0..159)
+        lda (W1),y              // x (0..159)
         sta B6
-        lda (W1),y              // y
+        lda (W2),y              // y
         sta B4
-        lda (W2),y              // ink (0..3)
+        lda (W3),y              // ink (0..3)
         sta B7                  // save ink before Y is repurposed
         lda B4
         and #$07

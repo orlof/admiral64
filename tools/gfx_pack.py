@@ -129,13 +129,13 @@ def gen(bytes_of):
         var = spec["var"]
         out.append(f"{var} = <>")
         for method, label, _ in spec["rows"]:
-            out.append(f'{var}["_{method}"] = "{esc(bytes_of(label))}"')
+            # CODE(...) wraps the byte literal as TYPE_CODE so the slot is
+            # directly callable: ME._PLOT(X, Y) JSRs the payload.
+            out.append(f'{var}["_{method}"] = CODE("{esc(bytes_of(label))}")')
         for method, label, args in spec["rows"]:
-            # `\\nNONE` so the method evaluates to NONE rather than whatever
-            # garbage W0 held at the routine's RTS (zero-extended to an int by
-            # CALL). Without it, side-effect calls like H.CLEAR() auto-print a
-            # confusing return value at the REPL.
-            call = f"CALL(ME._{method}" + (", " + args if args else "") + ")\\nNONE"
+            # Direct call (no CALL builtin). `\\nNONE` keeps side-effect
+            # methods from auto-printing the W0 return value.
+            call = f"ME._{method}(" + args + ")\\nNONE"
             out.append(f'{var}["{method}"] = "{call}"')
         for method, body in spec.get("extra", []):
             out.append(f'{var}["{method}"] = "{body.replace(chr(10), chr(92) + "n")}"')

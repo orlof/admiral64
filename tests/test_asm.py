@@ -47,17 +47,18 @@ def _assemble_and_call(h, asm_text: str, *args: int) -> int:
     arglist = "".join(", " + str(a) for a in args)
     rv = _run(h, _ASM_LIB
               + '\nC = A.GO(SRC="' + asm_text + '")'
-              + '\nCALL(C' + arglist + ')')
+              + '\nC(' + arglist.lstrip(", ") + ')')
     lo = h.read_word(rv)                 # inline int: value = H_PTR | H_SIZE<<16
     hi = h.read_word(rv + 2)
     val = lo | (hi << 16)
     return val - 0x1_0000_0000 if val & 0x8000_0000 else val
 
 
-# Doubles its int argument: arg0 handle in W0 ($10); inline value low byte at
-# (W0),0.  LDY #0 ; LDA ($10),Y ; ASL ; STA $10 ; LDA #0 ; STA $11 ; RTS
-DOUBLE = r"LDY #0\nLDA ($10),Y\nASL\nSTA $10\nLDA #0\nSTA $11\nRTS"
-DOUBLE_BYTES = bytes([0xA0, 0x00, 0xB1, 0x10, 0x0A, 0x85, 0x10,
+# Doubles its int argument: arg1 handle now in W1 ($12) under the new
+# `code(args)` ABI (W0 holds the code's own load address). Inline value low
+# byte at (W1),0.  LDY #0 ; LDA ($12),Y ; ASL ; STA $10 ; LDA #0 ; STA $11 ; RTS
+DOUBLE = r"LDY #0\nLDA ($12),Y\nASL\nSTA $10\nLDA #0\nSTA $11\nRTS"
+DOUBLE_BYTES = bytes([0xA0, 0x00, 0xB1, 0x12, 0x0A, 0x85, 0x10,
                       0xA9, 0x00, 0x85, 0x11, 0x60])
 
 
