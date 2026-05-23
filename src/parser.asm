@@ -722,20 +722,38 @@ _swh_no_nl:
     cmp #TYPE_CTRL
     bne _swh_iterate                // not control → normal iteration
 
-    // CTRL sentinel — distinguish break vs continue by handle identity.
+    // CTRL sentinel — distinguish BREAK / CONTINUE / RETURN by handle identity.
+    // BREAK and CONTINUE are static singletons; anything else with TYPE_CTRL
+    // is a RETURN sentinel (wrapping a value with O_LEN=2) and must propagate
+    // up unchanged so the enclosing function call frame can unwrap it.
     lda RV
     cmp #<CTRL_BREAK
-    bne _swh_iterate                // not BREAK → must be CONTINUE → loop
+    bne _swh_check_continue
     lda RV+1
     cmp #>CTRL_BREAK
-    bne _swh_iterate
-
-    // CTRL_BREAK: pop save, exit.
+    bne _swh_check_continue
+    // CTRL_BREAK: pop save, exit loop, RV → NONE via _swh_done.
     jsr lexer_drop
     jmp _swh_done
 
+_swh_check_continue:
+    lda RV
+    cmp #<CTRL_CONTINUE
+    bne _swh_propagate
+    lda RV+1
+    cmp #>CTRL_CONTINUE
+    bne _swh_propagate
+    // CTRL_CONTINUE: rewind to cond, re-iterate.
+    jmp _swh_iterate
+
+_swh_propagate:
+    // RETURN (or any other unrecognised CTRL): drop the lexer save and exit
+    // with RV still holding the sentinel so it bubbles up.
+    jsr lexer_drop
+    jmp postamble
+
 _swh_iterate:
-    // Normal completion or CTRL_CONTINUE: rewind to cond, re-iterate.
+    // Normal completion: rewind to cond, re-iterate.
     jsr lexer_restore
     jmp _swh_loop
 
@@ -927,15 +945,33 @@ _sfor_bind:
     cmp #TYPE_CTRL
     bne _sfor_step
 
+    // Distinguish BREAK / CONTINUE / RETURN by handle identity. BREAK and
+    // CONTINUE are static singletons; anything else with TYPE_CTRL is a
+    // RETURN sentinel that must propagate up unchanged.
     lda RV
     cmp #<CTRL_BREAK
-    bne _sfor_step                  // CTRL_CONTINUE → just step
+    bne _sfor_check_continue
     lda RV+1
     cmp #>CTRL_BREAK
-    bne _sfor_step
-
-    // CTRL_BREAK: exit.
+    bne _sfor_check_continue
+    // CTRL_BREAK: exit loop normally.
     jmp _sfor_done
+
+_sfor_check_continue:
+    lda RV
+    cmp #<CTRL_CONTINUE
+    bne _sfor_propagate
+    lda RV+1
+    cmp #>CTRL_CONTINUE
+    bne _sfor_propagate
+    // CTRL_CONTINUE: step to next iter.
+    jmp _sfor_step
+
+_sfor_propagate:
+    // RETURN (or any other unrecognised CTRL): drop the lexer save and exit
+    // with RV still holding the sentinel.
+    jsr lexer_drop
+    jmp postamble
 
 _sfor_step:
     inc B5
