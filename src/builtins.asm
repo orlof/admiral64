@@ -53,24 +53,28 @@
 // =============================================================================
 builtin_len:
     jsr preamble_call_1_1_w0
+    // Type-guard before the deref: TYPE_INT / TYPE_FLOAT / TYPE_BOOL / TYPE_NONE
+    // are not heap-allocated payloads, so dereferencing one (H_PTR is the
+    // inline value, not a heap pointer) reads garbage. Panic instead.
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_INT
+    beq _blen_panic
+    cmp #TYPE_FLOAT
+    beq _blen_panic
+    cmp #TYPE_BOOL
+    beq _blen_panic
+    cmp #TYPE_NONE
+    beq _blen_panic
     jsr deref_W0_to_W2           // A:X = O_LEN word
-    sta B0
-    stx B1
-    // High byte zero AND low byte < 128 → 1-byte int.
-    cpx #0
-    bne _blen_2byte
-    cmp #$80
-    bcs _blen_2byte
-    jmp postamble_set_rv_int_b0
-_blen_2byte:
-    lda B0                       // 16-bit length → inline int (hi16 = 0)
     sta W2
-    lda B1
-    sta W2+1
+    stx W2+1
     lda #0
     sta W3
     sta W3+1
     jmp postamble_set_rv_int32
+_blen_panic:
+    jmp panic_type
 
 // =============================================================================
 // builtin_range — Python-style range, bignum-aware.
@@ -1773,18 +1777,18 @@ builtin_poke:
     tay                                 // X = Y = arity for strict preamble_call
     jsr _preamble_call                  // B7 = argc (1 = peek, 2 = poke)
 
+    // Address from inline-int handle bytes: H_PTR (offsets 0,1) holds the
+    // low 16 bits of the value. Going through deref_W0_to_W2 would chase
+    // H_PTR as if it were a heap pointer and read garbage at that address,
+    // so we read the address bytes directly here.
     arg_get(0, W0)
-    jsr deref_W0_to_W2                  // A = addr len, Y = O_LEN = 0 at exit
-    tax                                 // X = len
-    sty W1+1                            // default addr hi = 0 (Y still 0)
-    lda (W2),y
+    ldy #0
+    lda (W0),y
     sta W1
-    dex
-    beq !lo+
     iny
-    lda (W2),y
+    lda (W0),y
     sta W1+1
-!lo:
+
     dec B7                              // 1 (peek) → 0; 2 (poke) → 1
     bne _bpkp_poke
 
