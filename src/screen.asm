@@ -123,16 +123,14 @@ screen_hide_cursor:
 // screen_put_char — write one PETSCII char to the screen at the cursor,
 // advance cursor, scroll if we fall off the bottom.
 //   in:  A = PETSCII byte
-//   clobbers: A, X, Y. (W2, W3, GC_DEST clobbered if a scroll happens.)
+//   clobbers: A, X, Y. (W2 clobbered; GC_DEST clobbered if a scroll happens.)
 //
-// Brackets its body with `inc $01` / `dec $01` (MEM_NORMAL → MEM_IO and
-// back) so the color-RAM write at COLOR_BASE lands in I/O. SCREEN_BASE
-// at $0400 is plain RAM regardless of $01, so the screen-RAM write doesn't
-// strictly need the bracket — but it's cheaper to bracket the whole body
-// once than to flip mid-routine. Every exit path funnels through scr_done.
+// Writes screen RAM only — does NOT touch color RAM. The color of each cell
+// stays whatever it was (initialized to COLOR_FG by screen_init at boot, and
+// then under the user's control via MC.COLOR / direct POKE). SCREEN_BASE at
+// $0400 is plain RAM regardless of $01, so no banking flip is needed.
 // -----------------------------------------------------------------------------
 screen_put_char:
-    inc $01                          // $34 → $35 (I/O in)
     // Handle control chars first. $0D (carriage return) is the only one now.
     cmp #$0D
     bne scr_not_nl
@@ -146,24 +144,10 @@ scr_not_nl:
     pha
 
     // W2 = SCREEN_BASE + row*40 + col.
-    // W3 = COLOR_BASE  + row*40 + col (shares low byte with W2; high byte
-    // differs by ($D8 - $04) = $D4).
     jsr scr_row_offset_to_w2
-    // W2 is now SCREEN_BASE + row*40.
     ldy SCREEN_COL
     pla                              // recover screen code
     sta (W2),y                       // write to screen RAM
-    // Also write color (same offset, different base). Compose pointer inline.
-    lda W2
-    sta W3
-    lda W2+1
-    clc
-    adc #>(COLOR_BASE - SCREEN_BASE)  // $D4 — note parens: KickAss's `>`
-                                      // binds looser than `-`, so the
-                                      // unparenthesized form yields $D7.
-    sta W3+1
-    lda #COLOR_FG
-    sta (W3),y
 
     // Advance cursor.
     inc SCREEN_COL
@@ -183,7 +167,6 @@ scr_newline:
     lda #SCREEN_ROWS - 1
     sta SCREEN_ROW
 scr_done:
-    dec $01                          // $35 → $34 (I/O out)
     rts
 
 // -----------------------------------------------------------------------------

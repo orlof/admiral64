@@ -1668,7 +1668,8 @@ _bhex_emit_digit:
 //   col, row : INTs in [0, SCREEN_COLS) / [0, SCREEN_ROWS).
 //   ch       : 1-char TYPE_STR (PETSCII).
 // PETSCII is translated to a screen code via the same rule as
-// screen_put_char. Color RAM at the same position is set to COLOR_FG.
+// screen_put_char. Color RAM is left untouched — call MC.COLOR or POKE
+// $D800+ explicitly to change a cell's color.
 // Returns None. Out-of-range / wrong types → return None silently (Admiral
 // `built_in_win_set` parity, builtin.dasm16:831).
 // =============================================================================
@@ -1707,16 +1708,6 @@ builtin_wset:
     ldy B0
     lda B2
     sta (W2),y
-
-    // Color cell at COLOR_BASE + row*40 + col (same low byte as W2).
-    lda W2
-    sta W3
-    lda W2+1
-    clc
-    adc #>(COLOR_BASE - SCREEN_BASE)   // $D4 — see screen.asm for parens note
-    sta W3+1
-    lda #COLOR_FG
-    sta (W3),y
 
 _bws_done:
     jmp postamble_return_none

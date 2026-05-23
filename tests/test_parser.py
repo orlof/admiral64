@@ -4321,17 +4321,15 @@ def test_wset_translates_uppercase_letter(h):
     assert h.mpu.memory[SCREEN_BASE] == 0x1A
 
 
-def test_wset_writes_color_ram(h):
-    """wset paints COLOR_FG into the matching color cell."""
+def test_wset_does_not_touch_color_ram(h):
+    """WSET writes screen RAM only — color is left under user control."""
     color_addr = COLOR_BASE + 3 * SCREEN_COLS + 5
     screen_addr = SCREEN_BASE + 3 * SCREEN_COLS + 5
-    h.mpu.memory[color_addr] = 0x00
+    h.mpu.memory[color_addr] = 0x02                   # red sentinel
     h.mpu.memory[screen_addr] = 0x00
     _eval_no_result(h, 'WSET(5, 3, "X")')
-    # Confirm screen wrote (sanity check).
     assert h.mpu.memory[screen_addr] == 0x18, "screen RAM should hold $18 (X)"
-    # Now color.
-    assert h.mpu.memory[color_addr] == 0x0D  # COLOR_FG
+    assert h.mpu.memory[color_addr] == 0x02, "color RAM should be unchanged"
 
 
 def test_wset_oob_col_no_op(h):

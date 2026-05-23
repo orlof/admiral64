@@ -91,9 +91,12 @@ def test_screen_clear_leaves_color_ram_alone(h):
 
 def test_put_char_petscii_digit_is_identity(h):
     h.call("screen_init")
-    h.call("screen_put_char", a=ord("3"))  # PETSCII $33
+    # Seed an unusual color and confirm put_char leaves it alone — REPL output
+    # writes screen RAM only, color is whatever the user / MC.COLOR / boot set.
+    h.mpu.memory[_color_offset(0, 0)] = 0x07          # yellow
+    h.call("screen_put_char", a=ord("3"))             # PETSCII $33
     assert h.mpu.memory[_screen_offset(0, 0)] == 0x33
-    assert h.mpu.memory[_color_offset(0, 0)] == COLOR_FG
+    assert h.mpu.memory[_color_offset(0, 0)] == 0x07  # unchanged
     assert h.mpu.memory[SCREEN_COL_ZP] == 1
     assert h.mpu.memory[SCREEN_ROW_ZP] == 0
 
