@@ -118,6 +118,24 @@ def test_mc_plot_sets_2bit_field(h):
     assert _byte(h, 0xE008) == 0xC0
 
 
+def test_mc_plot_high_x_addresses_correctly(h):
+    # Regression: x_mc >= 128 used to write to the wrong row. The byte offset
+    # within a row is (x & $FC) * 2, which exceeds 255 once x >= 128 — earlier
+    # MC_PLOT computed it via `lsr;lsr;asl;asl;asl` and lost the carry, writing
+    # to $E000 instead of $E100. Now: x_mc=128, y=0 -> byte $E000+(128/4)*8 =
+    # $E100, field 0 (shift 6) -> ink 3 lands as $C0.
+    _run(h, MC + "\nM.SHOW()\nM.CLEAR()\nM.PLOT(X=128, Y=0, INK=3)\n0")
+    assert _byte(h, 0xE100) == 0xC0
+    assert _byte(h, 0xE000) == 0x00          # must NOT have been touched
+
+
+def test_mc_plot_far_corner(h):
+    # x=156 (the last 4-column at byte_addr $E000 + (156/4)*8 = $E138; the very
+    # last full MC byte on the top char-row).
+    _run(h, MC + "\nM.SHOW()\nM.CLEAR()\nM.PLOT(X=156, Y=0, INK=3)\n0")
+    assert _byte(h, 0xE138) == 0xC0
+
+
 def test_hires_draw_horizontal(h):
     # (0..3, 0) -> byte $E000, bits 7,6,5,4 -> $F0.
     _run(h, HIRES + "\nH.SHOW()\nH.CLEAR()\nH.DRAW(X0=0, Y0=0, X1=3, Y1=0)\n0", max_steps=80_000_000)

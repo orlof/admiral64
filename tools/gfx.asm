@@ -620,51 +620,71 @@ mcc_ctail:
 MC_COLOR_END:
 
 // ===== MC_PLOT(x=W1 0..159, y=W2, ink=W3 0..3): set the 2-bit pixel ==========
+// Port of xcb3 lib_gfx's PlotMC. Byte addressing uses the same `asl; rol W0+1`
+// carry trick as the hi-res routines so x_mc >= 128 doesn't lose the high
+// byte. Mask + pattern are computed inline (no fixed tables in RAM).
+//
+//   byte_addr  = YTBL[charrow] + (x & $FC) * 2
+//   Y register = y & 7                       (within-cell row)
+//   pixel bit-field = bits at position (3 - (x & 3)) * 2 within the byte
 MC_PLOT:
+        // Read args.
         ldy #0
-        lda (W1),y              // x (0..159)
+        lda (W1),y              // x_mc (0..159)
         sta B6
-        lda (W2),y              // y
+        lda (W2),y              // y    (0..199)
         sta B4
-        lda (W3),y              // ink (0..3)
-        sta B7                  // save ink before Y is repurposed
+        lda (W3),y              // ink  (0..3)
+        sta B7
+
+        // Y = y & 7 (within-cell row).
         lda B4
         and #$07
-        sta B5                  // y & 7
+        tay
+        sta B5                  // save for the charrow calc
+
+        // X = charrow * 2 (word offset into YTBL).
         lda B4
-        lsr
-        lsr
-        lsr                     // charrow
-        asl
+        eor B5                  // y & ~7 = charrow * 8
+        lsr                     // charrow * 4
+        lsr                     // charrow * 2
         tax
-        lda YTBL,x
+
+        // W0 = YTBL[charrow] + (x & $FC) * 2 — the column byte offset within
+        // the row is up to 320, so we asl into a fresh W0+1 to capture the
+        // carry, then chain the row-base add.
+        lda #0
+        sta W0+1
+        lda B6
+        and #$FC
+        asl                     // (x & $FC) * 2, low byte; C = carry
+        rol W0+1                // shift carry into W0+1 bit 0
+        adc YTBL,x              // + row base low
         sta W0
         lda YTBL+1,x
-        sta W0+1                // x<256 -> no hi carry
-        lda B6                  // Y = (x>>2)*8 + (y&7)
-        lsr
-        lsr                     // x>>2 (0..39)
-        asl
-        asl
-        asl                     // *8
-        ora B5
-        tay
-        lda B6                  // shift = (3 - (x&3)) * 2  (0,2,4,6)
+        adc W0+1                // + row base high + previous carry
+        sta W0+1
+
+        // Shift count = (3 - (x & 3)) * 2 in {0, 2, 4, 6}.
+        lda B6
         and #$03
         eor #$03
         asl
         tax
-        lda #$03                // field mask (2 bits) -> B6; ink -> B7, shifted
+
+        // B6 = field mask (3 << shift), B7 = ink << shift. Both start at the
+        // low end and shift left together.
+        lda #$03
         sta B6
-mp_sh:
+mc_sh:
         cpx #0
-        beq mp_set
+        beq mc_set
         asl B7
         asl B6
         dex
-        bne mp_sh
-mp_set:
-        lda B6                  // ~fieldmask
+        bne mc_sh
+mc_set:
+        lda B6
         eor #$FF
         and (W0),y              // clear the 2-bit field
         ora B7                  // set ink<<shift
