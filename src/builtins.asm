@@ -2662,7 +2662,20 @@ _bedit_cancel:
     jsr screen_clear
     lda B7
     beq _bedit_cancel_empty
-    jmp postamble_arg0_rv
+    // postamble_arg0_rv reads through W3 which preamble_call set to the
+    // args tuple payload — but the editor loop has clobbered W3 by now.
+    // Re-deref the args tuple from RS (depth 1; depth 0 is the editor's
+    // buffer handle pushed at start of builtin_edit) and pluck slot 0
+    // straight into RV.
+    rs_peek_at(W0, 1)
+    jsr deref_W0_to_W2                 // W2 = tuple data after O_HEADER (slot 0)
+    ldy #0
+    lda (W2),y
+    sta RV
+    iny
+    lda (W2),y
+    sta RV+1
+    jmp postamble
 _bedit_cancel_empty:
     lda #0
     sta ALLOC_SIZE
