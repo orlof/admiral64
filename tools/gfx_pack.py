@@ -97,9 +97,10 @@ def gen(bytes_of):
             # directly callable: ME._PLOT(X, Y) JSRs the payload.
             out.append(f'{var}["_{method}"] = CODE("{esc(bytes_of(label))}")')
         for method, label, args in spec["rows"]:
-            # Direct call (no CALL builtin). `\\nNONE` keeps side-effect
-            # methods from auto-printing the W0 return value.
-            call = f"ME._{method}(" + args + ")\\nNONE"
+            # Direct call (no CALL builtin). `RETURN NONE` after the primitive
+            # keeps side-effect methods from auto-printing the W0 return value
+            # AND renders nicely when the wrapper itself is auto-printed.
+            call = f"ME._{method}(" + args + ")\\nRETURN NONE"
             out.append(f'{var}["{method}"] = "{call}"')
         out.append(f"RETURN {var}")
         out.append("")

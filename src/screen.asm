@@ -131,9 +131,13 @@ screen_hide_cursor:
 // $0400 is plain RAM regardless of $01, so no banking flip is needed.
 // -----------------------------------------------------------------------------
 screen_put_char:
-    // Handle control chars first. $0D (carriage return) is the only one now.
+    // Control chars: both $0D (CR) and $0A (LF) trigger a newline so embedded
+    // \n in strings renders as a line break, not as a glyph.
     cmp #$0D
+    beq _scr_jmp_nl
+    cmp #$0A
     bne scr_not_nl
+_scr_jmp_nl:
     jmp scr_newline
 scr_not_nl:
 

@@ -147,6 +147,17 @@ def test_put_char_cr_at_col0_still_advances_row(h):
     assert h.mpu.memory[SCREEN_COL_ZP] == 0
 
 
+def test_put_char_lf_also_newlines(h):
+    """LF ($0A) triggers a newline just like CR — embedded \\n in printed
+    strings renders as a real line break, not a stray glyph."""
+    h.call("screen_init")
+    h.call("screen_put_char", a=ord("X"))     # (0, 0); cursor advances to (0, 1)
+    h.call("screen_put_char", a=0x0A)         # LF
+    assert h.mpu.memory[SCREEN_ROW_ZP] == 1
+    assert h.mpu.memory[SCREEN_COL_ZP] == 0
+    assert h.mpu.memory[_screen_offset(0, 1)] == 0x20  # LF didn't print a glyph
+
+
 # --- scrolling ---------------------------------------------------------------
 
 def _fill_row(h, row: int, petscii_char: int):
