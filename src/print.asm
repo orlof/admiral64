@@ -167,51 +167,10 @@ print_value:
     rs_push(RV)
     jmp _print_str_post
 !not_float:
-    cmp #TYPE_CODE
-    bne !not_code+
-    // TYPE_CODE renders as "<code 0xLLLL>" where LLLL is O_LEN. Print the
-    // "<code 0x" prefix via print_str, then 4 hex digits via _err_nibble,
-    // then the closing ">". Direct char emit — no allocation.
-    rs_peek(W0)
-    ldy #H_PTR
-    lda (W0),y
-    sta W2
-    iny
-    lda (W0),y
-    sta W2+1
-    ldy #O_LEN+1
-    lda (W2),y
-    sta B5                            // length hi byte
-    dey
-    lda (W2),y
-    sta B4                            // length lo byte
-    rs_push_const(STR_CODE_PREFIX)
-    jsr print_str
-    lda B5
-    lsr
-    lsr
-    lsr
-    lsr
-    jsr _err_nibble
-    lda B5
-    and #$0F
-    jsr _err_nibble
-    lda B4
-    lsr
-    lsr
-    lsr
-    lsr
-    jsr _err_nibble
-    lda B4
-    and #$0F
-    jsr _err_nibble
-    lda #$3E                          // ">"
-    jsr screen_put_char
-    jmp postamble
-!not_code:
-    // Anything else (LIST, TUPLE, DICT) — render via builtin_str then print
-    // the resulting STR. _str_w0 (in builtins.asm) handles the v2-convention
-    // tuple wrapping and leaves RS unchanged net; RV = the rendered STR.
+    // Anything else (LIST / TUPLE / DICT / CODE) — render via builtin_str then
+    // print the resulting STR. _str_w0 (in builtins.asm) handles the v2-
+    // convention tuple wrapping and leaves RS unchanged net; RV = the
+    // rendered STR. (TYPE_CODE renders as "<code>" via STR_CODE.)
     rs_peek(W0)
     jsr _str_w0
     rs_push(RV)

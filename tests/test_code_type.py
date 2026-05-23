@@ -79,3 +79,32 @@ def test_code_call_propagates_base_in_w0(h):
     code = "\\xA0\\x00\\xB1\\x10\\x85\\x10\\xA9\\x00\\x85\\x11\\x60"
     src = f'F = CODE("{code}")\nF()'
     assert _eval_int(h, src) == 0xA0    # first byte = LDY opcode
+
+
+def _eval_str_bytes(h, src: str, max_steps: int = 3_000_000) -> bytes:
+    payload = list(src.encode("ascii"))
+    handle = h.alloc_str(len(payload))
+    h.write_bytes(h.read_word(handle) + 2, payload)
+    h.rs_push(handle)
+    h.call("parser_eval", max_steps=max_steps)
+    rv = h.read_word(h.read_word(0x0E))   # RV → handle → H_PTR
+    length = h.read_word(rv)
+    return bytes(h.mpu.memory[rv + 2: rv + 2 + length])
+
+
+def test_str_of_code_returns_static(h):
+    # STR(code) returns the fixed "<code>" (uppercase PETSCII).
+    src = 'STR(CODE("\\x60"))'
+    out = _eval_str_bytes(h, src)
+    assert out == b"<CODE>"
+
+
+def test_print_dict_with_code_doesnt_panic(h):
+    # Dict containing a TYPE_CODE value used to panic ERR_TYPE because _str_w0
+    # didn't know TYPE_CODE; render is via the new STR_CODE static fall-through.
+    src = ('D = <>\n'
+           'D["F"] = CODE("\\x60")\n'
+           'STR(D)')
+    out = _eval_str_bytes(h, src)
+    assert b"<CODE>" in out
+    assert b"'F'" in out or b'"F"' in out or b"F" in out

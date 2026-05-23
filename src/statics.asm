@@ -199,17 +199,18 @@ STR_NONE_OBJ:
     .word 4
     .byte $4E, $4F, $4E, $45  // "NONE"
 
-// Prefix for print_value's TYPE_CODE rendering: "<code 0x" — the four hex
-// digits of O_LEN and the closing ">" are appended at print time.
-STR_CODE_PREFIX:
-    .word STR_CODE_PREFIX_OBJ
-    .word 10                 // O_HEADER + 8
+// TYPE_CODE renders as the fixed string "<code>" — same shape STR(true),
+// STR(none) etc. take. print_value falls through the "anything else" path
+// into builtin_str, which uses this static.
+STR_CODE:
+    .word STR_CODE_OBJ
+    .word 8                  // O_HEADER + 6
     .word 0
     .byte TYPE_STR
     .byte 0
-STR_CODE_PREFIX_OBJ:
-    .word 8
-    .byte $3C, $43, $4F, $44, $45, $20, $30, $58  // "<CODE 0X"
+STR_CODE_OBJ:
+    .word 6
+    .byte $3C, $43, $4F, $44, $45, $3E  // "<CODE>"
 
 // Built-in functions and methods are not first-class values in admiral —
 // they're never stored, passed as arguments, or returned from expressions.

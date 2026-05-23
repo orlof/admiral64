@@ -594,6 +594,14 @@ builtin_str:
     bne !next+
     jmp _bstr_dict
 !next:
+    cmp #TYPE_CODE
+    bne !next+
+    // TYPE_CODE renders as the fixed string "<code>". Used by print_value too
+    // (via _str_w0) so REPL auto-print of a code blob shows the same thing.
+    lda #<STR_CODE
+    ldx #>STR_CODE
+    jmp postamble_set_rv_ax
+!next:
     jmp _bstr_type_err
 _bstr_type_err:
     jmp panic_type
