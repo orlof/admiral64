@@ -1852,15 +1852,19 @@ _bcode_panic:
     jmp panic_type
 
 // =============================================================================
-// builtin_reboot(graphics_capable) — warm-restart Admiral into a heap config.
-//   falsy  → text/full-heap (handle ceiling $FFF8).
-//   truthy → graphics-capable: reserve $DC00-$FFFF for a hi-res bitmap +
-//            matrix (handle ceiling $DC00).
-// Sets GFX_CONFIG, then JMPs to boot. NEVER returns (re-enters the REPL); boot
-// resets the HW stack + RS/FS and re-snapshots the recovery state. The
+// builtin_bitmap(on) — warm-restart Admiral into a heap config that does
+// (or doesn't) reserve VIC bitmap memory.
+//   falsy  → text-only / full-heap (handle ceiling $FFF8).
+//   truthy → bitmap-capable: reserve $DC00-$FFFF for the screen RAM +
+//            hi-res / multicolor bitmap (handle ceiling $DC00).
+// Sets GFX_CONFIG, then JMPs to boot — NEVER returns (re-enters the REPL).
+// boot resets the HW stack + RS/FS and re-snapshots the recovery state. The
 // workspace is wiped (it's a restart) — programs/data persist on disk.
+// (Named for the VIC's bitmap mode the reservation enables; this function
+// only sets up the memory map — the actual VIC mode flip happens later via
+// HIRES.SHOW() / MC.SHOW() / TEXT.SHOW() in user-space extensions.)
 // =============================================================================
-builtin_reboot:
+builtin_bitmap:
     jsr preamble_call_1_1_w0     // W0 = arg0 handle
     jsr val_truthy               // A = 0 (falsy) / 1 (truthy); leaf, no GC
     sta GFX_CONFIG

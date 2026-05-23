@@ -15,15 +15,16 @@
 .byte $0B, $08, $0A, $00, $9E, $32, $30, $36, $31, $00, $00, $00
 
 // cold — the SYS / RESET entry. Defaults the heap config to text (full heap),
-// then falls into boot. REBOOT(bool) sets GFX_CONFIG itself and JMPs to `boot`
+// then falls into boot. BITMAP(bool) sets GFX_CONFIG itself and JMPs to `boot`
 // directly, preserving the chosen config across the warm restart.
 cold:
     lda #0
     sta GFX_CONFIG
 
 boot:
-    // REBOOT reaches `boot` via JMP from deep in a builtin call chain, so the
-    // HW stack would leak across reboots — reset it. Harmless on the cold path
+    // BITMAP reaches `boot` via JMP from deep in a builtin call chain, so the
+    // HW stack would leak across these warm restarts — reset it. Harmless on
+    // the cold path
     // (we never RTS back to BASIC; boot ends in `jmp repl_main`).
     ldx #$FF
     txs
@@ -296,7 +297,7 @@ _err_nibble:
     jmp screen_put_char
 
 // -----------------------------------------------------------------------------
-// Heap-config cells + selector. `cold` sets GFX_CONFIG=0 (text); REBOOT(bool)
+// Heap-config cells + selector. `cold` sets GFX_CONFIG=0 (text); BITMAP(bool)
 // sets it from the arg's truthiness. _heap_apply (called by boot before
 // alloc_init) reads it and sets HEAP_TOP — the handle-table ceiling alloc_init
 // carves down from. These resident RAM cells survive the warm restart; they

@@ -201,9 +201,9 @@ See `PLANS/call-and-assembler.md` for the design rationale.
 ## Graphics: hi-res & multicolor bitmap
 
 Bitmap graphics live in a separate **memory configuration** entered with
-`REBOOT(TRUE)` (a core builtin). That reserves the top ~9 KB of RAM for a VIC
+`BITMAP(TRUE)` (a core builtin). That reserves the top ~9 KB of RAM for a VIC
 bank-3 bitmap; the heap ceiling drops from `$FFF8` to `$DC00` (~21 KB heap).
-`REBOOT(FALSE)` returns to the full-heap text config. REBOOT is a warm restart
+`BITMAP(FALSE)` returns to the full-heap text config. BITMAP is a warm restart
 (the workspace is wiped — `SAVE` first; programs/data persist on disk).
 
 Graphics memory (graphics config only):
@@ -227,7 +227,7 @@ Two ways to invoke each operation:
   the routine left, which the REPL will auto-print (often a stale pointer).
 
 ```
-REBOOT(TRUE)                 -- enter the graphics config (do this first)
+BITMAP(TRUE)                 -- enter the graphics config (do this first)
 H = LOAD("HIRES")            -- mono 320x200 — file IS the dict, no ()
 H.SHOW()                     -- VIC -> hi-res (row table at $FF40 pre-built)
 H.COLOR(FG=1, BG=6)          -- kwarg form, REPL-quiet

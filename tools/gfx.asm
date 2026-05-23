@@ -1,6 +1,6 @@
 // -----------------------------------------------------------------------------
 // gfx.asm — position-independent 6510 graphics routines for the Admiral
-// graphics memory config (REBOOT(TRUE)). Assembled offline by KickAssembler;
+// graphics memory config (BITMAP(TRUE)). Assembled offline by KickAssembler;
 // tools/gfx_pack.py slices each routine by its label and emits the bytes as
 // \xNN code strings into examples/{text,hires,mc}.admiral.
 //
@@ -66,7 +66,7 @@ TEXT_SHOW:
         rts
 TEXT_SHOW_END:
 
-// ===== HIRES_SHOW: VIC -> mono hi-res (row table built by REBOOT(TRUE)) ====
+// ===== HIRES_SHOW: VIC -> mono hi-res (row table built by BITMAP(TRUE)) ====
 HIRES_SHOW:
         inc $01                 // I/O in
         lda $DD02
@@ -528,7 +528,7 @@ hd_done:
         rts
 HIRES_DRAW_END:
 
-// ===== MC_SHOW: VIC -> multicolor bitmap mode (row table from REBOOT) ======
+// ===== MC_SHOW: VIC -> multicolor bitmap mode (row table from BITMAP) ======
 // Also sets $D021 (ink-0 / bg) to blue as a sensible default. Color RAM at
 // $D800 (ink-3) is left to MC.COLOR — filling it from here would write under
 // VIC bank 3's bitmap RAM where the heap also lives (RAM and color RAM share

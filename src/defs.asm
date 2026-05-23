@@ -341,7 +341,7 @@
                                    // from here (just below the IRQ/NMI/RESET
                                    // vectors at $FFFA-$FFFF — RAM with $01=$34)
 
-// Graphics-config handle ceiling. REBOOT(TRUE) reserves $DC00-$FFFF (~9KB) for
+// Graphics-config handle ceiling. BITMAP(TRUE) reserves $DC00-$FFFF (~9KB) for
 // a VIC bank-3 hi-res bitmap + color matrix; the handle table then grows down
 // from $DC00 instead of $FFF8. The actual VIC setup + drawing are user-space
 // CALL-asm extensions (examples/{text,hires,mc}.admiral). Layout (for those

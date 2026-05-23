@@ -68,7 +68,7 @@ FILES = {
     ),
     "hires.admiral": dict(
         var="H",
-        doc=["# HIRES - mono 320x200 hi-res bitmap (needs REBOOT(TRUE) first).",
+        doc=["# HIRES - mono 320x200 hi-res bitmap (needs BITMAP(TRUE) first).",
              "#   H = LOAD(\"HIRES\")()",
              "#   H.SHOW()           switch VIC to hi-res (builds row table $FF40)",
              "#   H.COLOR(FG=1, BG=6)   fg / bg per 8x8 cell",
@@ -83,7 +83,7 @@ FILES = {
     ),
     "mc.admiral": dict(
         var="M",
-        doc=["# MC - multicolor 160x200 bitmap (needs REBOOT(TRUE) first).",
+        doc=["# MC - multicolor 160x200 bitmap (needs BITMAP(TRUE) first).",
              "#   M = LOAD(\"MC\")()",
              "#   M.SHOW()                switch VIC to multicolor",
              "#   M.COLOR(C01=.., C10=.., C11=..)  ink colors (00 = bg $D021)",

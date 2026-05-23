@@ -1,4 +1,4 @@
-# HIRES - mono 320x200 hi-res bitmap (needs REBOOT(TRUE) first).
+# HIRES - mono 320x200 hi-res bitmap (needs BITMAP(TRUE) first).
 #   H = LOAD("HIRES")()
 #   H.SHOW()           switch VIC to hi-res (builds row table $FF40)
 #   H.COLOR(FG=1, BG=6)   fg / bg per 8x8 cell
