@@ -248,3 +248,106 @@ def test_mc_draw_fullscreen_diagonal(h):
     # endpoint (159,199): charrow=24, y&7=7, x&3=3 -> byte ytbl[24]+($9C*2)+7
     # ytbl[24] = $E000 + 24*$140 = $FE00; + (156*2)=$138; +7 = $FF3F.
     assert _byte(h, 0xFF3F) & 0x03 != 0         # field 3 set somewhere in that byte
+
+
+# --- H.TEXT / M.TEXT ---------------------------------------------------------
+# py65 doesn't simulate $01 banking, so $D000-$DFFF reads/writes the same RAM
+# regardless of what the extension does to $01. We stub "char ROM" by writing
+# known glyph bytes directly into that RAM range before invoking TEXT.
+#
+# Constraint: H.SHOW / M.SHOW poke VIC registers in $D011-$D02E, which in py65
+# are just RAM at the same addresses where char ROM lives. So we can only
+# safely stub glyphs whose font slot lies at $D030 or higher — i.e. screen
+# codes >= $06. PETSCII digits '0'-'9' map to screen codes $30-$39 (font
+# slots $D180-$D1CF), safely past all VIC / CIA register ranges.
+
+def _stub_glyph(h, screen_code: int, pattern: list[int]) -> None:
+    """Write an 8-byte glyph for `screen_code` into the char-ROM-mapped RAM."""
+    base = 0xD000 + screen_code * 8
+    for i, b in enumerate(pattern):
+        h.mpu.memory[base + i] = b
+
+
+# Distinctive 8-byte patterns — easy to tell which char rendered at which cell.
+_GLYPH_0 = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]    # PETSCII '0' -> $D180
+_GLYPH_1 = [0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10]    # PETSCII '1' -> $D188
+
+
+def test_hires_text_one_char_at_origin(h):
+    # PETSCII '0' = $30 -> screen code $30 -> font at $D000 + $30*8 = $D180.
+    _stub_glyph(h, 0x30, _GLYPH_0)
+    _run(h, HIRES + "\nH.SHOW()\nH.CLEAR()\nH.TEXT(COL=0, ROW=0, S=\"0\")\n0")
+    for i, b in enumerate(_GLYPH_0):
+        assert _byte(h, 0xE000 + i) == b, f"byte $E00{i}"
+
+
+def test_hires_text_advances_per_char(h):
+    # "01" -> cells (0,0) and (1,0): bytes $E000-$E007 and $E008-$E00F.
+    _stub_glyph(h, 0x30, _GLYPH_0)              # '0'
+    _stub_glyph(h, 0x31, _GLYPH_1)              # '1'
+    _run(h, HIRES + "\nH.SHOW()\nH.CLEAR()\nH.TEXT(COL=0, ROW=0, S=\"01\")\n0")
+    for i, b in enumerate(_GLYPH_0):
+        assert _byte(h, 0xE000 + i) == b
+    for i, b in enumerate(_GLYPH_1):
+        assert _byte(h, 0xE008 + i) == b
+
+
+def test_hires_text_at_nonzero_col_row(h):
+    # '0' at (col=2, row=1): bitmap = ytbl[1] + 2*8 = $E140 + 16 = $E150.
+    _stub_glyph(h, 0x30, _GLYPH_0)
+    _run(h, HIRES + "\nH.SHOW()\nH.CLEAR()\nH.TEXT(COL=2, ROW=1, S=\"0\")\n0")
+    for i, b in enumerate(_GLYPH_0):
+        assert _byte(h, 0xE150 + i) == b
+
+
+def test_hires_text_empty_string_is_noop(h):
+    _stub_glyph(h, 0x30, _GLYPH_0)
+    _run(h, HIRES + "\nH.SHOW()\nH.CLEAR()\nH.TEXT(COL=0, ROW=0, S=\"\")\n0")
+    # Bitmap should be all zeros — TEXT must not have written anything.
+    for i in range(8):
+        assert _byte(h, 0xE000 + i) == 0
+
+
+def test_mc_text_shrink_bit_pairs(h):
+    # MC_TEXT samples font bit pairs (6,5)/(4,3)/(2,1) and maps each pair to
+    # MC fields 1/2/3 (field 0 is always bg pad). Pattern $66 = 01100110:
+    #   bits 6,5 set     -> field 1 = ink  ($30 in mask byte)
+    #   bits 4,3 clear   -> field 2 = bg   ($00)
+    #   bits 2,1 set     -> field 3 = ink  ($03)
+    # ink=3 / bg=0 -> ink pattern $FF / bg pattern $00 -> output $33.
+    _stub_glyph(h, 0x30, [0x66] * 8)
+    _run(h, MC + "\nM.SHOW()\nM.CLEAR()\nM.TEXT(COL=0, ROW=0, S=\"0\", INK=3, BG=0)\n0")
+    for i in range(8):
+        assert _byte(h, 0xE000 + i) == 0x33, f"row {i}"
+
+
+def test_mc_text_ink_and_bg_colours(h):
+    # Same pattern $66 but ink=2 (10) / bg=1 (01).
+    # ink pattern = $AA, bg pattern = $55.
+    # mask = $33 (fields 1 and 3 active).
+    # output = ($33 & $AA) | (~$33 & $55) = $22 | ($CC & $55) = $22 | $44 = $66.
+    _stub_glyph(h, 0x30, [0x66] * 8)
+    _run(h, MC + "\nM.SHOW()\nM.CLEAR()\nM.TEXT(COL=0, ROW=0, S=\"0\", INK=2, BG=1)\n0")
+    for i in range(8):
+        assert _byte(h, 0xE000 + i) == 0x66, f"row {i}"
+
+
+def test_mc_text_advances_per_char(h):
+    # "01" -> two cells.  Each row of cell 0 = $33 (from pattern $66 ink=3 bg=0);
+    # cell 1 uses pattern $00 in our stub.
+    _stub_glyph(h, 0x30, [0x66] * 8)
+    _stub_glyph(h, 0x31, [0x00] * 8)
+    _run(h, MC + "\nM.SHOW()\nM.CLEAR()\nM.TEXT(COL=0, ROW=0, S=\"01\", INK=3, BG=0)\n0")
+    for i in range(8):
+        assert _byte(h, 0xE000 + i) == 0x33, f"cell 0 row {i}"
+        assert _byte(h, 0xE008 + i) == 0x00, f"cell 1 row {i}"
+
+
+def test_mc_text_at_nonzero_position(h):
+    # Cell (1, 2): byte base = ytbl[2] + 8 = $E280 + 8 = $E288.
+    # Glyph $FF = all bits set; all three sampled pairs (6,5)/(4,3)/(2,1) are
+    # active so fields 1, 2 AND 3 are ink. ink=3/bg=0 -> output $3F per row.
+    _stub_glyph(h, 0x30, [0xFF] * 8)
+    _run(h, MC + "\nM.SHOW()\nM.CLEAR()\nM.TEXT(COL=1, ROW=2, S=\"0\", INK=3, BG=0)\n0")
+    for i in range(8):
+        assert _byte(h, 0xE288 + i) == 0x3F, f"row {i}"

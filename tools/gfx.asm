@@ -1053,3 +1053,375 @@ mc_x_plot:
 mc_x_done:
         rts
 MC_DRAW_END:
+
+// ===== HIRES_TEXT(col=W1, row=W2, str=W3): paint a string into the bitmap ===
+// Opaque overlay using char ROM at $D000 (charset 0 — uppercase + graphics,
+// matches our REPL). Each glyph byte is written verbatim into the bitmap, so
+// the user's matrix-set foreground colour shows through. No double-size.
+//
+// Bracketed by sei/$01-flip/cli so char ROM is readable. While flipped, I/O
+// is gone — the timer IRQ would mis-ack CIA1 if it fired, hence the sei.
+//
+// Scratch:
+//   W0       = current bitmap byte (cell base, row 0). Advances by 8 per char.
+//   W1       = current font byte address ($D000 + screen_code * 8).
+//   W2       = STR payload pointer (advances past O_HEADER once).
+//   B0       = char index (0..len-1).
+//   B1       = remaining length (decremented per char so loop exit is bne).
+//   B2       = scratch (saved low byte across petscii_to_screen_code split).
+//   B6:B7    = PETSCII->screen offset table pointer (set once at entry).
+HIRES_TEXT:
+        // 1) Compute the PETSCII table address inside this blob (PI: blob can
+        // live anywhere on the heap, so build the pointer from W0 = base).
+        clc
+        lda W0
+        adc #<(_ht_petscii - HIRES_TEXT)
+        sta B6
+        lda W0+1
+        adc #>(_ht_petscii - HIRES_TEXT)
+        sta B7
+
+        // 2) Read COL, ROW. Compute W0 = bitmap base for (col, row).
+        ldy #0
+        lda (W1),y                   // col (0..39)
+        sta B0                       // stash col
+        lda (W2),y                   // row (0..24)
+        asl                           // *2 = word index into YTBL
+        tax
+        lda YTBL,x
+        sta W0
+        lda YTBL+1,x
+        sta W0+1
+        // Add col * 8 to W0 (col<=39 so col*8 <=312 — must carry into hi).
+        lda B0
+        asl
+        asl
+        asl                           // A = col_lo<<3; C may be set
+        bcc !+
+        inc W0+1
+        clc
+!:
+        adc W0
+        sta W0
+        bcc !+
+        inc W0+1
+!:
+
+        // 3) Deref STR. (W3),0..1 = H_PTR; (H_PTR),0..1 = O_LEN; bytes at +2.
+        ldy #0
+        lda (W3),y
+        sta W2
+        iny
+        lda (W3),y
+        sta W2+1
+        // Read length low byte. Long strings are truncated at 255 chars —
+        // safe since a screen row is only 40 cols anyway.
+        ldy #0
+        lda (W2),y
+        sta B1                       // remaining = O_LEN low
+        // Advance W2 past O_LEN to point at first payload byte.
+        lda W2
+        clc
+        adc #2
+        sta W2
+        bcc !+
+        inc W2+1
+!:
+
+        // 4) Bank flip: sei; push $01; set $01=$31 (char ROM at $D000).
+        sei
+        lda $01
+        pha
+        lda #$31
+        sta $01
+
+        // 5) Bail immediately if string is empty (len=0).
+        lda B1
+        beq ht_done
+
+        lda #0
+        sta B0                       // char index
+
+ht_char_loop:
+        // Read PETSCII at W2[B0].
+        ldy B0
+        lda (W2),y
+        // PETSCII -> screen code: special-case $FF (pi -> $5E), else add
+        // table[top3].
+        cmp #$FF
+        bne ht_convert
+        lda #$5E
+        jmp ht_have_code
+ht_convert:
+        sta B2                       // save original PETSCII
+        lsr
+        lsr
+        lsr
+        lsr
+        lsr
+        tay                           // Y = top3 (0..7)
+        lda (B6),y                   // table[top3] = offset
+        clc
+        adc B2                       // screen code = (table[top3] + petscii) mod 256
+ht_have_code:
+
+        // W1 = $D000 + screen_code * 8.
+        // (A = screen_code, max $FF -> *8 = $7F8 which fits 11 bits; high byte
+        // of the *8 result is in 0..7, added to $D0.)
+        sta W1                        // W1 lo = screen_code (for the asl chain)
+        lda #0
+        sta W1+1
+        asl W1
+        rol W1+1
+        asl W1
+        rol W1+1
+        asl W1
+        rol W1+1
+        // Add $D000 to W1.
+        clc
+        lda W1+1
+        adc #$D0
+        sta W1+1
+
+        // Render 8 byte-rows opaque: bitmap[Y] = font[Y] for Y=7..0.
+        ldy #7
+ht_row_loop:
+        lda (W1),y
+        sta (W0),y
+        dey
+        bpl ht_row_loop
+
+        // Advance bitmap pointer by 8 (next cell column).
+        clc
+        lda W0
+        adc #8
+        sta W0
+        bcc !+
+        inc W0+1
+!:
+
+        // char index++; loop while < len.
+        inc B0
+        lda B0
+        cmp B1
+        bcc ht_char_loop
+
+ht_done:
+        pla
+        sta $01
+        cli
+        rts
+
+_ht_petscii:
+        .byte $80, $00, $C0, $E0, $40, $C0, $80, $80
+HIRES_TEXT_END:
+
+// ===== MC_TEXT(col=W1, row=W2, str=W3, ink=B0:B1, bg=B2:B3) ================
+// Same envelope as HIRES_TEXT but emits MC-shaped pixels. Each font byte is
+// "shrunk" to 3 MC pixels (fields 1, 2, 3) by sampling the C64 char ROM's
+// content-area bit pairs (6,5)/(4,3)/(2,1) — same algorithm as xcb3 lib_gfx.
+// Field 0 is left as bg, giving each glyph a 1-MC-pixel right padding so they
+// sit cleanly side-by-side. INK and BG are 2-bit values (0..3); the displayed
+// colour for each comes from the standard MC palette (00=$D021, 01/10=matrix
+// nibbles, 11=$D800).
+//
+// Scratch additions vs HIRES_TEXT:
+//   B3       = ink pattern = ink * $55 (4 replicas).
+//   B4       = bg pattern  = bg  * $55.
+//   B5       = per-row shrunk-mask scratch.
+MC_TEXT:
+        // Compute PETSCII-table address.
+        clc
+        lda W0
+        adc #<(_mt_petscii - MC_TEXT)
+        sta B6
+        lda W0+1
+        adc #>(_mt_petscii - MC_TEXT)
+        sta B7
+
+        // BG -> pattern in B4. Do BG FIRST: it doesn't touch B3, so
+        // (B2:B3) stays a valid handle pointer for the read below.
+        ldy #0
+        lda (B2),y
+        and #$03
+        sta B4
+        asl
+        asl
+        ora B4
+        sta B4
+        asl
+        asl
+        asl
+        asl
+        ora B4
+        sta B4
+
+        // INK -> pattern in B3. This clobbers B3 (= high byte of the BG
+        // handle pointer), which is fine — BG has already been consumed.
+        lda (B0),y
+        and #$03
+        sta B3
+        asl
+        asl
+        ora B3
+        sta B3
+        asl
+        asl
+        asl
+        asl
+        ora B3
+        sta B3
+
+        // COL, ROW into W0 = bitmap base. ROW->charrow*8 lookup; COL*8 add.
+        // (MC bytes are 8 per cell same as HIRES — the doubling is only in
+        // the X-pixel direction, not byte layout.)
+        ldy #0
+        lda (W1),y
+        sta B0                       // col (we've consumed B0:B1 as INK already)
+        lda (W2),y
+        asl
+        tax
+        lda YTBL,x
+        sta W0
+        lda YTBL+1,x
+        sta W0+1
+        lda B0
+        asl
+        asl
+        asl
+        bcc !+
+        inc W0+1
+        clc
+!:
+        adc W0
+        sta W0
+        bcc !+
+        inc W0+1
+!:
+
+        // STR deref (same shape as HIRES_TEXT).
+        ldy #0
+        lda (W3),y
+        sta W2
+        iny
+        lda (W3),y
+        sta W2+1
+        ldy #0
+        lda (W2),y
+        sta B1
+        lda W2
+        clc
+        adc #2
+        sta W2
+        bcc !+
+        inc W2+1
+!:
+
+        sei
+        lda $01
+        pha
+        lda #$31
+        sta $01
+
+        lda B1
+        beq mt_done
+
+        lda #0
+        sta B0                       // char index
+
+mt_char_loop:
+        ldy B0
+        lda (W2),y
+        cmp #$FF
+        bne mt_convert
+        lda #$5E
+        jmp mt_have_code
+mt_convert:
+        sta B2
+        lsr
+        lsr
+        lsr
+        lsr
+        lsr
+        tay
+        lda (B6),y
+        clc
+        adc B2
+mt_have_code:
+
+        sta W1
+        lda #0
+        sta W1+1
+        asl W1
+        rol W1+1
+        asl W1
+        rol W1+1
+        asl W1
+        rol W1+1
+        clc
+        lda W1+1
+        adc #$D0
+        sta W1+1
+
+        // 8 byte-rows: per-row "shrink" pairs (6,5), (4,3), (2,1) of font byte
+        // into MC fields 1, 2, 3 of B5; combine with ink/bg patterns.
+        ldy #7
+mt_row_loop:
+        lda (W1),y                   // font byte
+        tax                           // save in X for re-AND
+        and #$60                      // any of font bits 6,5 set?
+        beq !+
+        lda #$30                      // -> field 1 active
+!:
+        sta B5
+
+        txa
+        and #$18                      // bits 4,3?
+        beq !+
+        lda #$0C
+!:
+        ora B5
+        sta B5
+
+        txa
+        and #$06                      // bits 2,1?
+        beq !+
+        lda #$03
+!:
+        ora B5
+        sta B5                        // B5 = full 3-bit "ink mask" (fields 1/2/3)
+
+        // Output byte = (mask AND ink_pattern) | (~mask AND bg_pattern).
+        and B3                        // A still = mask -> ink bits at marked fields
+        sta B2                        // stash combined fg portion
+        lda B5
+        eor #$FF
+        and B4                        // bg bits at unmarked fields
+        ora B2
+        sta (W0),y
+
+        dey
+        bpl mt_row_loop
+
+        clc
+        lda W0
+        adc #8
+        sta W0
+        bcc !+
+        inc W0+1
+!:
+
+        inc B0
+        lda B0
+        cmp B1
+        bcc mt_char_loop
+
+mt_done:
+        pla
+        sta $01
+        cli
+        rts
+
+_mt_petscii:
+        .byte $80, $00, $C0, $E0, $40, $C0, $80, $80
+MC_TEXT_END:

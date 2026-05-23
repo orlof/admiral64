@@ -234,6 +234,7 @@ H.COLOR(FG=1, BG=6)          -- kwarg form, REPL-quiet
 H.CLEAR()                    -- zero the bitmap   (CLS is a reserved word)
 H.PLOT(X=160, Y=100)         -- set a pixel
 H.DRAW(X0=0, Y0=0, X1=319, Y1=199)   -- Bresenham line
+H.TEXT(COL=5, ROW=3, S="HELLO")      -- glyphs from char ROM (charset 0); colour from matrix
 LOAD("TEXT").SHOW()          -- restore the text display
 ```
 
@@ -246,6 +247,7 @@ M.SHOW()
 M.COLOR(C01=1, C10=2, C11=7)
 M.PLOT(X=80, Y=100, INK=2)              -- ink 0..3
 M.DRAW(X0=0, Y0=0, X1=159, Y1=199, INK=3)
+M.TEXT(COL=5, ROW=3, S="HI", INK=2, BG=0)  -- ink/bg 0..3; 3-MC-px-wide glyphs
 ```
 
 > `hires` / `mc` / `text` on the disk are **serialized dicts** containing both
