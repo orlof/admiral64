@@ -50,6 +50,10 @@ here across a `CALL`:
 BASIC FP workspace (`$57-$70`) are load-bearing. Staying inside `W`/`B`/`A`/`X`/
 `Y` is the whole contract.
 
+`$FB:$FC` is a special slot: on entry, `CALL` leaves your code's **own load
+address** there — see [Big loops](#big-loops-the-fbfc-base-address) below. You
+may overwrite it freely after reading it.
+
 ### Reading arguments
 
 Each `Wn` holds the **handle address** of argument *n*. How you read the data
@@ -97,8 +101,8 @@ and hands back a non-negative inline int. If your routine is a pure side-effect
      own bytes — the absolute address isn't known until load time.
    - Absolute addressing to *fixed* locations is fine: hardware registers
      (`$D000`+), KERNAL, zero page.
-   - Need an internal data table? Discover your own base at runtime with the
-     `JSR`/`PLA`/`PLA` trick and index off it (or self-modify).
+   - Internal data tables / loops bigger than the ±127 branch range: read your
+     own base from `$FB:$FC` ([below](#big-loops-the-fbfc-base-address)).
 
 3. **Balance the hardware stack.** Every `PHA`/`PHP` paired before `RTS`. `CALL`
    pushes the return address; an unbalanced routine returns into garbage.
@@ -136,6 +140,39 @@ CALL(F, 21)                  -- 42
 F = "\xA0\x00\xB1\x10\x18\x71\x12\x85\x10\xA9\x00\x85\x11\x60"
 CALL(F, 30, 12)              -- 42
 ```
+
+---
+
+## Big loops: the `$FB:$FC` base address
+
+If your routine's per-iteration body is more than ~120 bytes, a backward branch
+from the loop tail to the loop top can't reach (6502 branches are signed 8-bit).
+You can't use `JMP loop_top` either — that's an absolute address into your own
+relocatable code.
+
+`CALL` solves this by leaving the routine's **own load address** in `$FB:$FC`
+at entry. With that you can build a runtime pointer to your loop label and
+finish each iteration with `JMP (zp)` — an indirect jump through fixed RAM,
+which *is* PI-safe. The expression `loop_top - routine_start` is an
+assembly-time constant your assembler computes:
+
+```asm
+routine_start:
+        clc
+        lda $FB
+        adc #<(loop_top - routine_start)
+        sta DLOOP            ; some fixed RAM cell (e.g. in the graphics
+        lda $FC              ; reserved region, or any non-load-bearing addr)
+        adc #>(loop_top - routine_start)
+        sta DLOOP+1
+        ; … one-time setup …
+loop_top:
+        ; … big iteration body, branches anywhere inside …
+        jmp (DLOOP)          ; only "JMP" PI code is allowed to use
+```
+
+After reading `$FB:$FC` you may overwrite it. The full worked example is
+`HIRES_DRAW` in `tools/gfx.asm`.
 
 ---
 

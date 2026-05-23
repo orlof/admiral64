@@ -78,8 +78,8 @@ FILES = {
         rows=[("SHOW", "HIRES_SHOW", ""),
               ("CLEAR", "GFX_CLS", ""),
               ("COLOR", "HIRES_COLOR", "FG, BG"),
-              ("PLOT", "HIRES_PLOT", "X, Y")],
-        extra=[("DRAW", HIRES_DRAW)],  # H.DRAW(X0=,Y0=,X1=,Y1=)
+              ("PLOT", "HIRES_PLOT", "X, Y"),
+              ("DRAW", "HIRES_DRAW", "X0, Y0, X1, Y1")],
     ),
     "mc.admiral": dict(
         var="M",

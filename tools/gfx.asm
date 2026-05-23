@@ -21,6 +21,7 @@
 .const W0 = $10
 .const W1 = $12
 .const W2 = $14
+.const W3 = $16
 .const B4 = $1C
 .const B5 = $1D
 .const B6 = $1E
@@ -29,6 +30,20 @@
 .const BITMAP = $E000
 .const MATRIX = $DC00
 .const YTBL   = $FF40
+
+// DRAW Bresenham scratch (absolute RAM, in the free $FF72-$FFF9 gap above the
+// row table). Touched only by DRAW; safe in the graphics memory config.
+.const DX0    = $FF72   // word — current x
+.const DY0    = $FF74   // byte — current y
+.const DX1    = $FF75   // word — end x
+.const DY1    = $FF77   // byte — end y
+.const DDX    = $FF78   // word, >= 0  — |x1-x0|
+.const DDY    = $FF7A   // word, <= 0  — -|y1-y0|
+.const DSX    = $FF7C   // word, signed (+1 / -1)
+.const DSY    = $FF7E   // byte, signed (+1 / -1)
+.const DERR   = $FF7F   // word, signed — Bresenham error
+.const DE2    = $FF81   // word, signed — 2*err per iteration
+.const DLOOP  = $FF83   // word — JMP-indirect target (= loop_top abs)
 
 * = $1000   // arbitrary; routines are position-independent
 
@@ -196,6 +211,212 @@ hp_set:
         sta (W0),y
         rts
 HIRES_PLOT_END:
+
+// ===== HIRES_DRAW(x0=W0, y0=W1, x1=W2, y1=W3): Bresenham line ===============
+// Standard integer Bresenham with the inlined hi-res plot. The per-iteration
+// body is well over 127 bytes, so a backward branch can't reach the top — we
+// finish each iteration with JMP (DLOOP) (the only "JMP" PI code may use:
+// indirect through fixed RAM, not absolute into our own bytes). builtin_call
+// hands us our own load address in $FB:$FC, so DLOOP = $FB:$FC + (hd_loop -
+// HIRES_DRAW) is an assembly-time-known offset.
+HIRES_DRAW:
+        clc
+        lda $FB
+        adc #<(hd_loop - HIRES_DRAW)
+        sta DLOOP
+        lda $FC
+        adc #>(hd_loop - HIRES_DRAW)
+        sta DLOOP+1
+
+        // --- read args ---
+        ldy #0
+        lda (W0),y
+        sta DX0
+        iny
+        lda (W0),y
+        sta DX0+1
+        ldy #0
+        lda (W1),y
+        sta DY0
+        lda (W2),y
+        sta DX1
+        iny
+        lda (W2),y
+        sta DX1+1
+        ldy #0
+        lda (W3),y
+        sta DY1
+
+        // --- DDX = |x1-x0|, DSX in {+1,-1} ---
+        sec
+        lda DX1
+        sbc DX0
+        sta DDX
+        lda DX1+1
+        sbc DX0+1
+        sta DDX+1
+        bpl hd_dxpos
+        // negative: negate DDX, DSX = -1
+        sec
+        lda #0
+        sbc DDX
+        sta DDX
+        lda #0
+        sbc DDX+1
+        sta DDX+1
+        lda #$FF
+        sta DSX
+        sta DSX+1
+        bne hd_dxdone            // A=$FF -> always taken
+hd_dxpos:
+        lda #1
+        sta DSX
+        lda #0
+        sta DSX+1
+hd_dxdone:
+
+        // --- DDY = -|y1-y0|, DSY in {+1,-1} ---
+        sec
+        lda DY1
+        sbc DY0
+        sta B5                   // ty = y1-y0 (signed byte)
+        bpl hd_typos
+        // ty < 0: DDY = ty (sign-extended), DSY = -1
+        sta DDY
+        lda #$FF
+        sta DDY+1
+        lda #$FF
+        sta DSY
+        bne hd_dydone
+hd_typos:
+        // ty >= 0: DDY = -ty (16-bit), DSY = +1
+        sec
+        lda #0
+        sbc B5
+        sta DDY
+        lda #0
+        sbc #0
+        sta DDY+1
+        lda #1
+        sta DSY
+hd_dydone:
+
+        // --- DERR = DDX + DDY ---
+        clc
+        lda DDX
+        adc DDY
+        sta DERR
+        lda DDX+1
+        adc DDY+1
+        sta DERR+1
+
+hd_loop:
+        // --- inline plot(DX0, DY0) ---
+        lda DY0
+        and #$07
+        sta B5
+        lda DY0
+        lsr
+        lsr
+        lsr
+        asl
+        tax
+        lda YTBL,x
+        sta $FB
+        lda YTBL+1,x
+        clc
+        adc DX0+1
+        sta $FC
+        lda DX0
+        and #$F8
+        ora B5
+        tay
+        lda DX0
+        and #$07
+        tax
+        lda #$80
+hd_mk:
+        dex
+        bmi hd_mset
+        lsr
+        bpl hd_mk
+hd_mset:
+        ora ($FB),y
+        sta ($FB),y
+
+        // --- termination: if DX0==DX1 && DY0==DY1, rts ---
+        lda DX0
+        cmp DX1
+        bne hd_more
+        lda DX0+1
+        cmp DX1+1
+        bne hd_more
+        lda DY0
+        cmp DY1
+        bne hd_more
+        rts
+hd_more:
+
+        // --- DE2 = 2 * DERR ---
+        lda DERR
+        asl
+        sta DE2
+        lda DERR+1
+        rol
+        sta DE2+1
+
+        // --- if DE2 >= DDY (signed): DERR += DDY; DX0 += DSX ---
+        sec
+        lda DE2
+        sbc DDY
+        lda DE2+1
+        sbc DDY+1
+        bvc hd_cx_ok
+        eor #$80
+hd_cx_ok:
+        bmi hd_skip_x
+        clc
+        lda DERR
+        adc DDY
+        sta DERR
+        lda DERR+1
+        adc DDY+1
+        sta DERR+1
+        clc
+        lda DX0
+        adc DSX
+        sta DX0
+        lda DX0+1
+        adc DSX+1
+        sta DX0+1
+hd_skip_x:
+
+        // --- if DE2 <= DDX (signed): DERR += DDX; DY0 += DSY ---
+        // i.e. DDX - DE2 >= 0 (signed). If negative -> DE2 > DDX -> skip.
+        sec
+        lda DDX
+        sbc DE2
+        lda DDX+1
+        sbc DE2+1
+        bvc hd_cy_ok
+        eor #$80
+hd_cy_ok:
+        bmi hd_skip_y
+        clc
+        lda DERR
+        adc DDX
+        sta DERR
+        lda DERR+1
+        adc DDX+1
+        sta DERR+1
+        lda DY0
+        clc
+        adc DSY
+        sta DY0
+hd_skip_y:
+
+        jmp (DLOOP)
+HIRES_DRAW_END:
 
 // ===== MC_SHOW: like HIRES_SHOW plus multicolor bitmap mode ($D016 MCM) ======
 MC_SHOW:

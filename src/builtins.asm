@@ -1889,6 +1889,16 @@ builtin_call:
     lda ($FB),y
     sta W3+1
 _call_go:
+    // Hand the extension its own load address in $FB:$FC. PI routines whose
+    // body exceeds the ±127 branch range need to know where they live so they
+    // can compute a JMP-indirect target for the loop tail. Reading it from
+    // the SMC slot is free (the JSR operand is the base by construction).
+    // The args-tuple pointer that lived in $FB:$FC during marshalling is no
+    // longer needed, so we overwrite it here.
+    lda _call_jsr+1
+    sta $FB
+    lda _call_jsr+2
+    sta $FC
 _call_jsr:
     jsr $ffff                           // operand patched above (SMC)
 

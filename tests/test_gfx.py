@@ -126,10 +126,38 @@ def test_hires_draw_horizontal(h):
 
 def test_hires_draw_diagonal(h):
     # (0,0)(1,1)(2,2) -> $E000 bit7, $E001 bit6, $E002 bit5.
-    _run(h, HIRES + "\nH.SHOW()\nH.CLEAR()\nH.DRAW(X0=0, Y0=0, X1=2, Y1=2)\n0", max_steps=80_000_000)
+    _run(h, HIRES + "\nH.SHOW()\nH.CLEAR()\nH.DRAW(X0=0, Y0=0, X1=2, Y1=2)\n0")
     assert _byte(h, 0xE000) == 0x80
     assert _byte(h, 0xE001) == 0x40
     assert _byte(h, 0xE002) == 0x20
+
+
+def test_hires_draw_long_horizontal(h):
+    # 16-pixel horizontal at y=4: spans cells 0 and 1 (bytes $E004 and $E00C).
+    _run(h, HIRES + "\nH.SHOW()\nH.CLEAR()\nH.DRAW(X0=0, Y0=4, X1=15, Y1=4)\n0")
+    assert _byte(h, 0xE004) == 0xFF
+    assert _byte(h, 0xE00C) == 0xFF
+
+
+def test_hires_draw_reversed(h):
+    # Reverse direction (x1 < x0): (3,0)->(0,0) should plot the same 4 pixels.
+    _run(h, HIRES + "\nH.SHOW()\nH.CLEAR()\nH.DRAW(X0=3, Y0=0, X1=0, Y1=0)\n0")
+    assert _byte(h, 0xE000) == 0xF0
+
+
+def test_hires_draw_vertical(h):
+    # Vertical line at x=0, y=0..3: $E000..$E003 all bit7.
+    _run(h, HIRES + "\nH.SHOW()\nH.CLEAR()\nH.DRAW(X0=0, Y0=0, X1=0, Y1=3)\n0")
+    for off in range(4):
+        assert _byte(h, 0xE000 + off) == 0x80, f"byte $E00{off}"
+
+
+def test_hires_draw_crosses_charrow(h):
+    # Diagonal (0,7)->(1,8): jumps from char row 0 (byte $E007) to char row 1
+    # (byte $E140, since (y&7)=0 at y=8) — exercises the row-table lookup.
+    _run(h, HIRES + "\nH.SHOW()\nH.CLEAR()\nH.DRAW(X0=0, Y0=7, X1=1, Y1=8)\n0")
+    assert _byte(h, 0xE007) == 0x80
+    assert _byte(h, 0xE140) == 0x40
 
 
 def test_mc_draw_horizontal(h):
