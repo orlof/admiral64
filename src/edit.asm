@@ -1,8 +1,9 @@
 // -----------------------------------------------------------------------------
 // edit.asm — full-screen gap-buffer text editor.
 //
-// One linear byte buffer, EDIT_BUF_SIZE bytes, allocated as a TYPE_STR for
-// the editor's lifetime. Logical text is stored as
+// One linear byte buffer, EDIT_BUF_SIZE bytes initially, allocated as a
+// TYPE_STR. Grows by EDIT_BUF_GROW_BY bytes via `edit_grow` whenever the gap
+// collapses on an insert. Logical text is stored as
 //     [buf_start .. gap_start)  ++  [gap_end .. buf_end)
 // The range [gap_start, gap_end) is "the gap" — slack space. Insert/delete
 // at gap_start is O(1). Cursor moves don't shift bytes; they only update
@@ -11,16 +12,19 @@
 //
 // `pos` is always either equal to `gap_start` / `gap_end`, or somewhere in
 // `[buf_start, gap_start) ∪ [gap_end, buf_end]` — never inside the gap.
-// edit_key_left / edit_key_right (Phase C) skip across the gap when crossing
-// the gap boundary.
+// edit_key_left / edit_key_right skip across the gap when crossing it.
 //
-// CRITICAL invariant: no allocation happens inside the editor's main loop.
-// kbd_getchar / screen_put_char / wset / etc. don't allocate, so GC cannot
-// trigger mid-edit and all pointers stay stable for the entire session.
-// (The result-string alloc on Ctrl-X exit happens AFTER the loop terminates.)
+// Steady-state invariant: no allocation in the editor's hot path (gap-move,
+// per-key dispatch, render). kbd_getchar / screen_put_char / wset don't
+// allocate, so GC can't perturb pointers during a typical keystroke. The
+// ONE exception is `edit_grow`, called from `edit_insert_char` when the gap
+// runs out: it allocates a bigger payload, copies content across, and
+// re-bases all editor pointers via offsets saved before the alloc. The
+// editor's buffer handle (`edit_buf_handle`) is rooted on RS by
+// `builtin_edit`, so GC keeps it live and only its H_PTR changes — we
+// re-deref through the handle after the alloc to find the new payload.
 //
-// Mirrors Admiral's `edit2.dasm16`. Phase A here covers the gap-buffer
-// primitives only — render and key dispatch land in later phases.
+// Mirrors Admiral's `edit2.dasm16`.
 // -----------------------------------------------------------------------------
 
 #importonce
@@ -29,12 +33,15 @@
 #import "preamble.asm"
 #import "handle.asm"
 
-.const EDIT_BUF_SIZE = 800
+.const EDIT_BUF_SIZE     = 1024     // initial allocation
+.const EDIT_BUF_GROW_BY  = 1024     // grow increment per overflow
 
 // --- editor state (static) --------------------------------------------------
 // All 16-bit pointers are absolute addresses into the buffer's payload.
 // Persistent across all editor sub-call invocations within a single edit()
 // session; not part of any V4' frame.
+edit_buf_handle:   .word 0     // the TYPE_STR handle (stable across GC; re-deref
+                                //  through this to refresh payload pointers).
 edit_buf_start:    .word 0
 edit_buf_end:      .word 0
 edit_gap_start:    .word 0
@@ -47,6 +54,12 @@ edit_scr_x:        .byte 0     // cursor on-screen column
 edit_scr_y:        .byte 0     // cursor on-screen row
 edit_dirty:        .byte 0     // bit 0 = current line dirty, bit 1 = full screen dirty
 edit_clip_cut:     .byte 0     // 1 if last key was kill-line (for accumulating cuts)
+
+// edit_grow doesn't need any extra scratch — it extends the buffer in
+// place by bumping NEXT_DATA into the free heap region just above it.
+// The editor's "no alloc in main loop" invariant guarantees the buffer is
+// the topmost heap allocation, so widening it doesn't collide with
+// anything else.
 
 
 // -----------------------------------------------------------------------------
@@ -86,6 +99,158 @@ edit_init:
     sta edit_scr_y
     sta edit_dirty
     sta edit_clip_cut
+    rts
+
+
+// -----------------------------------------------------------------------------
+// edit_grow — extend the buffer by EDIT_BUF_GROW_BY bytes IN PLACE.
+//
+// The editor's main loop has a strict "no allocation" invariant, so the
+// editor's buffer is guaranteed to be the topmost heap allocation while
+// editing. That means the free region just above edit_buf_end (between
+// NEXT_DATA and NEXT_HANDLE) is unclaimed — we can simply bump NEXT_DATA up
+// by GROW_BY bytes, update the handle's H_SIZE / O_LEN, shift the post-gap
+// region of the buffer upward by GROW_BY (reverse copy), and widen the gap.
+// No alloc, no GC, no handle re-deref — pointers stay valid throughout.
+//
+//   in:  buffer is gap-full (caller already detected gap_start == gap_end).
+//   out: gap is GROW_BY bytes wide, post-gap content shifted up, all
+//        editor pointers other than gap_end/buf_end unchanged.
+//        Silent no-op if NEXT_DATA + GROW_BY > NEXT_HANDLE (heap full).
+// Leaf — no V4' frame needed.
+// -----------------------------------------------------------------------------
+edit_grow:
+    // ---- Safety: only grow if the buffer is the topmost heap allocation
+    // (edit_buf_end == NEXT_DATA). The editor's main-loop "no alloc"
+    // invariant guarantees this in normal use; we check it anyway so a
+    // misuse (e.g., test calling edit_insert_char directly with a hand-set
+    // buffer not anchored to NEXT_DATA) silently no-ops instead of stomping
+    // other heap data.
+    lda edit_buf_end
+    cmp NEXT_DATA
+    bne _eg_bail
+    lda edit_buf_end+1
+    cmp NEXT_DATA+1
+    beq _eg_at_top
+_eg_bail:
+    rts
+_eg_at_top:
+
+    // ---- Headroom check: gap = NEXT_HANDLE - NEXT_DATA; need GROW_BY. ----
+    sec
+    lda NEXT_HANDLE
+    sbc NEXT_DATA
+    tay                              // Y = gap low
+    lda NEXT_HANDLE+1
+    sbc NEXT_DATA+1
+    tax                              // X = gap high
+    // Compare gap (X:Y) vs GROW_BY.
+    tya
+    cmp #<EDIT_BUF_GROW_BY
+    txa
+    sbc #>EDIT_BUF_GROW_BY
+    bcs _eg_have_room
+    rts                              // not enough room — silent no-op
+_eg_have_room:
+
+    // ---- Bump NEXT_DATA by GROW_BY. ----
+    clc
+    lda NEXT_DATA
+    adc #<EDIT_BUF_GROW_BY
+    sta NEXT_DATA
+    lda NEXT_DATA+1
+    adc #>EDIT_BUF_GROW_BY
+    sta NEXT_DATA+1
+
+    // ---- Update handle's H_SIZE (+= GROW_BY). ----
+    lda edit_buf_handle
+    sta W0
+    lda edit_buf_handle+1
+    sta W0+1
+    ldy #H_SIZE
+    clc
+    lda (W0),y
+    adc #<EDIT_BUF_GROW_BY
+    sta (W0),y
+    iny
+    lda (W0),y
+    adc #>EDIT_BUF_GROW_BY
+    sta (W0),y
+
+    // ---- Update O_LEN at the payload header (= buf_start - O_HEADER). ----
+    sec
+    lda edit_buf_start
+    sbc #O_HEADER
+    sta W0
+    lda edit_buf_start+1
+    sbc #0
+    sta W0+1
+    ldy #O_LEN
+    clc
+    lda (W0),y
+    adc #<EDIT_BUF_GROW_BY
+    sta (W0),y
+    iny
+    lda (W0),y
+    adc #>EDIT_BUF_GROW_BY
+    sta (W0),y
+
+    // ---- Reverse-copy [gap_end .. buf_end) up by GROW_BY bytes. ----
+    // We walk W2 down from buf_end (exclusive) toward gap_end (exclusive),
+    // copying each byte to W3 = W2 + GROW_BY. dst = W2+GROW_BY computed
+    // incrementally by decrementing alongside W2.
+    lda edit_buf_end
+    sta W2
+    lda edit_buf_end+1
+    sta W2+1
+    clc
+    lda edit_buf_end
+    adc #<EDIT_BUF_GROW_BY
+    sta W3
+    lda edit_buf_end+1
+    adc #>EDIT_BUF_GROW_BY
+    sta W3+1
+_eg_shift:
+    // Stop when W2 == edit_gap_end.
+    lda W2
+    cmp edit_gap_end
+    bne _eg_shift_step
+    lda W2+1
+    cmp edit_gap_end+1
+    beq _eg_shift_done
+_eg_shift_step:
+    // Decrement W2, W3.
+    lda W2
+    bne !+
+    dec W2+1
+!:
+    dec W2
+    lda W3
+    bne !+
+    dec W3+1
+!:
+    dec W3
+    ldy #0
+    lda (W2),y
+    sta (W3),y
+    jmp _eg_shift
+_eg_shift_done:
+
+    // ---- buf_end += GROW_BY; gap_end += GROW_BY. ----
+    clc
+    lda edit_buf_end
+    adc #<EDIT_BUF_GROW_BY
+    sta edit_buf_end
+    lda edit_buf_end+1
+    adc #>EDIT_BUF_GROW_BY
+    sta edit_buf_end+1
+    clc
+    lda edit_gap_end
+    adc #<EDIT_BUF_GROW_BY
+    sta edit_gap_end
+    lda edit_gap_end+1
+    adc #>EDIT_BUF_GROW_BY
+    sta edit_gap_end+1
     rts
 
 
@@ -202,7 +367,19 @@ edit_insert_char:
     lda edit_gap_start+1
     cmp edit_gap_end+1
     bne _eic_have_room
-    pla                          // discard saved char (buffer full)
+    // Gap collapsed — buffer full. Try to grow it by EDIT_BUF_GROW_BY bytes.
+    // edit_grow may refuse (e.g., heap full, or the buffer isn't actually
+    // the topmost heap allocation), in which case the gap stays empty and
+    // we silently drop the char — same fail-safe behaviour as before grow
+    // existed.
+    jsr edit_grow
+    lda edit_gap_start
+    cmp edit_gap_end
+    bne _eic_have_room
+    lda edit_gap_start+1
+    cmp edit_gap_end+1
+    bne _eic_have_room
+    pla                          // discard saved char (grow refused)
     rts
 _eic_have_room:
     jsr edit_gap_move

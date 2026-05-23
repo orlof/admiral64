@@ -2343,6 +2343,13 @@ builtin_edit:
     jsr str_alloc
     rs_push(RV)                       // RS: [args, buf]
 
+    // Cache the buffer handle so edit_grow can re-deref through it after a
+    // GC-triggering alloc on overflow.
+    lda RV
+    sta edit_buf_handle
+    lda RV+1
+    sta edit_buf_handle+1
+
     // Init editor state.
     rs_peek(W0)
     jsr deref_W0_to_W2                // W2 = buf payload
