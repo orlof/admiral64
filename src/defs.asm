@@ -221,6 +221,12 @@
                            // (raw byte payload). nud_name allocates a TYPE_STR
                            // and mutates H_TYPE to this so eval() routes to
                            // scope_get instead of returning the bytes.
+.const TYPE_CODE  = $2D    // position-independent 6510 machine code, callable.
+                           // Same heap layout as TYPE_STR (raw byte payload =
+                           // opcodes); type tag distinguishes so `f(args)`
+                           // dispatches to a JSR-into-payload instead of the
+                           // string-lambda re-lex path. Created by CODE(str)
+                           // and by asm.admiral's A.GO(); leaf type for GC.
 
 // --- Token kinds (lexer output) ---------------------------------------------
 // Dense numbering 0..N-1 so dispatch tables can be array-indexed. **Stays

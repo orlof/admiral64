@@ -199,6 +199,18 @@ STR_NONE_OBJ:
     .word 4
     .byte $4E, $4F, $4E, $45  // "NONE"
 
+// Prefix for print_value's TYPE_CODE rendering: "<code 0x" — the four hex
+// digits of O_LEN and the closing ">" are appended at print time.
+STR_CODE_PREFIX:
+    .word STR_CODE_PREFIX_OBJ
+    .word 10                 // O_HEADER + 8
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_CODE_PREFIX_OBJ:
+    .word 8
+    .byte $3C, $43, $4F, $44, $45, $20, $30, $58  // "<CODE 0X"
+
 // Built-in functions and methods are not first-class values in admiral —
 // they're never stored, passed as arguments, or returned from expressions.
 // Resolution is purely a parse-time operation: `nud_name` and `led_dot`

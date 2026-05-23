@@ -304,6 +304,8 @@ _vc_same_type:
     beq _vc_str
     cmp #TYPE_NAME
     beq _vc_str                  // names compare bytewise like strings
+    cmp #TYPE_CODE
+    beq _vc_str                  // code blobs compare bytewise (same payload shape)
     cmp #TYPE_FLOAT
     beq _vc_float
     cmp #TYPE_TUPLE

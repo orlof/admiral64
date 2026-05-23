@@ -2448,11 +2448,12 @@ _nlb_recover:
 // a fresh scope). Anything else under `(` is a type error.
 // -----------------------------------------------------------------------------
 led_lparen:
-    preamble_args(1, 0)             // LHS on RS (callable: TYPE_NAME or TYPE_STR)
+    preamble_args(1, 0)             // LHS on RS (callable: TYPE_NAME / STR / CODE)
 
     // LHS dispatch:
     //   TYPE_NAME → free-function builtin (TST lookup in builtins table)
-    //   TYPE_STR  → lambda body re-lex'd in a fresh scope
+    //   TYPE_STR  → lambda body re-lex'd in a fresh scope (kwargs)
+    //   TYPE_CODE → JSR into the byte payload (5 positional args max)
     //   anything else → ERR_TYPE
     rs_peek(W0)
     ldy #H_TYPE
@@ -2461,6 +2462,8 @@ led_lparen:
     beq _llp_name_call
     cmp #TYPE_STR
     beq _llp_str_prefix
+    cmp #TYPE_CODE
+    beq _llp_code_call
     jmp panic_type
 
 _llp_name_call:
@@ -2473,7 +2476,8 @@ _llp_name_call:
     jmp postamble
 _llp_name_miss:
     // Not a known builtin — try evaluating the name (in case the user bound
-    // a TYPE_STR lambda to it via `f = "..."`). On a value, recurse-style.
+    // a TYPE_STR lambda or a TYPE_CODE handle to it). On a value, dispatch
+    // by its actual type.
     jsr eval                        // consumes 1; RV = bound value
     rs_push(RV)                     // RS: [..., value]
     rs_peek(W0)
@@ -2481,6 +2485,8 @@ _llp_name_miss:
     lda (W0),y
     cmp #TYPE_STR
     beq _llp_str_prefix
+    cmp #TYPE_CODE
+    beq _llp_code_call
     jmp panic_type
 
 _llp_str_prefix:
@@ -2498,6 +2504,108 @@ _llp_str_prefix:
     sta METHOD_RECEIVER+1
 
     jmp _llp_str_call
+
+// --- TYPE_CODE: positional, JSR into payload, up to 5 args -----------------
+// RS at entry: [LHS = code handle]. led_lparen is V4'-wrapped so the
+// postamble unwinds RS to just past LHS automatically.
+//
+// Layout: consume `(`, parse up to 5 positional args (each evaluated and
+// pushed on RS), then marshal handles into W1 / W2 / W3 / B0:B1 / B2:B3
+// — slot for arg I is at ZP $12 + 2*(I-1). W0 carries the code's own
+// payload base (for `JMP (zp)` style loops in big extensions). The 16-bit
+// value the routine leaves in W0 becomes a non-negative inline-int result.
+//
+// GC safety: arg evaluation may allocate (and thus may compact), so the
+// SMC JSR target is patched AFTER all args are parsed. Between the patch
+// and the JSR, only memory copies happen — no alloc, no GC.
+_llp_code_call:
+    jsr lexer_next                  // consume `(`
+
+    lda #0
+    sta B6                          // B6 = arg count
+
+    lda LEX_TOKEN_KIND
+    cmp #TK_RPAREN
+    beq _llcc_args_done
+
+_llcc_arg_loop:
+    lda B6
+    cmp #5
+    bcs _llcc_arity_err
+    lda #LBP_COMMA
+    sta B7
+    jsr expression
+    rs_push(RV)
+    jsr eval
+    rs_push(RV)
+    inc B6
+    lda LEX_TOKEN_KIND
+    cmp #TK_COMMA
+    bne _llcc_args_done
+    jsr lexer_next
+    jmp _llcc_arg_loop
+
+_llcc_arity_err:
+    jmp panic_arity
+
+_llcc_args_done:
+    lda #TK_RPAREN
+    jsr lexer_advance
+
+    // Deref LHS (at RS offset 2*B6) to get the payload base; SMC the JSR.
+    lda B6
+    asl
+    tay
+    lda (RSP),y
+    sta W0
+    iny
+    lda (RSP),y
+    sta W0+1
+    jsr deref_W0_to_W2              // W2 = payload base
+    lda W2
+    sta _llcc_jsr+1
+    lda W2+1
+    sta _llcc_jsr+2
+
+    // Marshal: arg I at RS offset 2*(N-I), into ZP slot $12+2*(I-1).
+    // X = $12-relative slot offset (starts at 2*(N-1), -=2 per iter).
+    // Y = RS offset (starts at 0, +=2 per iter).
+    lda B6
+    beq _llcc_marshal_done
+    sec
+    sbc #1
+    asl
+    tax
+    ldy #0
+_llcc_marshal_loop:
+    lda (RSP),y
+    sta $12,x
+    iny
+    lda (RSP),y
+    sta $13,x
+    iny
+    dex
+    dex
+    bpl _llcc_marshal_loop
+_llcc_marshal_done:
+
+    // W0 = code base (re-read from the SMC slot we just patched).
+    lda _llcc_jsr+1
+    sta W0
+    lda _llcc_jsr+2
+    sta W0+1
+_llcc_jsr:
+    jsr $0000                       // → code; out: W0 = 16-bit result
+
+    // Wrap W0 (zero-extended) into an inline int.
+    lda W0
+    sta W2
+    lda W0+1
+    sta W2+1
+    lda #0
+    sta W3
+    sta W3+1
+    jmp postamble_set_rv_int32
 
 // =============================================================================
 // _call_dispatch — leaf helper invoked by `nud_name` (free-function builtins)

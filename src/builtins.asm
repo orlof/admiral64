@@ -1917,6 +1917,34 @@ _call_jsr:
     jmp postamble_set_rv_int32
 
 // =============================================================================
+// builtin_code(s) — clone a TYPE_STR's payload into a new TYPE_CODE handle.
+// The returned value is callable as `code(arg1, ..., arg5)` — `f(args)`
+// dispatches to a JSR into the byte payload when f is TYPE_CODE, with W0 set
+// to the code's own load address and arg handles in W1/W2/W3/B0:B1/B2:B3.
+// Use this around hand-written `\xNN` literals or any STR you want to mark as
+// machine code. asm.admiral's A.GO() also returns TYPE_CODE.
+// =============================================================================
+builtin_code:
+    jsr preamble_call_1_1_w0
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_STR
+    bne _bcode_panic
+    jsr arg0_w0_push                    // root the source STR (array_repeat may GC)
+    rs_push_const(INT_1)
+    jsr array_repeat                    // RV = STR clone with the same payload
+    lda RV
+    sta W0
+    lda RV+1
+    sta W0+1
+    ldy #H_TYPE
+    lda #TYPE_CODE
+    sta (W0),y                          // retag the clone in place
+    jmp postamble
+_bcode_panic:
+    jmp panic_type
+
+// =============================================================================
 // builtin_reboot(graphics_capable) — warm-restart Admiral into a heap config.
 //   falsy  → text/full-heap (handle ceiling $FFF8).
 //   truthy → graphics-capable: reserve $DC00-$FFFF for a hi-res bitmap +
