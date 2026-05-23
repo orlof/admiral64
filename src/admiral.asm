@@ -308,7 +308,13 @@ HEAP_TOP:   .word 0
 
 _heap_apply:
     lda GFX_CONFIG
-    beq _ha_text
+    bne _ha_gfx                        // graphics branch is long; do text first
+    lda #<HEAP_HANDLE_START
+    sta HEAP_TOP
+    lda #>HEAP_HANDLE_START
+    sta HEAP_TOP+1
+    rts
+_ha_gfx:
     lda #<HEAP_HANDLE_START_GFX
     sta HEAP_TOP
     lda #>HEAP_HANDLE_START_GFX
@@ -341,12 +347,59 @@ _ha_yloop:
     inx
     dey
     bne _ha_yloop
-    rts
-_ha_text:
-    lda #<HEAP_HANDLE_START
-    sta HEAP_TOP
-    lda #>HEAP_HANDLE_START
-    sta HEAP_TOP+1
+
+    // Fill the color matrix at $DC00-$DFE7 with $16 (white fg / blue bg per
+    // cell) so a SHOW before any COLOR call shows a clean blue background
+    // rather than random per-cell colors from uninitialized RAM. Plain RAM
+    // write at $01=$34 — no banking needed.
+    lda #0
+    sta $10
+    lda #>GFX_MATRIX_BASE
+    sta $11
+    ldx #3
+    ldy #0
+    lda #$16
+_ha_mpg:
+    sta ($10),y
+    iny
+    bne _ha_mpg
+    inc $11
+    dex
+    bne _ha_mpg
+    ldy #0
+_ha_mtail:
+    sta $DF00,y
+    iny
+    cpy #$E8
+    bne _ha_mtail
+
+    // Color RAM at $D800-$DBE7 = $01 (white) — multicolor ink-3 default.
+    // $D021 bg register = $06 (blue) — multicolor ink-0 default. Both are
+    // I/O, so bracket $01=$35.
+    inc $01
+    lda #0
+    sta $10
+    lda #$D8
+    sta $11
+    ldx #3
+    ldy #0
+    lda #$01
+_ha_cpg:
+    sta ($10),y
+    iny
+    bne _ha_cpg
+    inc $11
+    dex
+    bne _ha_cpg
+    ldy #0
+_ha_ctail:
+    sta $DB00,y
+    iny
+    cpy #$E8
+    bne _ha_ctail
+    lda #$06
+    sta $D021
+    dec $01
     rts
 
 // -----------------------------------------------------------------------------
