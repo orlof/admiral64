@@ -66,30 +66,8 @@ TEXT_SHOW:
         rts
 TEXT_SHOW_END:
 
-// ===== HIRES_SHOW: build row table at $FF40, then VIC -> mono hi-res =========
+// ===== HIRES_SHOW: VIC -> mono hi-res (row table built by REBOOT(TRUE)) ====
 HIRES_SHOW:
-        ldx #0
-        lda #<BITMAP
-        sta W0
-        lda #>BITMAP
-        sta W0+1
-        ldy #25
-hs_tbl:
-        lda W0
-        sta YTBL,x
-        lda W0+1
-        sta YTBL+1,x
-        lda W0                  // running addr += 320 ($0140)
-        clc
-        adc #$40
-        sta W0
-        lda W0+1
-        adc #$01
-        sta W0+1
-        inx
-        inx
-        dey
-        bne hs_tbl
         inc $01                 // I/O in
         lda $DD02
         ora #$03
@@ -418,30 +396,8 @@ hd_skip_y:
         jmp (DLOOP)
 HIRES_DRAW_END:
 
-// ===== MC_SHOW: like HIRES_SHOW plus multicolor bitmap mode ($D016 MCM) ======
+// ===== MC_SHOW: VIC -> multicolor bitmap mode (row table from REBOOT) ======
 MC_SHOW:
-        ldx #0
-        lda #<BITMAP
-        sta W0
-        lda #>BITMAP
-        sta W0+1
-        ldy #25
-mcs_tbl:
-        lda W0
-        sta YTBL,x
-        lda W0+1
-        sta YTBL+1,x
-        lda W0
-        clc
-        adc #$40
-        sta W0
-        lda W0+1
-        adc #$01
-        sta W0+1
-        inx
-        inx
-        dey
-        bne mcs_tbl
         inc $01
         lda $DD02
         ora #$03

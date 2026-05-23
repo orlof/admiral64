@@ -313,6 +313,34 @@ _heap_apply:
     sta HEAP_TOP
     lda #>HEAP_HANDLE_START_GFX
     sta HEAP_TOP+1
+    // In graphics config, pre-populate the bitmap row-address table at
+    // GFX_YTBL ($FF40): 25 words holding GFX_BITMAP_BASE + r*320 (r=0..24).
+    // The table is deterministic, so building it once here saves every
+    // graphics extension from doing it in its own SHOW. The region is part
+    // of the reserved $DC00-$FFFF and is safe to write directly (it's RAM
+    // at $01=$34; vectors $FFFA-$FFFF stay untouched above the table).
+    ldx #0
+    lda #<GFX_BITMAP_BASE
+    sta $10                            // W0: running addr
+    lda #>GFX_BITMAP_BASE
+    sta $11
+    ldy #25
+_ha_yloop:
+    lda $10
+    sta GFX_YTBL,x
+    lda $11
+    sta GFX_YTBL+1,x
+    clc
+    lda $10
+    adc #$40
+    sta $10
+    lda $11
+    adc #$01
+    sta $11
+    inx
+    inx
+    dey
+    bne _ha_yloop
     rts
 _ha_text:
     lda #<HEAP_HANDLE_START
