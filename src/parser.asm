@@ -2521,8 +2521,19 @@ _llp_str_prefix:
 _llp_code_call:
     jsr lexer_next                  // consume `(`
 
+    // Clear METHOD_RECEIVER. led_dot sets it when the LHS was reached via
+    // `obj.method`; _llp_str_prefix snapshots+clears it for STR lambdas and
+    // _call_dispatch does the same for free/method builtins, but the
+    // TYPE_CODE path used to leak the stale value forward. Without this
+    // clear, a subsequent `_call_dispatch` (e.g. a `RANGE(...)` call after a
+    // wrapper-method body that ended with `ME._XXX(...)`) reads stale
+    // METHOD_RECEIVER, prepends a phantom `me` arg, and the target builtin
+    // panics ERR_ARITY one over its real arg count.
     lda #0
-    sta B6                          // B6 = arg count
+    sta METHOD_RECEIVER
+    sta METHOD_RECEIVER+1
+
+    sta B6                          // B6 = arg count (= 0; A still 0 from above)
 
     lda LEX_TOKEN_KIND
     cmp #TK_RPAREN
