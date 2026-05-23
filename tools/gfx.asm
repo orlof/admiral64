@@ -397,6 +397,11 @@ hd_skip_y:
 HIRES_DRAW_END:
 
 // ===== MC_SHOW: VIC -> multicolor bitmap mode (row table from REBOOT) ======
+// Also sets $D021 (ink-0 / bg) to blue as a sensible default. Color RAM at
+// $D800 (ink-3) is left to MC.COLOR — filling it from here would write under
+// VIC bank 3's bitmap RAM where the heap also lives (RAM and color RAM share
+// $D800 addresses but live on different planes selected by $01; the tests run
+// without banking so the auto-fill would clobber heap handles).
 MC_SHOW:
         inc $01
         lda $DD02
@@ -411,6 +416,8 @@ MC_SHOW:
         sta $D011               // BMM+DEN+RSEL
         lda #$D8
         sta $D016               // 40-col, MCM=1
+        lda #$06
+        sta $D021               // ink-0 bg = blue
         dec $01
         rts
 MC_SHOW_END:

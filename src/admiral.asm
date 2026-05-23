@@ -348,10 +348,12 @@ _ha_yloop:
     dey
     bne _ha_yloop
 
-    // Fill the color matrix at $DC00-$DFE7 with $16 (white fg / blue bg per
-    // cell) so a SHOW before any COLOR call shows a clean blue background
-    // rather than random per-cell colors from uninitialized RAM. Plain RAM
-    // write at $01=$34 — no banking needed.
+    // Fill the screen RAM at $DC00-$DFE7 with $16 (high nibble = white, low
+    // nibble = blue per 8x8 cell). VIC reads this for cell colors in BOTH
+    // bitmap modes — mono uses it as fg/bg, multicolor as ink-1/ink-2 — so
+    // initializing it here covers both modes with a sensible default.
+    // (Color RAM at $D800 is multicolor-only and gets initialized by MC.SHOW.)
+    // Plain RAM write at $01=$34 — no banking needed.
     lda #0
     sta $10
     lda #>GFX_MATRIX_BASE
@@ -372,34 +374,6 @@ _ha_mtail:
     iny
     cpy #$E8
     bne _ha_mtail
-
-    // Color RAM at $D800-$DBE7 = $01 (white) — multicolor ink-3 default.
-    // $D021 bg register = $06 (blue) — multicolor ink-0 default. Both are
-    // I/O, so bracket $01=$35.
-    inc $01
-    lda #0
-    sta $10
-    lda #$D8
-    sta $11
-    ldx #3
-    ldy #0
-    lda #$01
-_ha_cpg:
-    sta ($10),y
-    iny
-    bne _ha_cpg
-    inc $11
-    dex
-    bne _ha_cpg
-    ldy #0
-_ha_ctail:
-    sta $DB00,y
-    iny
-    cpy #$E8
-    bne _ha_ctail
-    lda #$06
-    sta $D021
-    dec $01
     rts
 
 // -----------------------------------------------------------------------------
