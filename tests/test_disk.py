@@ -444,6 +444,20 @@ def test_load_round_trip_empty_string(hd):
     assert _eval_str(hd, 'SAVE("F", "")\nLOAD("F")') == b""
 
 
+def test_load_round_trip_string_with_escape(hd):
+    """Regression: strings containing escape sequences used to gain a trailing
+    NUL on SAVE/LOAD. The lexer over-allocates STR literals to the source
+    span size (counting `\\n` as 2 source bytes) and patches O_LEN down to
+    the post-decode count; SAVE was streaming H_SIZE - O_HEADER bytes (the
+    allocated size) instead of O_LEN, dragging the slack byte into the
+    saved record."""
+    # `\\n` is one backslash + n in the Admiral source we feed in — the
+    # lexer decodes that to a LF byte ($0A). The outer `\n` (no raw r prefix)
+    # is a real LF separating two Admiral statements.
+    assert _eval_str(hd, 'SAVE("F", "a\\nb")\nLOAD("F")') == b"a\nb"
+    assert _eval_str(hd, 'SAVE("F", "x\\n\\n\\\\")\nLOAD("F")') == b"x\n\n\\"
+
+
 def test_load_round_trip_bool(hd):
     """True/False round-trip as TYPE_BOOL with the right payload byte."""
     h_true = _eval_handle(hd, 'SAVE("F", TRUE)\nLOAD("F")')

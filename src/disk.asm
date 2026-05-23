@@ -538,16 +538,16 @@ _dser_outer:
     cmp #TYPE_DICT
     beq _dser_size_container
 
-    // Scalar: SIZE = H_SIZE - O_HEADER (= total payload byte count).
-    sec
-    ldy #H_SIZE
-    lda (W0),y
-    sbc #O_HEADER
+    // Scalar: SIZE = O_LEN (actual content size). H_SIZE is the allocator's
+    // block size, which can exceed O_LEN: the lexer over-allocates STR
+    // literals to source-span size and patches O_LEN to the post-decode
+    // count, so e.g. `"a\nb"` allocates 4 payload bytes but only uses 3.
+    // Streaming H_SIZE - O_HEADER bytes would leak those slack bytes (heap
+    // garbage, usually $00) into the saved record — on LOAD the deserializer
+    // sees the inflated SIZE and recreates a STR with a trailing NUL.
+    jsr deref_W0_to_W2               // A = O_LEN low, X = O_LEN high
     sta B0
-    iny
-    lda (W0),y
-    sbc #0
-    sta B1
+    stx B1
     jmp _dser_emit_size
 
 _dser_size_int:
