@@ -256,3 +256,56 @@ M.TEXT(COL=5, ROW=3, S="HI", INK=2, BG=0)  -- ink/bg 0..3; 3-MC-px-wide glyphs
 > examples (`asm`, `master`, `mastermind`) ship as `TYPE_STR` source you call
 > with `()` to execute. The build picks the right packer per file
 > (`OBJECT_EXAMPLES` in the Makefile).
+
+---
+
+## v2 plugins — relocatable, disk-loaded builtins
+
+Everything above describes hand-written position-independent `TYPE_CODE`
+values. **v2 plugins** lift the PIC requirement: normal absolute-address
+assembly, relocated at call time. `SORT` and `EDIT` ship this way
+(`SORT = LOAD("SORT")`, `EDIT = LOAD("EDIT")`).
+
+### Payload layout (produced by `tools/build_plugin.py`)
+
+| Offset | Contents |
+|--------|----------|
+| +0     | `jsr SYS_RELOC` — must be the first instruction; these 3 bytes are also the v2-ABI signature the dispatcher probes |
+| +3     | `.word linked_base` — rewritten by `SYS_RELOC` on every move |
+| +5     | `.word fixup_table - plugin_base` (relative → PIC) |
+| +7     | entry point |
+| end    | fixup table: `.word nfix`, then `nfix` payload-relative offsets of 16-bit absolute words (appended by the build tool) |
+
+`SYS_RELOC` (in `src/plugin_rt.asm`) compares `linked_base` to the
+payload's current address and shifts every listed word by the delta —
+so GC compaction may move the payload freely *between* calls. *During*
+a call the dispatcher pins the handle (`FLAG_PINNED`), because the
+plugin's own allocations may trigger GC while its code is executing.
+
+### v2 calling convention (extends the CODE ABI above)
+
+- in: `W1..W3`/`B0:B1`/`B2:B3` = arg handles (as before), **`B6` = arg
+  count**. Args are rooted on RS for the duration of the call.
+- out: **carry clear** → `W0` = 16-bit int (as before); **carry set** →
+  `W0` = a handle returned verbatim (this is how `EDIT` returns a STR).
+  Legacy payloads (no `jsr SYS_RELOC` signature) keep the old always-int
+  behavior regardless of carry.
+- `SYS_RELOC` preserves `W0-W3`, `B0-B3` and `B6`; clobbers
+  `A X Y RV RV2 B4 B5 B7`.
+
+### Rules for plugin source (`plugins/*.asm`)
+
+1. Call the kernel **only** through the `SYS_*` jump-table slots and read
+   kernel statics only through the `SYSD_*` directory (`src/sys.inc`,
+   table at `$0810-$08AF` — fixed, append-only).
+2. No `#<label` / `#>label` immediates of internal labels — the relocator
+   patches 16-bit words only. `tools/build_plugin.py` assembles at three
+   bases and hard-errors on any unrelocatable reference.
+3. End the file with a trailing `fixup_table:` label (nothing after it).
+4. Structure: `#import "defs.asm"` + `#import "sys.inc"`, the
+   `cmdLineVars` base preamble, and the 7-byte header — copy the top of
+   `plugins/sort.asm`.
+
+Build: `python3 tools/build_plugin.py plugins/foo.asm build/plugin_foo.bin`
+(`make` does this for every `plugins/*.asm` and writes each record to the
+disk image as a SEQ file named after the source).

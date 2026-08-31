@@ -60,7 +60,7 @@ Values are tagged via the `H_TYPE` byte in the 8-byte handle struct (see `defs.a
 - `admiral.asm` / `repl.asm` — entry, REPL loop, auto-print, scope mgmt, panic recovery
 - `lexer.asm` — tokenizer (PETSCII uppercase keywords, `\n` `\r` `\t` `\\` `\"` `\'` `\0` `\xNN` string escapes)
 - `parser.asm` — Pratt expression parser + statement parser, one-pass
-- `builtins.asm` — built-in functions (`PRINT`, `INPUT`, `LEN`, `RANGE`, `TYPE`, `ABS`, `INT`, `FLOAT`, `STR`, `REPR`, `HEX`, `SIN`, `COS`, `TAN`, `ATAN`, `EXP`, `LOG`, `SQRT`, `RND`, `CMP`, `SORT`, `MEM`, `GLOBALS`, `LOCALS`, `PEEK`, `POKE`, `EDIT`, `LOAD`, `SAVE`, `DIR`, `RM`, `GETC`, ...)
+- `builtins.asm` — built-in functions (`PRINT`, `INPUT`, `LEN`, `RANGE`, `TYPE`, `ABS`, `INT`, `FLOAT`, `STR`, `REPR`, `HEX`, `SIN`, `COS`, `TAN`, `ATAN`, `EXP`, `LOG`, `SQRT`, `RND`, `CMP`, `MEM`, `GLOBALS`, `LOCALS`, `PEEK`, `POKE`, `LOAD`, `SAVE`, `DIR`, `RM`, `GETC`, ...)
 - `tst_builtins.asm` (generated) — ternary search tree for builtin name lookup
 - Per-type implementations: `int_*.asm` (arithmetic split across files), `float.asm` (bridges to BASIC ROM), `str.asm` / `str_to_float.asm`, `list.asm`, `array.asm`, `dict.asm`, `val.asm`
 
@@ -75,7 +75,7 @@ Most non-leaf routines use `preamble_args(H, N)` / `postamble`:
 - `preamble_call(MIN, MAX)` for user-level calls: handles arity check + tuple-unpack of args.
 
 ### Subsystems
-- `edit.asm` — gap-buffer text editor (`EDIT()`), F-key shortcuts: F1 save+exit, F3 cancel, F5 cut line, F7 paste. Supports horizontal + vertical scrolling on long lines and long buffers.
+- `plugins/*.asm` — disk-loaded v2 TYPE_CODE plugins (`EDIT`, `SORT`): `E = LOAD("EDIT")`. Built by `tools/build_plugin.py` (three-base assembly → fixup table); they call the kernel only through the fixed jump table at $0810-$08AF (`src/sys.inc`, `src/systab.asm`, `src/plugin_rt.asm`). The table is append-only ABI. `edit.asm` is plugins/edit.asm nowadays; its unit tests inject a fixed-base image (see conftest `edit_plugin_image`).
 - `screen.asm` — VIC-II text mode (40x25, screen at `$0400`, color at `$D800`)
 - `disk.asm` — KERNAL-based 1541 driver + object-graph serialization. `SAVE`/`LOAD` walk reference graphs (cycles and shared references preserved). 16-bit scalar lengths so individual STR/INT/etc. payloads can exceed 256 bytes.
 - `keyboard.asm` — KERNAL `GETIN` via bracketed bank flip; IRQ/NMI handlers for RUN/STOP, RESTORE, and timer
