@@ -59,7 +59,6 @@ BUILTINS = [
     ("GETC",    "builtin_getc"),
     ("KEY",     "builtin_key"),
     ("INPUT",   "builtin_input"),
-    ("EDIT",    "builtin_edit"),
     ("PEEK",    "builtin_peek"),
     ("POKE",    "builtin_poke"),
     ("CODE",    "builtin_code"),

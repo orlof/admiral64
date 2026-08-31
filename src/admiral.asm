@@ -769,7 +769,6 @@ _nmi_nib:
 #import "int_parse.asm"
 #import "scope.asm"
 #import "rnd.asm"
-#import "edit.asm"
 #import "disk.asm"
 #import "builtins.asm"
 #import "assign.asm"

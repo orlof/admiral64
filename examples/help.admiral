@@ -20,7 +20,8 @@ DISK
   L = LOAD("X")       READ BACK
   RM("X")             DELETE
 
-EDIT(S) -> STR    [F-KEYS]
+EDIT = LOAD("EDIT")   [F-KEYS]
+S = EDIT(S) -> STR
   F1 SAVE+EXIT    F3 CANCEL
   F5 CUT LINE     F7 PASTE
 
@@ -36,7 +37,8 @@ RUN PROGRAM FROM DISK
   F()
 
 VIEW THIS HELP
-  EDIT(LOAD("HELP"))     F3 EXITS
+  E = LOAD("EDIT")
+  E(LOAD("HELP"))        F3 EXITS
   F=LOAD("LESS")
   F(T=LOAD("HELP"))      PAGED OUTPUT
 

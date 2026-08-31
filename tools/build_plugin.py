@@ -66,14 +66,20 @@ def find_fixups(a: bytes, b: bytes, c: bytes) -> list[int]:
     hi = {p for p in range(len(a)) if a[p] != b[p]}
     lo = {p for p in range(len(a)) if a[p] != c[p]}
 
+    # A word at (p, p+1): the B build (+$0100) bumps the hi byte at p+1; the
+    # C build (+$0001) bumps the lo byte at p — and ALSO the hi byte at p+1
+    # when the lo byte is $FF (page-crossing carry).
     fixups = []
     for p in sorted(lo):
         if (c[p] - a[p]) & 0xFF != 1:
             sys.exit(f"offset {p}: lo-byte delta {c[p]-a[p]} != 1 — not a base ref")
-        if p + 1 not in hi:
+        if p + 1 in hi:
+            fixups.append(p)                      # word start
+        elif p in hi and p - 1 in lo and a[p - 1] == 0xFF:
+            pass                                  # carry side of word at p-1
+        else:
             sys.exit(f"offset {p}: lone lo-byte reference (e.g. `lda #<label`) "
                      "— the relocator cannot patch 8-bit refs")
-        fixups.append(p)
     for p in sorted(hi):
         if (b[p] - a[p]) & 0xFF != 1:
             sys.exit(f"offset {p}: hi-byte delta {b[p]-a[p]} != 1 — not a base ref")

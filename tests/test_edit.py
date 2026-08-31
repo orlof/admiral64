@@ -5,6 +5,17 @@ so the gap-buffer mechanics are easy to inspect.
 """
 from __future__ import annotations
 
+import pytest
+from conftest import inject_edit_image
+
+
+@pytest.fixture
+def h(h, edit_plugin_image):
+    """The edit core now lives in plugins/edit.asm — inject the assembled
+    image (at EDIT_IMAGE_BASE) and its symbols into a fresh harness."""
+    return inject_edit_image(h, edit_plugin_image)
+
+
 W0 = 0x10
 W2 = 0x14
 

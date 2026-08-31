@@ -946,3 +946,61 @@ def hd(built) -> Harness:
     harness.call("alloc_init")
     harness.call("rnd_init")
     return harness
+
+
+import os
+import pathlib
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+
+# --- EDIT plugin support -----------------------------------------------------
+# EDIT ships as a disk-loaded v2 TYPE_CODE plugin (plugins/edit.asm).
+# Two session artifacts:
+#   edit_plugin_record — the LOAD()-able TYPE_CODE record (interpreter tests)
+#   edit_plugin_image  — (payload, syms) assembled at EDIT_IMAGE_BASE, for
+#                        unit tests that drive edit_* routines by label.
+
+EDIT_IMAGE_BASE = 0xE000
+
+
+@pytest.fixture(scope="session")
+def edit_plugin_record() -> bytes:
+    out = ROOT / "build" / "plugin_edit.bin"
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "build_plugin.py"),
+         str(ROOT / "plugins" / "edit.asm"), str(out)],
+        cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0, f"build_plugin failed:\n{r.stdout}{r.stderr}"
+    return out.read_bytes()
+
+
+@pytest.fixture(scope="session")
+def edit_plugin_image() -> tuple[bytes, dict[str, int]]:
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        out = pathlib.Path(td) / "edit_img.prg"
+        r = subprocess.run(
+            ["java", "-jar", os.path.expanduser("~/bin/KickAssembler/KickAss.jar"),
+             str(ROOT / "plugins" / "edit.asm"),
+             "-libdir", str(ROOT / "src"),
+             "-odir", td, "-o", str(out), "-symbolfile",
+             f":base={EDIT_IMAGE_BASE}"],
+            cwd=ROOT, capture_output=True, text=True)
+        assert r.returncode == 0, f"KickAss failed:\n{r.stdout}{r.stderr}"
+        payload = out.read_bytes()[2:]
+        syms = {}
+        for line in (pathlib.Path(td) / "edit.sym").read_text().splitlines():
+            line = line.strip()
+            if line.startswith(".label "):
+                name, _, val = line[7:].partition("=")
+                syms[name] = int(val.lstrip("$"), 16)
+    return payload, syms
+
+
+def inject_edit_image(h: "Harness", image: tuple[bytes, dict[str, int]]) -> "Harness":
+    payload, syms = image
+    for i, byte in enumerate(payload):
+        h.mpu.memory[EDIT_IMAGE_BASE + i] = byte
+    h.sym.update(syms)
+    return h

@@ -1,40 +1,410 @@
 // -----------------------------------------------------------------------------
-// edit.asm — full-screen gap-buffer text editor.
+// plugins/edit.asm — EDIT() as a disk-loaded v2 TYPE_CODE plugin.
 //
-// One linear byte buffer, EDIT_BUF_SIZE bytes initially, allocated as a
-// TYPE_STR. Grows by EDIT_BUF_GROW_BY bytes via `edit_grow` whenever the gap
-// collapses on an insert. Logical text is stored as
-//     [buf_start .. gap_start)  ++  [gap_end .. buf_end)
-// The range [gap_start, gap_end) is "the gap" — slack space. Insert/delete
-// at gap_start is O(1). Cursor moves don't shift bytes; they only update
-// `pos` (the cursor's physical address). On the next insert/delete, the gap
-// is shifted to `pos` first via `edit_gap_move`.
+// Usage from Admiral:   EDIT = LOAD("EDIT")
+//                       S = EDIT()          empty buffer
+//                       S = EDIT(TEXT)      pre-loaded buffer
+// F1 saves and returns the buffer; F3 cancels and returns the original arg
+// (or ""). Body = src edit core + the old builtin_edit driver, ported to
+// the v2 CODE ABI (args in W1, argc in B6, carry-set handle return).
 //
-// `pos` is always either equal to `gap_start` / `gap_end`, or somewhere in
-// `[buf_start, gap_start) ∪ [gap_end, buf_end]` — never inside the gap.
-// edit_key_left / edit_key_right skip across the gap when crossing it.
-//
-// Steady-state invariant: no allocation in the editor's hot path (gap-move,
-// per-key dispatch, render). kbd_getchar / screen_put_char / wset don't
-// allocate, so GC can't perturb pointers during a typical keystroke. The
-// ONE exception is `edit_grow`, called from `edit_insert_char` when the gap
-// runs out: it allocates a bigger payload, copies content across, and
-// re-bases all editor pointers via offsets saved before the alloc. The
-// editor's buffer handle (`edit_buf_handle`) is rooted on RS by
-// `builtin_edit`, so GC keeps it live and only its H_PTR changes — we
-// re-deref through the handle after the alloc to find the new payload.
-//
-// Mirrors Admiral's `edit2.dasm16`.
+// See plugins/sort.asm for the plugin rules (SYS_*-only kernel access, no
+// 8-bit refs to internal labels).
 // -----------------------------------------------------------------------------
-
-#importonce
 #import "defs.asm"
-#import "stacks.asm"
-#import "preamble.asm"
-#import "handle.asm"
+#import "sys.inc"
 
 .const EDIT_BUF_SIZE     = 1024     // initial allocation
 .const EDIT_BUF_GROW_BY  = 1024     // grow increment per overflow
+
+.var pbase = $1000
+.if (cmdLineVars.containsKey("base")) .eval pbase = cmdLineVars.get("base").asNumber()
+
+* = pbase "Plugin"
+
+plugin_base:
+    jsr SYS_RELOC
+    .word plugin_base                 // +3 linked_base (rewritten on move)
+    .word fixup_table - plugin_base   // +5 fixup-table offset (relative: PIC)
+
+// --- entry (= base+7): CODE ABI — B6 = argc (0..1), W1 = seed STR ---------
+entry:
+    lda B6
+    cmp #2
+    bcc !+
+    jmp SYS_PANIC_ARITY
+!:
+    sta edit_argc
+    tax                               // Z := (argc == 0) — cmp #2 above left
+    beq _bedit_no_arg                 // Z reflecting A-2, not A itself
+    // Root the seed arg on RS so F3-cancel can return it after the editor
+    // loop has clobbered W1. Type-check it first.
+    lda W1
+    sta W0
+    lda W1+1
+    sta W0+1
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_STR
+    beq !+
+    jmp SYS_PANIC_TYPE
+!:
+    jsr SYS_RS_PUSH_W0                // RS: [arg]
+_bedit_no_arg:
+
+    // Allocate the editor buffer.
+    lda #<EDIT_BUF_SIZE
+    sta ALLOC_SIZE
+    lda #>EDIT_BUF_SIZE
+    sta ALLOC_SIZE+1
+    jsr SYS_STR_ALLOC
+    jsr SYS_RS_PUSH_RV                // RS: [arg?, buf]
+
+    // Cache the buffer handle so edit_grow can re-deref through it after a
+    // GC-triggering alloc on overflow.
+    lda RV
+    sta edit_buf_handle
+    lda RV+1
+    sta edit_buf_handle+1
+
+    // Init editor state.
+    jsr SYS_RS_PEEK_W0
+    jsr SYS_DEREF_W0_TO_W2            // W2 = buf payload
+    lda W2
+    sta W0
+    lda W2+1
+    sta W0+1
+    lda #<EDIT_BUF_SIZE
+    sta W2
+    lda #>EDIT_BUF_SIZE
+    sta W2+1
+    jsr edit_init
+
+    // If 1 arg given, copy text into buffer via edit_insert_char.
+    // (Type was checked at entry; the arg handle sits at RS depth 1.)
+    lda edit_argc
+    beq _bedit_render_initial
+    lda W1
+    sta W0
+    lda W1+1
+    sta W0+1
+    jsr SYS_DEREF_W0_TO_W2            // W2 = arg payload, A:X = O_LEN word
+    sta B4                             // B4:B5 = remaining bytes (word)
+    stx B5
+    lda W2
+    sta B2
+    lda W2+1
+    sta B3                             // B2:B3 = current src pointer
+_bedit_copy:
+    lda B4
+    ora B5
+    bne !go+
+    jmp _bedit_render_initial
+!go:
+    ldy #0
+    lda (B2),y
+    jsr edit_insert_char
+    // src++ (16-bit)
+    inc B2
+    bne !+
+    inc B3
+!:
+    // remaining-- (16-bit)
+    lda B4
+    bne !+
+    dec B5
+!:
+    dec B4
+    jmp _bedit_copy
+
+_bedit_render_initial:
+    jsr SYS_SCREEN_CLEAR
+    jsr edit_view_focus
+    jsr edit_draw_screen
+    lda edit_scr_x
+    sta SCREEN_COL
+    lda edit_scr_y
+    sta SCREEN_ROW
+
+_bedit_loop:
+    // Show cursor (reverse-video the cell at SCREEN_COL/ROW) before polling.
+    // _bedit_after_key updates SCREEN_COL/ROW so the cursor reappears at the
+    // post-edit position each time round.
+    jsr SYS_SCREEN_SHOW_CURSOR
+
+_bedit_poll:
+    // KERNAL is normally banked OUT ($01 = MEM_NORMAL = $34). Flip it back
+    // in for the GETIN call only, then bank back out so the rest of the
+    // editor body runs in the steady-state config.
+    inc $01                            // $34 → $36 (KERNAL+I/O in)
+    inc $01
+    jsr KERNAL_GETIN
+    pha
+    dec $01
+    dec $01
+    pla
+    bne _bedit_got_key
+    jmp _bedit_poll
+
+_bedit_got_key:
+    // Hide the cursor before any redraw — key handlers that mutate the
+    // buffer call edit_draw_line / edit_draw_screen, which overwrite cells
+    // unconditionally; if the cursor's bit-7 is still set on a cell those
+    // routines don't touch, it would linger as a stale highlight. Hiding
+    // here keeps cell state in sync with the model.
+    pha
+    jsr SYS_SCREEN_HIDE_CURSOR
+    pla
+
+_bedit_dispatch:
+    // Branch range to handlers is too far for relative beq; trampoline
+    // through near JMPs.
+    cmp #$85                           // F1 → save & exit
+    bne !+
+    jmp _bedit_save
+!:
+    cmp #$86                           // F3 → cancel
+    bne !+
+    jmp _bedit_cancel
+!:
+    // F5 (kill) is the only key that does NOT clear edit_clip_cut, so the
+    // accumulating-cut behavior works. Handle it before the reset.
+    cmp #$87                           // F5 → kill line
+    bne !+
+    jsr edit_key_kill
+    jmp _bedit_after_key
+!:
+    // Any other key resets clip_cut so the next F5 starts a fresh kill.
+    pha
+    lda #0
+    sta edit_clip_cut
+    pla
+    cmp #$88                           // F7 → yank
+    bne !+
+    jsr edit_key_yank
+    jmp _bedit_after_key
+!:
+    cmp #$0D                           // RETURN
+    beq _bedit_newline
+    cmp #$14                           // INST/DEL → backspace
+    beq _bedit_bs
+    cmp #$11                           // CRSR-DOWN
+    beq _bedit_down
+    cmp #$91                           // SHIFT+CRSR-DOWN = up
+    beq _bedit_up
+    cmp #$1D                           // CRSR-RIGHT
+    beq _bedit_right
+    cmp #$9D                           // SHIFT+CRSR-RIGHT = left
+    beq _bedit_left
+    // Printable PETSCII: $20-$7E (ASCII) or $A0-$FE (graphics).
+    cmp #$20
+    bcs _bedit_check_printable
+    jmp _bedit_loop
+_bedit_check_printable:
+    cmp #$7F
+    bcc _bedit_insert
+    cmp #$A0
+    bcs _bedit_check_high_printable
+    jmp _bedit_loop
+_bedit_check_high_printable:
+    cmp #$FF
+    bcc _bedit_insert
+    jmp _bedit_loop
+
+_bedit_insert:
+    jsr edit_insert_char
+    jmp _bedit_after_key
+_bedit_newline:
+    jsr edit_key_newline
+    jmp _bedit_after_key
+_bedit_bs:
+    jsr edit_key_bs
+    jmp _bedit_after_key
+_bedit_left:
+    jsr edit_key_left
+    jmp _bedit_after_key
+_bedit_right:
+    jsr edit_key_right
+    jmp _bedit_after_key
+_bedit_up:
+    jsr edit_key_up
+    jmp _bedit_after_key
+_bedit_down:
+    jsr edit_key_down
+    jmp _bedit_after_key
+
+_bedit_after_key:
+    // Cursor moves alone don't set edit_dirty, so any key that slides the
+    // viewport — horizontally (edit_view_shift) when cursor crosses col 39,
+    // or vertically (edit_view_start) when cursor crosses the visible top/
+    // bottom — would otherwise leave the screen painted against the old
+    // origin. Stash all 3 origin bytes on the HW stack across
+    // edit_view_focus (a leaf that balances the stack), XOR each post-JSR
+    // value against its saved twin into B0, and OR bit 1 (full-screen-dirty)
+    // if any byte differs.
+    lda edit_view_shift
+    pha
+    lda edit_view_start
+    pha
+    lda edit_view_start+1
+    pha
+    jsr edit_view_focus
+    pla
+    eor edit_view_start+1
+    sta B0
+    pla
+    eor edit_view_start
+    ora B0
+    sta B0
+    pla
+    eor edit_view_shift
+    ora B0
+    beq _bedit_check_dirty
+    lda edit_dirty
+    ora #$02
+    sta edit_dirty
+_bedit_check_dirty:
+    lda edit_dirty
+    and #$02
+    beq _bedit_check_line_dirty
+    jsr edit_draw_screen
+    jmp _bedit_update_cursor
+_bedit_check_line_dirty:
+    lda edit_dirty
+    and #$01
+    beq _bedit_update_cursor
+    jsr edit_draw_current_line
+_bedit_update_cursor:
+    lda edit_scr_x
+    sta SCREEN_COL
+    lda edit_scr_y
+    sta SCREEN_ROW
+    jmp _bedit_loop
+
+_bedit_save:
+    jsr SYS_SCREEN_CLEAR
+    // logical_size = (gap_start - buf_start) + (buf_end - gap_end)
+    sec
+    lda edit_gap_start
+    sbc edit_buf_start
+    sta B0
+    lda edit_gap_start+1
+    sbc edit_buf_start+1
+    sta B1
+    sec
+    lda edit_buf_end
+    sbc edit_gap_end
+    sta B2
+    lda edit_buf_end+1
+    sbc edit_gap_end+1
+    sta B3
+    clc
+    lda B0
+    adc B2
+    sta ALLOC_SIZE
+    lda B1
+    adc B3
+    sta ALLOC_SIZE+1
+    jsr SYS_STR_ALLOC                      // RV = result handle
+    jsr SYS_RS_PUSH_RV                 // RS: [arg?, buf, result]
+
+    // Copy logical content into result. RS-rooted source pointers (gap
+    // pointers) survive — and the buffer alloc happened before the loop
+    // (no further allocations from here), so static pointers are stable.
+    jsr SYS_RS_PEEK_W0
+    jsr SYS_DEREF_W0_TO_W2             // W2 = result payload
+    lda W2
+    sta W3
+    lda W2+1
+    sta W3+1
+
+    // pre-gap [buf_start..gap_start)
+    lda edit_buf_start
+    sta W0
+    lda edit_buf_start+1
+    sta W0+1
+_bedit_save_pre:
+    lda W0
+    cmp edit_gap_start
+    bne _bedit_save_pre_step
+    lda W0+1
+    cmp edit_gap_start+1
+    beq _bedit_save_post
+_bedit_save_pre_step:
+    ldy #0
+    lda (W0),y
+    sta (W3),y
+    inc W0
+    bne !+
+    inc W0+1
+!:
+    inc W3
+    bne !+
+    inc W3+1
+!:
+    jmp _bedit_save_pre
+
+_bedit_save_post:
+    lda edit_gap_end
+    sta W0
+    lda edit_gap_end+1
+    sta W0+1
+_bedit_save_post_loop:
+    lda W0
+    cmp edit_buf_end
+    bne _bedit_save_post_step
+    lda W0+1
+    cmp edit_buf_end+1
+    beq _bedit_finish
+_bedit_save_post_step:
+    ldy #0
+    lda (W0),y
+    sta (W3),y
+    inc W0
+    bne !+
+    inc W0+1
+!:
+    inc W3
+    bne !+
+    inc W3+1
+!:
+    jmp _bedit_save_post_loop
+
+_bedit_finish:
+    // RS: [arg?, buf, result] → return the result handle, drop the rest.
+    jsr SYS_RS_POP_RV                  // RV = result
+    jsr SYS_RS_POP_W0                  // drop buf
+    lda edit_argc
+    beq _bedit_ret_rv
+    jsr SYS_RS_POP_W0                  // drop arg
+_bedit_ret_rv:
+    lda RV
+    sta W0
+    lda RV+1
+    sta W0+1
+    sec                                // carry set → W0 is a handle
+    rts
+
+_bedit_cancel:
+    jsr SYS_SCREEN_CLEAR
+    jsr SYS_RS_POP_W0                  // drop buf; RS: [arg?]
+    lda edit_argc
+    beq _bedit_cancel_empty
+    // Return the original seed arg (rooted on RS at entry — the editor
+    // loop clobbered W1 long ago).
+    jsr SYS_RS_POP_RV                  // RV = arg
+    jmp _bedit_ret_rv
+_bedit_cancel_empty:
+    lda #0
+    sta ALLOC_SIZE
+    sta ALLOC_SIZE+1
+    jsr SYS_STR_ALLOC                  // RV = fresh ""
+    jmp _bedit_ret_rv
+
+
+// --- plugin-local state ------------------------------------------------------
+edit_argc: .byte 0                    // 0 or 1 (B6 at entry)
+
 
 // --- editor state (static) --------------------------------------------------
 // All 16-bit pointers are absolute addresses into the buffer's payload.
@@ -726,7 +1096,7 @@ _eaw0_done:
 // further line content is skipped (long lines clip at the right edge).
 // -----------------------------------------------------------------------------
 edit_draw_line:
-    jsr scr_row_offset_to_w2_a       // W2 = SCREEN_BASE + row*40
+    jsr SYS_SCR_ROW_W2_A            // W2 = SCREEN_BASE + row*40
 
     // Phase 1: skip `view_shift` leading chars (or stop if line ends first).
     ldx edit_view_shift
@@ -750,7 +1120,7 @@ _edl_draw:
     bcs _edl_blank
     ldy #0
     lda (W0),y
-    jsr petscii_to_screen_code
+    jsr SYS_PETSCII_TO_SCREEN
     ldy B0
     sta (W2),y
     jsr _edit_advance_w0
@@ -1428,3 +1798,5 @@ _eky_loop:
     jmp _eky_loop
 _eky_done:
     rts
+
+fixup_table:                          // build_plugin.py appends [nfix][offsets]
