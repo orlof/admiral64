@@ -44,7 +44,6 @@ BUILTINS = [
     ("CMP",   "builtin_cmp"),
     ("HEX",   "builtin_hex"),
     ("REPR",  "builtin_repr"),
-    ("SORT",  "builtin_sort"),
     ("RND",   "builtin_rnd"),
     ("MEM",     "builtin_mem"),
     ("GLOBALS", "builtin_globals"),

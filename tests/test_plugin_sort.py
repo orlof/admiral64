@@ -102,3 +102,36 @@ def test_sort_mixed_calls_survive_gc(hs):
     hs.rs_push(handle)
     hs.call("parser_eval", max_steps=30_000_000)
     assert bytes(read_str(hs, hs.read_word(RV))) == b"abcdefgh"
+
+
+# --- cases ported from the old builtin_sort suites ---------------------------
+
+def test_sort_str_already_sorted(hs):
+    assert _eval_str(hs, LOADS + 'S("abc")') == b"abc"
+
+
+def test_sort_str_with_duplicates(hs):
+    assert _eval_str(hs, LOADS + 'S("banana")') == b"aaabnn"
+
+
+def test_sort_str_reverse_truthy_int(hs):
+    assert _eval_str(hs, LOADS + 'S("cba", 1)') == b"cba"
+
+
+def test_sort_str_reverse_false_explicit(hs):
+    assert _eval_str(hs, LOADS + 'S("cba", FALSE)') == b"abc"
+
+
+def test_sort_tuple_does_not_modify_original(hs):
+    src = LOADS + 't = (3, 1, 2)\nS(t)\nt[0]'
+    assert _eval(hs, src) == 3
+
+
+def test_sort_list_strings(hs):
+    src = LOADS + 'lst = ["banana", "apple", "cherry"]\nS(lst)\nlst[0]'
+    assert _eval_str(hs, src) == b"apple"
+
+
+def test_sort_list_reverse_wraps(hs):
+    src = LOADS + 'lst = [3, 1, 2, 5, 4]\nS(lst, TRUE)\nlst[4]'
+    assert _eval(hs, src) == 1
