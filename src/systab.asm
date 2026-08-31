@@ -49,7 +49,10 @@ jmp scr_row_offset_to_w2_a          // 26 SYS_SCR_ROW_W2_A
 jmp petscii_to_screen_code          // 27 SYS_PETSCII_TO_SCREEN
 jmp panic_type                      // 28 SYS_PANIC_TYPE
 jmp panic_arity                     // 29 SYS_PANIC_ARITY
-jmp sys_unimpl                      // 30 reserved
-jmp sys_unimpl                      // 31 reserved
+jmp postamble_pop_rv                // 30 SYS_POSTAMBLE_POP_RV
+jmp rs_push_const_ax                // 31 SYS_RS_PUSH_CONST_AX
+.for (var i=32; i<48; i++) {
+jmp sys_unimpl                      // reserved
+}
 
 .if (* != SYS_TAB_END) .error "systab size drifted — table must end at SYS_TAB_END"

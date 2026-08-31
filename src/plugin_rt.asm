@@ -7,20 +7,24 @@
 //                            checks (see parser.asm _llp_code_call).
 //   +3  .word linked_base    the base address the payload's absolute refs
 //                            currently point at; rewritten by sys_reloc.
-//   +5  .word nfix           number of fixups.
-//   +7  fixups               nfix words, each the payload-relative offset of
-//                            a 16-bit absolute address to shift by delta.
-//   +7+2*nfix                the real entry point (plugin code).
+//   +5  .word fixups_off     payload-relative offset of the fixup table
+//                            (a constant: `fixup_table - plugin_base`).
+//   +7  entry                the plugin code starts here, always.
+//   ...
+//   fixup table (at base+fixups_off, appended by the build tool):
+//        .word nfix, then nfix words, each the payload-relative offset of a
+//        16-bit absolute address word to shift by (base - linked_base).
 //
 // sys_reloc contract:
 //   in:  W0 = payload base (set by _llp_code_call before the JSR into the
 //        payload; the payload's own `jsr SYS_RELOC` doesn't disturb it).
-//   out: jumps to the payload entry point; never returns to base+3.
-//   clobbers: A, X, Y, RV, RV2, B4-B7. PRESERVES W0-W3, B0-B3 (arg slots).
+//   out: jumps to base+7 (the entry point); never returns to base+3.
+//   clobbers: A, X, Y, RV, RV2, B4, B5, B7. PRESERVES W0-W3, B0-B3 (arg
+//   slots) and B6 (the dispatcher passes the v2 arg count in B6).
 //
 // GC interplay: the dispatcher pins the code handle (FLAG_PINNED) around
 // the whole call, so the payload cannot move while sys_reloc or the plugin
-// runs. Between calls it may move freely — that's exactly why linked_base
+// runs. Between calls it may move freely — that is exactly why linked_base
 // is re-checked on every call.
 // -----------------------------------------------------------------------------
 #importonce
@@ -54,35 +58,44 @@ sys_reloc:
     lda W0+1
     sta (W0),y
 
-    // B4:B5 = nfix, B6:B7 = fixup walker (= base + 7)
+    // B4:B5 = fixup-table walker = base + fixups_off
     ldy #5
+    clc
     lda (W0),y
+    adc W0
     sta B4
     iny
     lda (W0),y
+    adc W0+1
     sta B5
 
-    clc
-    lda W0
-    adc #7
-    sta B6
-    lda W0+1
-    adc #0
+    // X:B7 = nfix (lo:hi); advance walker past the count word
+    ldy #0
+    lda (B4),y
+    tax
+    iny
+    lda (B4),y
     sta B7
+    clc
+    lda B4
+    adc #2
+    sta B4
+    bcc _sr_loop
+    inc B5
 
 _sr_loop:
-    lda B4
-    ora B5
+    txa
+    ora B7
     beq _sr_entry
 
     // RV2 = base + fixup offset  (absolute address of the word to patch)
     ldy #0
     clc
-    lda (B6),y
+    lda (B4),y
     adc W0
     sta RV2
     iny
-    lda (B6),y
+    lda (B4),y
     adc W0+1
     sta RV2+1
 
@@ -99,44 +112,29 @@ _sr_loop:
 
     // walker += 2, nfix -= 1
     clc
-    lda B6
-    adc #2
-    sta B6
-    bcc !+
-    inc B7
-!:
     lda B4
-    bne !+
-    dec B5
+    adc #2
+    sta B4
+    bcc !+
+    inc B5
 !:
-    dec B4
+    cpx #0
+    bne !+
+    dec B7
+!:
+    dex
     jmp _sr_loop
 
 _sr_entry:
-    // B6:B7 = entry = base + 7 + 2*nfix, then jmp (B6)
-    ldy #5
-    lda (W0),y
-    asl
-    sta B6
-    iny
-    lda (W0),y
-    rol
-    sta B7
+    // RV2 = base + 7, then jmp (RV2)
     clc
-    lda B6
+    lda W0
     adc #7
-    sta B6
-    bcc !+
-    inc B7
-!:
-    clc
-    lda B6
-    adc W0
-    sta B6
-    lda B7
-    adc W0+1
-    sta B7
-    jmp (B6)
+    sta RV2
+    lda W0+1
+    adc #0
+    sta RV2+1
+    jmp (RV2)
 
 // Reserved-slot target: a plugin built against a newer sys.inc jumped into
 // a slot this kernel doesn't implement yet.

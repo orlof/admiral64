@@ -10,16 +10,16 @@
 
 * = $0801 "Stub"
 
-// BASIC upstart stub: 10 SYS2176  → SYS $0880 → label `cold`. The gap
+// BASIC upstart stub: 10 SYS2224  → SYS $08B0 → label `cold`. The gap
 // between the stub and $0880 holds the fixed-address system table
 // (systab.asm) that disk-loaded TYPE_CODE plugins link against.
-// Layout: [link $080B][line 10][SYS $9E]["2176"][eol $00][eop $00 $00].
-.byte $0B, $08, $0A, $00, $9E, $32, $31, $37, $36, $00, $00, $00
+// Layout: [link $080B][line 10][SYS $9E]["2224"][eol $00][eop $00 $00].
+.byte $0B, $08, $0A, $00, $9E, $32, $32, $32, $34, $00, $00, $00
 
 #import "systab.asm"
 
 * = SYS_TAB_END "Code"
-.if (* != $0880) .error "kernel code must start at $0880 (BASIC stub SYS target)"
+.if (* != $08B0) .error "kernel code must start at $08B0 (BASIC stub SYS target)"
 
 // cold — the SYS / RESET entry. Defaults the heap config to text (full heap),
 // then falls into boot. BITMAP(bool) sets GFX_CONFIG itself and JMPs to `boot`

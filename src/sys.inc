@@ -59,5 +59,7 @@
 .const SYS_PETSCII_TO_SCREEN    = SYS_TAB + 3*27
 .const SYS_PANIC_TYPE           = SYS_TAB + 3*28  // admiral.asm
 .const SYS_PANIC_ARITY          = SYS_TAB + 3*29
-                                                  // slots 30-31 reserved
-.const SYS_TAB_END              = SYS_TAB + 3*32  // = $0880 (kernel code start)
+.const SYS_POSTAMBLE_POP_RV     = SYS_TAB + 3*30
+.const SYS_RS_PUSH_CONST_AX     = SYS_TAB + 3*31  // A/X = lo/hi of handle addr
+                                                  // slots 32-47 reserved
+.const SYS_TAB_END              = SYS_TAB + 3*48  // = $08B0 (kernel code start)

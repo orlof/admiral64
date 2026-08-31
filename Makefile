@@ -18,6 +18,11 @@ OBJECT_EXAMPLES := text hires mc
 # Override with `make C1541=/path/to/c1541` for other locations.
 C1541        := /Applications/vice-arm64-gtk3-3.9/bin/c1541
 
+PLUGIN_SRCS  := $(wildcard plugins/*.asm)
+PLUGIN_BINS  := $(patsubst plugins/%.asm,$(BUILD)/plugin_%.bin,$(PLUGIN_SRCS))
+PLUGIN_WRITES = $(foreach src,$(PLUGIN_SRCS),\
+    -write $(BUILD)/plugin_$(basename $(notdir $(src))).bin $(basename $(notdir $(src))),s)
+
 EXAMPLE_SRCS := $(wildcard $(EXAMPLES_DIR)/*.admiral)
 EXAMPLE_BINS := $(patsubst $(EXAMPLES_DIR)/%.admiral,$(BUILD)/%.bin,$(EXAMPLE_SRCS))
 # Build the per-file `-write hostfile cbmname,s` trio for each example.
@@ -44,6 +49,10 @@ $(GENERATED): tools/build_tst.py
 $(PRG): $(SOURCES) | $(BUILD)
 	$(KICKASS) -odir $(BUILD) -vicesymbols $(SRC)/$(TOP).asm
 
+# v2 TYPE_CODE plugins: three-base assembly + fixup table + record framing.
+$(BUILD)/plugin_%.bin: plugins/%.asm $(SRC)/sys.inc tools/build_plugin.py | $(BUILD)
+	$(PYTHON) tools/build_plugin.py $< $@
+
 # Pack one .admiral source into a single-record TYPE_STR stream that
 # `LOAD("<name>")` deserializes into a callable/editable string. The
 # explicit rules below override this for OBJECT_EXAMPLES.
@@ -63,11 +72,12 @@ $(foreach name,$(OBJECT_EXAMPLES),$(eval $(call OBJECT_RULE,$(name))))
 # via VICE's c1541. `-format` creates a blank disk; subsequent `-write`
 # commands push each file in. Remove any stale image first since `-format`
 # overwrites cleanly but we want a fresh inode each build.
-$(DISK): $(PRG) $(EXAMPLE_BINS) | $(BUILD)
+$(DISK): $(PRG) $(EXAMPLE_BINS) $(PLUGIN_BINS) | $(BUILD)
 	rm -f $@
 	$(C1541) -format "admiral nn,01" d64 $@ \
 	  -write $(PRG) $(TOP),p \
-	  $(EXAMPLE_WRITES)
+	  $(EXAMPLE_WRITES) \
+	  $(PLUGIN_WRITES)
 
 $(BUILD):
 	mkdir -p $@
