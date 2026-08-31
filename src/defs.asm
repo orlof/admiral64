@@ -169,6 +169,10 @@
 .const FLAG_GRAY   = $40   // GC tri-color worklist bit — set during phase 1 of
                            // gc_mark on roots and on newly-discovered children;
                            // cleared in phase 2 once children traced.
+.const FLAG_PINNED = $20   // gc_compact must not move this block: set by the
+                           // TYPE_CODE dispatcher around a v2 plugin call so
+                           // the executing payload stays put (parser.asm /
+                           // plugin_rt.asm). Cleared when the call returns.
 .const FLAG_RENDERING = $10   // currently inside a str-render call on this
                               // container — set by builtin_str on entry to
                               // _bstr_list / _bstr_tuple / _bstr_dict, cleared

@@ -2578,6 +2578,36 @@ _llcc_args_done:
     lda W2+1
     sta _llcc_jsr+2
 
+    // v2-ABI probe: a payload built by tools/build_plugin.py begins with
+    // `jsr SYS_RELOC` — those three bytes double as the ABI signature.
+    // v2 payloads get (a) pinned across the call so gc_compact can't move
+    // the executing code (their own allocs may trigger GC), and (b) the
+    // carry-set return convention: C set on rts → W0 is a handle to return
+    // as-is, C clear → W0 is a 16-bit int as in v1. Legacy payloads (CODE()
+    // strings, asm.admiral output) are called exactly as before.
+    ldx #0                          // X = v2 flag
+    ldy #0
+    lda (W2),y
+    cmp #$20                        // JSR opcode
+    bne _llcc_probe_done
+    iny
+    lda (W2),y
+    cmp #<SYS_RELOC
+    bne _llcc_probe_done
+    iny
+    lda (W2),y
+    cmp #>SYS_RELOC
+    bne _llcc_probe_done
+    ldy #H_FLAGS                    // v2 → pin the code handle
+    lda (W0),y
+    ora #FLAG_PINNED
+    sta (W0),y
+    ldx #1
+_llcc_probe_done:
+    txa
+    jsr fs_push_byte_call           // FS: [v2flag]
+    fs_push(W0)                     // FS: [v2flag, code handle]
+
     // Marshal: arg I at RS offset 2*(N-I), into ZP slot $12+2*(I-1).
     // X = $12-relative slot offset (starts at 2*(N-1), -=2 per iter).
     // Y = RS offset (starts at 0, +=2 per iter).
@@ -2606,8 +2636,32 @@ _llcc_marshal_done:
     lda _llcc_jsr+2
     sta W0+1
 _llcc_jsr:
-    jsr $0000                       // → code; out: W0 = 16-bit result
+    jsr $0000                       // → code; out: W0 = result (see probe above)
 
+    php                             // preserve the callee's carry (v2 return
+                                    // convention) across the FS pops
+    fs_pop(W2)                      // W2 = code handle (clobbers C — hence php)
+    jsr fs_pop_byte_call            // A = v2 flag
+    tax                             // X = v2 flag
+    plp                             // C = callee's carry (Z is stale)
+    txa                             // Z = (v2 flag == 0); TXA leaves C alone
+    beq _llcc_wrap_int              // legacy → always int-wrap (C irrelevant)
+
+    // v2: unpin (lda/and/sta don't touch C)
+    ldy #H_FLAGS
+    lda (W2),y
+    and #~FLAG_PINNED
+    sta (W2),y
+    bcc _llcc_wrap_int              // C clear → int result
+
+    // C set → W0 is a handle: return it verbatim.
+    lda W0
+    sta RV
+    lda W0+1
+    sta RV+1
+    jmp postamble
+
+_llcc_wrap_int:
     // Wrap W0 (zero-extended) into an inline int.
     lda W0
     sta W2
