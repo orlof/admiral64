@@ -63,6 +63,7 @@ TEXT_SHOW:
         lda #$C8
         sta $D016               // 40-col, MCM=0
         dec $01                 // $35 -> $34
+        clc                     // unified ABI: C clear = int return (value unused)
         rts
 TEXT_SHOW_END:
 
@@ -82,6 +83,7 @@ HIRES_SHOW:
         lda #$C8
         sta $D016               // 40-col, MCM=0 (mono)
         dec $01
+        clc                     // unified ABI: C clear = int return (value unused)
         rts
 HIRES_SHOW_END:
 
@@ -107,6 +109,7 @@ gc_tail:
         iny
         cpy #$40
         bne gc_tail
+        clc                     // unified ABI: C clear = int return (value unused)
         rts
 GFX_CLS_END:
 
@@ -143,6 +146,7 @@ hc_tail:
         iny
         cpy #$E8
         bne hc_tail
+        clc                     // unified ABI: C clear = int return (value unused)
         rts
 HIRES_COLOR_END:
 
@@ -187,6 +191,7 @@ hp_msk:
 hp_set:
         ora (W0),y
         sta (W0),y
+        clc                     // unified ABI: C clear = int return (value unused)
         rts
 HIRES_PLOT_END:
 
@@ -410,6 +415,7 @@ hd_y_plot:
 
         dec W2
         bne hd_y_loop
+        clc                     // unified ABI: C clear = int return (value unused)
         rts
 
         // ===== x-major: count = dx (16-bit), each step moves x; sometimes y =====
@@ -430,6 +436,7 @@ hd_x_major:
         sta W2+1
         ora W2
         bne _xm_have_count           // dx > 0 — proceed
+        clc                     // unified ABI: C clear = int return (value unused)
         rts                           // dx == 0 — single point (already plotted)
 _xm_have_count:
 
@@ -525,6 +532,7 @@ hd_x_dec_lo:
         beq hd_done
         jmp (DLOOP)                  // body is past branch range; indirect JMP
 hd_done:
+        clc                     // unified ABI: C clear = int return (value unused)
         rts
 HIRES_DRAW_END:
 
@@ -551,6 +559,7 @@ MC_SHOW:
         lda #$06
         sta $D021               // ink-0 bg = blue
         dec $01
+        clc                     // unified ABI: C clear = int return (value unused)
         rts
 MC_SHOW_END:
 
@@ -616,6 +625,7 @@ mcc_ctail:
         cpy #$E8
         bne mcc_ctail
         dec $01
+        clc                     // unified ABI: C clear = int return (value unused)
         rts
 MC_COLOR_END:
 
@@ -689,6 +699,7 @@ mc_set:
         and (W0),y              // clear the 2-bit field
         ora B7                  // set ink<<shift
         sta (W0),y
+        clc                     // unified ABI: C clear = int return (value unused)
         rts
 MC_PLOT_END:
 
@@ -944,6 +955,7 @@ mc_y_plot:
         beq mc_y_done
         jmp (DLOOP)
 mc_y_done:
+        clc                     // unified ABI: C clear = int return (value unused)
         rts
 
         // ===== x-major: count = dx, each step moves x; sometimes also y =====
@@ -960,6 +972,7 @@ mc_x_major:
         lda W1
         sta W2
         bne mc_x_have_count          // dx > 0 — proceed
+        clc                     // unified ABI: C clear = int return (value unused)
         rts                          // dx == 0 — first point already plotted
 mc_x_have_count:
 
@@ -1051,6 +1064,7 @@ mc_x_plot:
         beq mc_x_done
         jmp (DLOOP)
 mc_x_done:
+        clc                     // unified ABI: C clear = int return (value unused)
         rts
 MC_DRAW_END:
 
@@ -1210,6 +1224,7 @@ ht_done:
         pla
         sta $01
         cli
+        clc                     // unified ABI: C clear = int return (value unused)
         rts
 
 _ht_petscii:
@@ -1420,6 +1435,7 @@ mt_done:
         pla
         sta $01
         cli
+        clc                     // unified ABI: C clear = int return (value unused)
         rts
 
 _mt_petscii:

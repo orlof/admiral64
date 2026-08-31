@@ -1633,18 +1633,102 @@ builtin_code:
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_STR
-    bne _bcode_panic
-    jsr arg0_w0_push                    // root the source STR (array_repeat may GC)
-    rs_push_const(INT_1)
-    jsr array_repeat                    // RV = STR clone with the same payload
+    beq !+
+    jmp _bcode_panic
+!:
+
+    // Unified TYPE_CODE framing: every payload is a v2 plugin image.
+    //   +0 jsr SYS_RELOC   +3 linked_base   +5 fixups_off (= len+7)
+    //   +7 the caller's bytes (position-independent by contract)
+    //   +7+len  .word 0  (empty fixup table)
+    // Size = len + 9.
+    jsr arg0_w0_deref                   // A:X = src O_LEN
+    sta B0
+    stx B1                              // B0:B1 = len
+    clc
+    adc #9
+    sta ALLOC_SIZE
+    txa
+    adc #0
+    sta ALLOC_SIZE+1
+    jsr str_alloc                       // RV = new object (rooted below)
+    rs_push(RV)                         // RS: [args, code]
     lda RV
     sta W0
     lda RV+1
     sta W0+1
     ldy #H_TYPE
     lda #TYPE_CODE
-    sta (W0),y                          // retag the clone in place
-    jmp postamble
+    sta (W0),y                          // retag in place
+    jsr deref_W0_to_W2                  // W2 = dest payload (data start)
+
+    // Header. linked_base = W2: the dispatcher derefs the handle and calls
+    // the data start, so "where the code lives right now" IS W2.
+    ldy #0
+    lda #$20                            // JSR opcode
+    sta (W2),y
+    iny
+    lda #<SYS_RELOC
+    sta (W2),y
+    iny
+    lda #>SYS_RELOC
+    sta (W2),y
+    iny
+    lda W2
+    sta (W2),y                          // +3 linked_base lo
+    iny
+    lda W2+1
+    sta (W2),y                          // +4 linked_base hi
+    iny
+    clc
+    lda B0
+    adc #7
+    sta (W2),y                          // +5 fixups_off lo (= len+7)
+    iny
+    lda B1
+    adc #0
+    sta (W2),y                          // +6 fixups_off hi
+
+    // Copy the source bytes to dest+7. Re-deref the source AFTER the alloc
+    // (GC may have moved it). B4:B5 = dest walker, B0:B1 = remaining.
+    clc
+    lda W2
+    adc #7
+    sta B4
+    lda W2+1
+    adc #0
+    sta B5
+    arg_get(0, W0)
+    jsr deref_W0_to_W2                  // W2 = src payload
+_bcode_copy:
+    lda B0
+    ora B1
+    beq _bcode_trailer
+    ldy #0
+    lda (W2),y
+    sta (B4),y
+    inc W2
+    bne !+
+    inc W2+1
+!:
+    inc B4
+    bne !+
+    inc B5
+!:
+    lda B0
+    bne !+
+    dec B1
+!:
+    dec B0
+    jmp _bcode_copy
+
+_bcode_trailer:
+    ldy #0
+    tya
+    sta (B4),y                          // nfix = 0
+    iny
+    sta (B4),y
+    jmp postamble_pop_rv                // RV = the new TYPE_CODE
 _bcode_panic:
     jmp panic_type
 

@@ -10,9 +10,17 @@ DOUBLE = CODE("\xA0\x00\xB1\x12\x0A\x85\x10\xA9\x00\x85\x11\x60")
 PRINT(DOUBLE(21))             -- 42
 ```
 
-A `TYPE_CODE` value is just bytes plus a type tag — build one from a string
-literal with `CODE("\xNN...")`, generate one with the `asm.admiral` assembler
-(`A.GO()` returns `TYPE_CODE`), or `LOAD` it from disk.
+A `TYPE_CODE` value is your bytes wrapped in the **unified plugin frame**:
+`CODE(s)` prepends a 7-byte header (`jsr SYS_RELOC` + relink bookkeeping)
+and appends an empty fixup table, so every payload — a hand-written blob, an
+`A.GO()` product, or a `build_plugin.py` image — is called through one and
+the same dispatch path. Your bytes are untouched and still run with `W0` =
+their own first byte (`SYS_RELOC` normalizes it), so nothing changes for
+your code except the return convention below. Build one from a string
+literal with `CODE("\xNN...")`, generate one with the `asm.admiral`
+assembler (`A.GO()` returns `TYPE_CODE`), or `LOAD` it from disk.
+`TYPE_CODE` records saved before this framing existed fail with `ERR_TYPE`
+when called — re-create them with `CODE()` and re-save.
 
 ---
 
@@ -22,8 +30,11 @@ literal with `CODE("\xNN...")`, generate one with the `asm.admiral` assembler
   payload's first byte and jumps to it.
 - **`arg1..arg5`** — 0 to 5 positional arguments. Each argument's **handle
   address** is placed in one of the ZP registers below.
-- **Returns** — the 16-bit value your routine leaves in `W0`, zero-extended to
-  a non-negative inline integer (0..65535).
+- **Returns** — end with `clc; rts` and the 16-bit value in `W0` (zero-
+  extended to a non-negative inline integer 0..65535), or `sec; rts` with a
+  handle address in `W0` to return that value verbatim. A set carry with a
+  non-handle in `W0` panics `ERR_TYPE` — so always `clc` before a plain
+  return; carry is otherwise whatever your last instruction left.
 
 | Slot | Holds |
 |------|-------|
@@ -261,10 +272,12 @@ M.TEXT(COL=5, ROW=3, S="HI", INK=2, BG=0)  -- ink/bg 0..3; 3-MC-px-wide glyphs
 
 ## v2 plugins — relocatable, disk-loaded builtins
 
-Everything above describes hand-written position-independent `TYPE_CODE`
-values. **v2 plugins** lift the PIC requirement: normal absolute-address
-assembly, relocated at call time. `SORT` and `EDIT` ship this way
-(`SORT = LOAD("SORT")`, `EDIT = LOAD("EDIT")`).
+Everything above describes `CODE()`-framed position-independent blobs.
+**Plugin images** built by `tools/build_plugin.py` share the exact same
+frame but carry a real fixup table, lifting the PIC requirement: normal
+absolute-address assembly, relocated at call time. `SORT` and `EDIT` ship
+this way (`SORT = LOAD("SORT")`, `EDIT = LOAD("EDIT")`). There is no
+separate "v1": the dispatcher accepts only framed payloads.
 
 ### Payload layout (produced by `tools/build_plugin.py`)
 
@@ -282,16 +295,17 @@ so GC compaction may move the payload freely *between* calls. *During*
 a call the dispatcher pins the handle (`FLAG_PINNED`), because the
 plugin's own allocations may trigger GC while its code is executing.
 
-### v2 calling convention (extends the CODE ABI above)
+### Calling convention (one ABI for everything)
 
-- in: `W1..W3`/`B0:B1`/`B2:B3` = arg handles (as before), **`B6` = arg
-  count**. Args are rooted on RS for the duration of the call.
-- out: **carry clear** → `W0` = 16-bit int (as before); **carry set** →
-  `W0` = a handle returned verbatim (this is how `EDIT` returns a STR).
-  Legacy payloads (no `jsr SYS_RELOC` signature) keep the old always-int
-  behavior regardless of carry.
-- `SYS_RELOC` preserves `W0-W3`, `B0-B3` and `B6`; clobbers
-  `A X Y RV RV2 B4 B5 B7`.
+- in: `W1..W3`/`B0:B1`/`B2:B3` = arg handles, **`B6` = arg count**,
+  `W0` = entry address of your code. Args are rooted on RS for the
+  duration of the call, and the payload is pinned against GC moves.
+- out: **carry clear** → `W0` = 16-bit int; **carry set** → `W0` = a
+  handle returned verbatim (this is how `EDIT` returns a STR). The
+  dispatcher validates the handle's type tag — a forgotten `clc` panics
+  `ERR_TYPE` instead of corrupting the GC roots.
+- `SYS_RELOC` preserves `W1-W3`, `B0-B3` and `B6`; clobbers
+  `A X Y RV RV2 B4 B5 B7` and sets `W0` = entry.
 
 ### Rules for plugin source (`plugins/*.asm`)
 

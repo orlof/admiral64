@@ -18,9 +18,12 @@
 // sys_reloc contract:
 //   in:  W0 = payload base (set by _llp_code_call before the JSR into the
 //        payload; the payload's own `jsr SYS_RELOC` doesn't disturb it).
-//   out: jumps to base+7 (the entry point); never returns to base+3.
-//   clobbers: A, X, Y, RV, RV2, B4, B5, B7. PRESERVES W0-W3, B0-B3 (arg
-//   slots) and B6 (the dispatcher passes the v2 arg count in B6).
+//   out: jumps to base+7 (the entry point) with W0 = entry — the unified
+//        "W0 = your code's own address" convention (EXTENSIONS.md): CODE()
+//        blobs address their own bytes relative to W0. Never returns to
+//        base+3.
+//   clobbers: A, X, Y, RV, RV2, B4, B5, B7, W0 (:= entry). PRESERVES
+//   W1-W3, B0-B3 (arg slots) and B6 (the dispatcher's arg count).
 //
 // GC interplay: the dispatcher pins the code handle (FLAG_PINNED) around
 // the whole call, so the payload cannot move while sys_reloc or the plugin
@@ -126,7 +129,7 @@ _sr_loop:
     jmp _sr_loop
 
 _sr_entry:
-    // RV2 = base + 7, then jmp (RV2)
+    // RV2 = base + 7 = entry; hand off with W0 = entry (see contract).
     clc
     lda W0
     adc #7
@@ -134,6 +137,10 @@ _sr_entry:
     lda W0+1
     adc #0
     sta RV2+1
+    lda RV2
+    sta W0
+    lda RV2+1
+    sta W0+1
     jmp (RV2)
 
 // Reserved-slot target: a plugin built against a newer sys.inc jumped into

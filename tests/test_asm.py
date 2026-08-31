@@ -39,8 +39,11 @@ def _run(h, source: str):
 
 
 def _assemble(h, asm_text: str) -> bytes:
+    """Return just the assembled bytes — CODE() frames every payload with the
+    unified 7-byte v2 header and a 2-byte empty fixup table (see
+    EXTENSIONS.md), which are not the assembler's output."""
     rv = _run(h, _ASM_LIB + '\nA.GO(SRC="' + asm_text + '")')
-    return bytes(read_str(h, rv))
+    return bytes(read_str(h, rv))[7:-2]
 
 
 def _assemble_and_call(h, asm_text: str, *args: int) -> int:
