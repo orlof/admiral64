@@ -399,6 +399,33 @@ gc_compact_loop:
     cmp #TYPE_INT
     beq gc_compact_advance
 
+    // Pinned blocks (an executing v2 plugin payload) must not move. The
+    // reserved list is in H_PTR order and every block compacted so far sat
+    // below this one, so GC_DEST <= H_PTR here; parking GC_DEST at the
+    // pinned block's end concedes the gap below it until the next GC after
+    // unpin.
+    ldy #H_FLAGS
+    lda (W0),y
+    and #FLAG_PINNED
+    beq !notpinned+
+    ldy #H_PTR
+    clc
+    lda (W0),y
+    iny
+    tax
+    lda (W0),y
+    sta GC_DEST+1
+    ldy #H_SIZE
+    txa
+    adc (W0),y
+    sta GC_DEST
+    iny
+    lda GC_DEST+1
+    adc (W0),y
+    sta GC_DEST+1
+    jmp gc_compact_advance
+!notpinned:
+
     // W2 = source = W0.H_PTR
     ldy #H_PTR
     lda (W0),y
