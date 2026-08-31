@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from conftest import W0, W1, FSP_ZP, RSP_ZP
 
-FS_END = 0x8800
-RS_END = 0x8C00
+FS_END = 0x8400
+RS_END = 0x8800
 
 
 # --- Init --------------------------------------------------------------------

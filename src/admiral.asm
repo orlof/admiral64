@@ -611,14 +611,14 @@ _nmi_save:
     lda #$20
     sta $0400+9
 
-    // FS_END = $8800, RS_END = $8C00 (literals — defined in stacks.asm but
+    // FS_END = $8400, RS_END = $8800 (literals — defined in stacks.asm but
     // .const forward refs from admiral.asm can't resolve at this point in the
     // single-segment build; the real defs live there for everyone else).
     sec
     lda #$00
     sbc FSP
     sta W0
-    lda #$88
+    lda #$84
     sbc FSP+1
     sta W0+1
     ldx #10
@@ -630,7 +630,7 @@ _nmi_save:
     lda #$00
     sbc RSP
     sta W0
-    lda #$8C
+    lda #$88
     sbc RSP+1
     sta W0+1
     ldx #15

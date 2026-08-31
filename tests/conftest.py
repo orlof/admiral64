@@ -110,7 +110,7 @@ ERR_TYPE = 0x05
 ERR_ARITY = 0x06
 
 # Heap region bounds (must stay in sync with src/defs.asm).
-HEAP_DATA_START = 0x8C00
+HEAP_DATA_START = 0x8800
 HEAP_HANDLE_START = 0xFFF8
 
 # C64 BASIC ROM image (8 KB, mapped at $A000-$BFFF when bit 0 of $01 is set).

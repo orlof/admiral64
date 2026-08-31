@@ -340,7 +340,7 @@
 // Data grows UP from $8800 (right after FS at $8000-$83FF and RS at
 // $8400-$87FF); handles grow DOWN from $FFF8 — one byte below the NMI vector
 // at $FFFA. Net usable heap: ~30 KB.
-.const HEAP_DATA_START   = $8C00   // data heap grows UP from here
+.const HEAP_DATA_START   = $8800   // data heap grows UP from here
 .const HEAP_HANDLE_START = $FFF8   // text-config handle ceiling: grows DOWN
                                    // from here (just below the IRQ/NMI/RESET
                                    // vectors at $FFFA-$FFFF — RAM with $01=$34)
