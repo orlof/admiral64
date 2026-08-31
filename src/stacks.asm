@@ -28,10 +28,10 @@
 // Heap begins at HEAP_DATA_START = $8800 (defs.asm), directly above RS.
 // FS is 1 KB (~45 nested 22-byte frames, plus body pushes and caller args).
 // RS is 1 KB (512 handle slots — each is a 16-bit handle pointer).
-.const FS_BEGIN = $8000     // frame stack low bound (inclusive)
-.const FS_END   = $8400     // frame stack high bound (exclusive; = empty FSP)
-.const RS_BEGIN = $8400     // root stack low bound
-.const RS_END   = $8800     // root stack high bound (1 KB / 512 handle slots)
+.const FS_BEGIN = $8400     // frame stack low bound (inclusive)
+.const FS_END   = $8800     // frame stack high bound (exclusive; = empty FSP)
+.const RS_BEGIN = $8800     // root stack low bound
+.const RS_END   = $8C00     // root stack high bound (1 KB / 512 handle slots)
 
 // FSP, RSP, and FP are declared in defs.asm as ZP pointers.
 
