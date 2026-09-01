@@ -75,6 +75,29 @@ def test_popup_select_second_item(hu):
     assert _eval_int(hu, src) == 1
 
 
+def test_popup_renders_all_items_first_highlighted(hu):
+    """All items visible on their own rows, first one reverse-highlighted —
+    regression for the last-item-newline scrolling LOAD out of the window."""
+    _stub_getin_queue(hu, bytes([F3]))
+    src = LOADU + 'UI.POPUP(T="F", I=["LOAD","SAVE","RUN","QUIT"], X=2, Y=2, W=12)\n0'
+    # Snapshot mid-run is hard; instead reopen without closing: use OPEN+MENU
+    # manually so the window stays on screen after cancel? Simpler: check the
+    # rendered rows straight after MENU returns is impossible (popup closed).
+    # So drive OPEN + the draw part only: open a window and call MENU with a
+    # queue that cancels immediately, then verify via a second popup that
+    # stays open: open manually.
+    src = (LOADU +
+           'P = UI.OPEN(T="F", X=2, Y=2, W=12, H=6)\n'
+           'R = P.MENU(I=["LOAD","SAVE","RUN","QUIT"])')
+    run(hu, src, max_steps=80_000_000)
+    # Popup not closed by MENU (only POPUP closes); rows visible:
+    assert scr(hu, 3, 3) == 0x8C           # 'L' reversed (highlight row 0)
+    assert scr(hu, 3, 4) == 0x13           # 'S'
+    assert scr(hu, 3, 5) == 0x12           # 'R'
+    assert scr(hu, 3, 6) == 0x11           # 'Q'
+
+
+
 def test_popup_wraps_up_to_last(hu):
     _stub_getin_queue(hu, bytes([CRSR_UP, RETURN]))
     src = LOADU + 'UI.POPUP(T="M", I=["AA", "BB", "CC"], X=2, Y=2, W=10)'
