@@ -13,7 +13,7 @@ PACK_OBJ     := tools/pack_object.py
 VENV_PY      := .venv/bin/python3
 # Extensions packed as serialized objects (not source strings). Each must
 # correspond to an examples/<name>.admiral whose body ends with `RETURN <var>`.
-OBJECT_EXAMPLES := text hires mc
+OBJECT_EXAMPLES := text hires mc ui
 # VICE — install VICE and the binaries are at these paths on macOS.
 # Override with `make C1541=... X64=...` for other locations.
 VICE_BIN     := /Applications/vice-arm64-gtk3-3.9/bin

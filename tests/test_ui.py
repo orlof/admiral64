@@ -25,11 +25,14 @@ F3 = 0x86
 
 
 @pytest.fixture(scope="session")
-def ui_record() -> bytes:
+def ui_record(built) -> bytes:
+    # UI ships as a serialized OBJECT (like hires/mc/text): pack_object runs
+    # the source in py65 against the freshly built PRG and captures the
+    # SAVE'd dict record. `built` guarantees build/admiral.prg + .vs exist.
     out = ROOT / "build" / "ui_test.bin"
     r = subprocess.run(
-        [sys.executable, str(ROOT / "tools" / "pack_str_record.py"),
-         str(ROOT / "examples" / "ui.admiral"), str(out)],
+        [sys.executable, str(ROOT / "tools" / "pack_object.py"),
+         str(ROOT / "examples" / "ui.admiral"), str(out), "UI"],
         cwd=ROOT, capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
     return out.read_bytes()
@@ -41,7 +44,7 @@ def hu(hd, ui_record):
     return hd
 
 
-LOADU = 'F = LOAD("UI")\nUI = F()\n'
+LOADU = 'UI = LOAD("UI")\n'
 
 
 def _eval_int(h, src, max_steps=80_000_000):
