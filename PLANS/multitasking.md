@@ -237,9 +237,9 @@ shell-/ohjelmainstansseja omissa ikkunoissaan (`SPAWN` shellistä).
 
 ## 8. Avoimet kysymykset
 
-1. Scope: analysoitu luvussa 3 — esitys: vain prosessi-scope nyt,
-   jaettu read-through (`_`-linkki) mahdollisena laajennuksena myöhemmin.
-   Vahvistettava.
+1. Scope: PÄÄTETTY 2026-09-02 — vain prosessi-scope (luvun 3 analyysi);
+   jaettu read-through (`_`-linkki) mahdollinen yhteensopiva laajennus
+   myöhemmin.
 2. `parser_exec`in tarkka sopimus — riittääkö `EXEC`ille sellaisenaan?
 3. HW-pino: puolitus vs. kopiointivaihto (luku 2) — mitattava
    mcdemo/neuron-tason ohjelmilla ennen valintaa.
