@@ -25,7 +25,7 @@ What this is
 
 Admiral64 is a self-hosted environment that boots from a `.PRG` on disk and gives you:
 
- - an interactive REPL with line editing and auto-printing of expressions,
+ - an interactive REPL with line editing and auto-printing of expressions (BASIC-style `PRINT X,` suppresses the newline),
  - a Python-inspired language with dynamic typing, first-class strings-as-functions, exceptions, and `me`-bound methods inside dicts,
  - a gap-buffer text editor (`EDIT = LOAD("EDIT")`, then `EDIT(s)`) for writing programs without leaving Admiral,
  - a 1541 floppy filesystem with object-graph `save()` / `load()`,

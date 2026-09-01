@@ -1162,6 +1162,14 @@ _sp_loop:
     cmp #TK_COMMA
     bne _sp_done
     jsr lexer_next                  // consume `,`
+    // BASIC-style trailing comma: `PRINT X,` suppresses the newline (and
+    // the separator space) — lets windowed code place text without the
+    // implicit newline scrolling the bottom row.
+    lda LEX_TOKEN_KIND
+    cmp #TK_NEWLINE
+    beq _sp_no_nl
+    cmp #TK_EOF
+    beq _sp_no_nl
     lda #$20                         // PETSCII space
     jsr screen_put_char
     jmp _sp_loop
@@ -1169,6 +1177,7 @@ _sp_loop:
 _sp_done:
     lda #$0D
     jsr screen_put_char             // newline
+_sp_no_nl:
     jmp postamble_return_none
 
 // -----------------------------------------------------------------------------

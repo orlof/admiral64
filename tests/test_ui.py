@@ -90,8 +90,10 @@ def test_popup_renders_all_items_first_highlighted(hu):
            'P = UI.OPEN(T="F", X=2, Y=2, W=12, H=6)\n'
            'R = P.MENU(I=["LOAD","SAVE","RUN","QUIT"])')
     run(hu, src, max_steps=80_000_000)
-    # Popup not closed by MENU (only POPUP closes); rows visible:
-    assert scr(hu, 3, 3) == 0x8C           # 'L' reversed (highlight row 0)
+    # Window not closed by MENU (only POPUP closes). MENU clears the
+    # highlight before returning, so all rows read back un-reversed — the
+    # point is that every item sits on its own row, LOAD included.
+    assert scr(hu, 3, 3) == 0x0C           # 'L' on interior row 0
     assert scr(hu, 3, 4) == 0x13           # 'S'
     assert scr(hu, 3, 5) == 0x12           # 'R'
     assert scr(hu, 3, 6) == 0x11           # 'Q'

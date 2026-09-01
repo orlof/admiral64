@@ -4741,3 +4741,14 @@ def test_taken_branch_skips_later_condition_side_effects(h):
            'R = F(C=13)\n'
            'R + X')
     assert _eval(h, src) == 3
+
+
+def test_print_trailing_comma_suppresses_newline(h):
+    """BASIC-style `PRINT X,` — no newline, no trailing separator space."""
+    run_src = 'PRINT "AB",\nPRINT "CD"'
+    payload = list(run_src.encode("ascii"))
+    handle = place_str(h, 0x8500, payload)
+    h.rs_push(handle)
+    h.call("parser_eval", max_steps=2_000_000)
+    screen = h.mpu.memory[0x0400:0x0400 + 8]
+    assert bytes(screen[:4]) == bytes([0x01, 0x02, 0x03, 0x04])  # ABCD together
