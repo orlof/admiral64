@@ -51,7 +51,9 @@ jmp panic_type                      // 28 SYS_PANIC_TYPE
 jmp panic_arity                     // 29 SYS_PANIC_ARITY
 jmp postamble_pop_rv                // 30 SYS_POSTAMBLE_POP_RV
 jmp rs_push_const_ax                // 31 SYS_RS_PUSH_CONST_AX
-.for (var i=32; i<48; i++) {
+jmp wm_screen_lock                  // 32 SYS_SCREEN_LOCK
+jmp wm_screen_unlock                // 33 SYS_SCREEN_UNLOCK
+.for (var i=34; i<48; i++) {
 jmp sys_unimpl                      // reserved
 }
 

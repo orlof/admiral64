@@ -4704,3 +4704,40 @@ def test_parser_exec_persists_vars_across_calls(h):
     h.rs_push(src3)
     h.call("parser_exec", max_steps=2_000_000)
     assert _read_int(h, h.read_word(RV)) == 8
+
+
+# --- elif-chain control-sentinel regression ---------------------------------
+# A RETURN/BREAK from an arm FOLLOWED BY more elif arms used to be lost: the
+# later arms' condition evaluation clobbered the control sentinel in RV (and
+# ran the conditions' side effects). Fixed in stmt_if by parking the sentinel
+# on RS and parsing-without-evaluating the remaining arms.
+
+def test_return_from_nonlast_elif_arm(h):
+    src = ('F = "IF C == 17:\\n  RETURN 1\\nELIF C == 13:\\n  RETURN 3\\n'
+           'ELIF C == 134:\\n  RETURN 4"\n'
+           'F(C=13)')
+    assert _eval(h, src) == 3
+
+
+def test_return_from_if_arm_with_elif_following(h):
+    src = ('F = "IF C == 13:\\n  RETURN 3\\nELIF C == 134:\\n  RETURN 4"\n'
+           'F(C=13)')
+    assert _eval(h, src) == 3
+
+
+def test_break_from_nonlast_elif_arm(h):
+    src = ('F = "K = 0\\nWHILE K < 5:\\n  K = K + 1\\n  IF K == 2:\\n'
+           '    BREAK\\n  ELIF K == 9:\\n    K = 99\\nRETURN K"\n'
+           'F()')
+    assert _eval(h, src) == 2
+
+
+def test_taken_branch_skips_later_condition_side_effects(h):
+    # After an arm is taken, later elif conditions must not execute: G()
+    # would bump X if evaluated.
+    src = ('X = 0\n'
+           'G = "X = X + 100\\nRETURN 0"\n'
+           'F = "IF C == 13:\\n  RETURN 3\\nELIF G() == 1:\\n  RETURN 4"\n'
+           'R = F(C=13)\n'
+           'R + X')
+    assert _eval(h, src) == 3

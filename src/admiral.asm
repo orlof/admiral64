@@ -255,6 +255,12 @@ error_handler:
     sta PAUSE_BLOCKED
     sta NMI_PAUSED
 
+    // WM recovery: drop a stale EDIT screen lock and route the error output
+    // to ROOT — a panic mid-program may have left an arbitrary window (or
+    // the locked fullscreen) as the target. wm_use/wm_refresh are V4' and
+    // the stacks were just reset, so calling them here is safe.
+    jsr wm_panic_reset
+
     // Newline so the message starts on a fresh row regardless of how far
     // the panicking print got.
     lda #$0D

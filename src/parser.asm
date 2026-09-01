@@ -585,12 +585,20 @@ stmt_if:
                                     //  val_truthy clobbers B0/B1 as scratch
 
 _sif_main_clause:
-    // Just consumed `if` or `elif`. Eval condition.
+    // Just consumed `if` or `elif`. PARSE the condition always (the lexer
+    // must move past it), but EVALUATE it only while no branch has been
+    // taken yet (B6 == 0): a later arm's condition must neither run its
+    // side effects nor clobber RV — in particular a control sentinel
+    // (RETURN/BREAK/CONTINUE) from the taken body, which is parked on RS
+    // (B6 == 2) until the chain ends.
     lda #0
     sta B7
     jsr expression                  // RV = lazy condition
+    lda B6
+    bne _sif_cond_parsed            // branch taken → parse-only
     rs_push(RV)
     jsr eval                        // RV = condition value
+_sif_cond_parsed:
 
     lda #TK_COLON
     jsr lexer_advance               // consume `:`
@@ -617,6 +625,19 @@ _sif_no_nl1:
     // Truthy: run the suite, mark branch taken.
     jsr parser_suite
     lda #1
+    sta B6
+    // If the body ended in a control sentinel, park it on RS: the remaining
+    // arms are still parsed (lexer discipline) and parsing must not lose it.
+    lda RV
+    sta W0
+    lda RV+1
+    sta W0+1
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_CTRL
+    bne _sif_check_more
+    rs_push(RV)
+    lda #2
     sta B6
     jmp _sif_check_more
 
@@ -656,6 +677,14 @@ _sif_skip_else:
     jsr skip_suite
 
 _sif_done:
+    // Un-park a control sentinel that later arms' parses would otherwise
+    // have clobbered (B6 == 2 → it sits on RS).
+    lda B6
+    cmp #2
+    bne _sif_no_parked
+    rs_pop(RV)
+    jmp postamble
+_sif_no_parked:
     // Propagate body's RV if it's a control sentinel (break/continue need
     // to bubble up through if-statements). Otherwise return NONE — `if` is
     // a statement, not an expression.

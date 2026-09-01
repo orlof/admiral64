@@ -1,6 +1,6 @@
 # UI-primitiivit: ikkunat ja valikot Admiral-ohjelmista
 
-Tila: ehdotus (2026-08-30). Tausta: `PLANS/c64os-feasibility.md` luvut 9–10 ja
+Tila: toteutettu feature/wm-multitasking-haarassa (2026-09-01) — kernel-WM src/wm.asm + screen.asm-kohdekerros, UI-kirjasto examples/ui.admiral, EDIT screen lock. Poikkeamat suunnitelmasta: WINDOW-dictissä myos T; ei COL-varia viela; REPL ei tee USE(ROOT)ia per kehote (kayttaja hallitsee kohdetta; paniikki palauttaa ROOTiin). Alkuperainen ehdotus 2026-08-30: Tausta: `PLANS/c64os-feasibility.md` luvut 9–10 ja
 `xcb3-ext/libs/lib_ui.bas`-analyysi. Malli: *puskuroidut ikkunat + omistajakartta + write-through* — jokainen
 ikkuna on `W*H`-merkkipuskuri, 1000 tavun kartta kertoo kunkin ruutusolun
 päällimmäisen ikkunan, ja `put_char` kirjoittaa ruutuun heti jos solu on

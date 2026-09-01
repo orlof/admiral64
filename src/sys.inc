@@ -61,5 +61,7 @@
 .const SYS_PANIC_ARITY          = SYS_TAB + 3*29
 .const SYS_POSTAMBLE_POP_RV     = SYS_TAB + 3*30
 .const SYS_RS_PUSH_CONST_AX     = SYS_TAB + 3*31  // A/X = lo/hi of handle addr
-                                                  // slots 32-47 reserved
+.const SYS_SCREEN_LOCK          = SYS_TAB + 3*32  // wm.asm: EDIT fullscreen on
+.const SYS_SCREEN_UNLOCK        = SYS_TAB + 3*33  // ... off + desktop repaint
+                                                  // slots 34-47 reserved
 .const SYS_TAB_END              = SYS_TAB + 3*48  // = $08B0 (kernel code start)

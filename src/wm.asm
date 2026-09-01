@@ -49,6 +49,8 @@ wm_iw:     .byte 0       // interior width of the window being worked on
 wm_ih:     .byte 0       // interior height
 wm_ix:     .byte 0       // interior origin x (absolute)
 wm_t4:     .byte 0       // border/title scratch
+wm_attr_z: .byte 0       // ATTR: window z-index
+wm_attr_f: .byte 0       // ATTR: flags
 wm_iy:     .byte 0       // interior origin y (absolute)
 
 // --- dict key statics (handle struct + inline payload, like statics.asm) ----
@@ -1148,6 +1150,47 @@ wm_blit_window:
 !:
     jmp postamble
 
+// -----------------------------------------------------------------------------
+// wm_screen_lock / wm_screen_unlock — the EDIT plugin's whole-screen mode
+// (SYS_SCREEN_LOCK / SYS_SCREEN_UNLOCK slots). While locked, write-through
+// and windowed row math are suppressed (screen.asm treats the target as the
+// raw screen). Unlock repaints the desktop.
+// -----------------------------------------------------------------------------
+wm_screen_lock:
+    lda WM_FLAGS
+    ora #2
+    sta WM_FLAGS
+    rts
+
+wm_screen_unlock:
+    lda WM_FLAGS
+    and #$FF-2
+    sta WM_FLAGS
+    lsr                              // bit0 → C: WM live?
+    bcc !+
+    jsr wm_refresh                   // repaint windows over EDIT's leavings
+!:
+    rts
+
+// -----------------------------------------------------------------------------
+// wm_panic_reset — error_handler hook: clear the screen lock and make ROOT
+// the output target so the panic message is visible. No-op while WM is off.
+// -----------------------------------------------------------------------------
+wm_panic_reset:
+    lda WM_FLAGS
+    and #$FF-2                       // drop a stale EDIT lock
+    sta WM_FLAGS
+    lsr
+    bcc !+
+    lda wm_root_h
+    sta W0
+    lda wm_root_h+1
+    sta W0+1
+    jsr wm_use
+    jmp wm_refresh
+!:
+    rts
+
 // =============================================================================
 // Builtins.
 // =============================================================================
@@ -1408,6 +1451,134 @@ builtin_at:
     lda (W1),y
     sta SCREEN_ROW
 _ba_done:
+    jmp postamble_return_none
+
+// --- ATTR(P, X, Y, W, F) → NONE ----------------------------------------------
+// Modify W cells of P's interior row Y starting at column X:
+//   F = 1 → reverse on (set bit 7), F = 2 → reverse off (clear bit 7).
+// Buffer cells are changed and mirrored to the screen where P owns the cell.
+// (No allocs anywhere below, so the args tuple stays put.)
+builtin_attr:
+    preamble_call(5, 5)
+    arg_get(0, W0)
+    jsr _wm_require_window
+
+    // ints: col, row, width, flags
+    ldy #1
+    jsr _bw_arg_byte
+    sta wm_t0                        // col
+    ldy #2
+    jsr _bw_arg_byte
+    sta wm_t1                        // row
+    ldy #3
+    jsr _bw_arg_byte
+    sta wm_t4                        // width
+    ldy #4
+    jsr _bw_arg_byte
+    sta wm_attr_f
+
+    arg_get(0, W0)
+    jsr wm_interior                  // wm_i* for P
+    // bounds: row < ih, width in [1, iw], col < iw, col+width <= iw.
+    // The col/width caps also rule out 8-bit wrap in the sum (39+40 < 256).
+    lda wm_t4
+    beq _batr_bad
+    lda wm_t1
+    cmp wm_ih
+    bcs _batr_bad
+    lda wm_t0
+    cmp wm_iw
+    bcs _batr_bad
+    lda wm_t4
+    cmp wm_iw
+    bcc !+
+    beq !+
+    jmp _batr_bad
+!:
+    clc
+    lda wm_t0
+    adc wm_t4
+    cmp wm_iw
+    bcc !+
+    beq !+
+_batr_bad:
+    jmp panic_type
+!:
+
+    arg_get(0, W0)
+    jsr wm_find_idx
+    sta wm_attr_z
+
+    // W3 = BUF payload + row*iw
+    arg_get(0, W0)
+    ldx #WMK_BUF
+    jsr wm_dget_x
+    lda RV
+    sta W0
+    lda RV+1
+    sta W0+1
+    jsr deref_W0_to_W2
+    lda W2
+    sta W3
+    lda W2+1
+    sta W3+1
+    ldx wm_t1
+    beq _batr_rowed
+_batr_rowmul:
+    clc
+    lda W3
+    adc wm_iw
+    sta W3
+    bcc !+
+    inc W3+1
+!:
+    dex
+    bne _batr_rowmul
+_batr_rowed:
+
+    // screen/map row ptrs for absolute row iy+row
+    lda wm_iy
+    clc
+    adc wm_t1
+    jsr wm_row40
+
+    // loop k = 0..width-1
+    ldx #0
+_batr_loop:
+    cpx wm_t4
+    bcs _batr_done
+    txa
+    clc
+    adc wm_t0
+    tay                              // Y = interior column
+    lda (W3),y
+    pha
+    lda wm_attr_f
+    cmp #2
+    beq _batr_off
+    pla
+    ora #$80
+    jmp _batr_store
+_batr_off:
+    pla
+    and #$7F
+_batr_store:
+    sta (W3),y
+    sta wm_t2                        // cell value for the mirror
+    // mirror: absolute column = ix + interior column
+    tya
+    clc
+    adc wm_ix
+    tay
+    lda (WM_MAP_PTR),y
+    cmp wm_attr_z
+    bne _batr_next
+    lda wm_t2
+    sta (WM_SCR_PTR),y
+_batr_next:
+    inx
+    jmp _batr_loop
+_batr_done:
     jmp postamble_return_none
 
 // --- REFRESH() → NONE --------------------------------------------------------

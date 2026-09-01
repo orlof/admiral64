@@ -62,6 +62,7 @@ BUILTINS = [
     ("CLOSE",   "builtin_close"),
     ("AT",      "builtin_at"),
     ("REFRESH", "builtin_refresh"),
+    ("ATTR",    "builtin_attr"),
     ("KEY",     "builtin_key"),
     ("INPUT",   "builtin_input"),
     ("PEEK",    "builtin_peek"),
