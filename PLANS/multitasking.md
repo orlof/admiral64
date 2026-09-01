@@ -35,6 +35,17 @@ per-task-muuttujiksi. Valittu malli:
 - 30 KB:n heapilla realistinen katto 3–5 taskia; raja on muisti, ei
   osoitekartta.
 - GC:n mark: silmukka task-taulun yli, kunkin `RSP_i..RS_END_i`.
+- **Myös task 0:n pinot ovat osa heapia:** `HEAP_DATA_START` muuttuu
+  vakiosta muuttujaksi (luetaan 3 paikassa: `alloc_init`, `gc_compact`,
+  `MEM()`; ennakkotapaus `HEAP_TOP` on jo muuttuja). Boot carvaa task 0:n
+  FS+RS:n heapin pohjalta ennen allokaattorin käynnistystä (allokaattori
+  tarvitsee pinoja → task 0:n lohkot ovat handlettomia raakalohkoja
+  task-taulussa; GC ei koske niihin, koska kompaktointi alkaa
+  `HEAP_DATA_START`ista niiden yläpuolelta). Oletuscarve tuottaa
+  nykyisen layoutin tavutarkasti ($8000/$8400/$8800 → nolla testi-
+  muutosta), mutta task 0:n pinokoko on jatkossa boot-päätös: 512+512
+  riittäessä heap kasvaa 30 → 31 KB myös yksitaskikäytössä. Erillistä
+  pinovarausta ei ole enää käsitteenä — on vain heap.
 
 Alla alkuperäinen kahden taskin vertailu taustaksi — puolitus (b) jää
 degeneroituneeksi erikoistapaukseksi eikä ole enää suositus.
@@ -190,6 +201,8 @@ shell-/ohjelmainstansseja omissa ikkunoissaan (`SPAWN` shellistä).
    mcdemo/neuron-tason ohjelmilla ennen valintaa.
 4. Ajastimen lähde: IRQ on nyt käytössä ($0314-polku) — riittääkö nykyinen
    jiffy-IRQ lipun asettajaksi vai tuleeko WM:n myötä jotain muuta?
+6. Task 0:n oletuspinokoko (1024+1024 kuten nyt vs. 512+512 + 1 KB lisää
+   heapia) — päätettävä FS/RS-käyttömittauksella oikeista ohjelmista.
 5. Paniikki keskellä pluginia toisen taskin ollessa pinnattuna samassa
    payloadissa: pin-lippujen siivous error_handlerissa (kirjattu jo
    edit-plugin-työssä, toteuttamatta).
