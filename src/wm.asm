@@ -1334,12 +1334,16 @@ _bw_arg_byte:
     lda (W0),y
     rts
 
-// --- USE(P) → previous window ------------------------------------------------
+// --- USE(P) → NONE -----------------------------------------------------------
+// (wm_use still hands the previous window back in RV for kernel callers,
+// but the builtin returns NONE — the REPL auto-prints every non-NONE value,
+// and a window dict's repr dumps its BUF cell buffer as raw binary. The
+// previous/current window is available via CUR().)
 builtin_use:
     jsr preamble_call_1_1_w0
     jsr _wm_require_window
     jsr wm_use
-    jmp postamble                    // RV set by wm_use
+    jmp postamble_return_none
 
 // --- CLOSE(P) → NONE ---------------------------------------------------------
 builtin_close:
@@ -1579,6 +1583,20 @@ _batr_next:
     inx
     jmp _batr_loop
 _batr_done:
+    jmp postamble_return_none
+
+// --- CUR() → current window (NONE while the WM is off) -----------------------
+builtin_cur:
+    preamble_call(0, 0)
+    lda wm_cur_h
+    ora wm_cur_h+1
+    beq _bcu_none
+    lda wm_cur_h
+    sta RV
+    lda wm_cur_h+1
+    sta RV+1
+    jmp postamble
+_bcu_none:
     jmp postamble_return_none
 
 // --- REFRESH() → NONE --------------------------------------------------------

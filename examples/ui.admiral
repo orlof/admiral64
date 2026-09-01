@@ -16,8 +16,8 @@ U["OPEN"] = "P = WINDOW(X, Y, W, H, T)\nP._ = ME\nRETURN P"
 U["CLOSE"] = "CLOSE(ME)\nRETURN NONE"
 U["USE"] = "USE(ME)\nRETURN NONE"
 
-U["WRITE"] = "Q = USE(ME)\nPRINT S\nUSE(Q)\nRETURN NONE"
-U["STATUS"] = "Q = USE(ME)\nAT(ME, 0, 0)\nPRINT S\nUSE(Q)\nRETURN NONE"
+U["WRITE"] = "Q = CUR()\nUSE(ME)\nPRINT S\nUSE(Q)\nRETURN NONE"
+U["STATUS"] = "Q = CUR()\nUSE(ME)\nAT(ME, 0, 0)\nPRINT S\nUSE(Q)\nRETURN NONE"
 
 U["MENU"] = "K = 0\nWHILE K < LEN(I):\n  AT(ME, 0, K)\n  PRINT I[K]\n  K = K + 1\nS = 0\nW = ME.W - 2\nATTR(ME, 0, 0, W, 1)\nWHILE 1:\n  C = ORD(GETC())\n  ATTR(ME, 0, S, W, 2)\n  IF C == 17:\n    S = (S + 1) % LEN(I)\n  ELIF C == 145:\n    S = (S + LEN(I) - 1) % LEN(I)\n  ELIF C == 13:\n    RETURN S\n  ELIF C == 134:\n    RETURN 0 - 1\n  ATTR(ME, 0, S, W, 1)"
 

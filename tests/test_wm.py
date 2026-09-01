@@ -79,8 +79,15 @@ def test_print_lands_in_window_interior(h):
     assert scr(h, 7, 4) == 0x02          # 'B'
 
 
-def test_use_switches_target_and_returns_previous(h):
-    assert _eval(h, 'P = WINDOW(5, 3, 10, 5, "T")\nQ = USE(ROOT)\nQ.X') == 5
+def test_use_returns_none_and_cur_tracks_target(h):
+    # USE returns NONE (a window dict's repr dumps raw BUF bytes — the REPL
+    # must not auto-print it); CUR() hands back the current window.
+    src = ('P = WINDOW(5, 3, 10, 5, "T")\n'
+           'A = CUR()\n'
+           'USE(ROOT)\n'
+           'B = CUR()\n'
+           'A.X + B.W')
+    assert _eval(h, src) == 5 + 40
 
 
 def test_print_to_root_under_window_stays_hidden(h):
