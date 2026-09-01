@@ -35,8 +35,12 @@ entry:
     jmp SYS_PANIC_ARITY
 !:
     sta edit_argc
-    tax                               // Z := (argc == 0) — cmp #2 above left
-    beq _bedit_no_arg                 // Z reflecting A-2, not A itself
+    // Whole-screen mode: suppress WM write-through/refresh for the session.
+    // A panic mid-session is fine — error_handler clears the lock.
+    jsr SYS_SCREEN_LOCK
+    lda edit_argc
+    tax                               // Z := (argc == 0)
+    beq _bedit_no_arg
     // Root the seed arg on RS so F3-cancel can return it after the editor
     // loop has clobbered W1. Type-check it first.
     lda W1
@@ -378,10 +382,13 @@ _bedit_finish:
     beq _bedit_ret_rv
     jsr SYS_RS_POP_W0                  // drop arg
 _bedit_ret_rv:
+    // Park the result in W0 BEFORE unlocking — the unlock repaints the
+    // desktop (wm_refresh) and clobbers RV; W0 survives (V4').
     lda RV
     sta W0
     lda RV+1
     sta W0+1
+    jsr SYS_SCREEN_UNLOCK
     sec                                // carry set → W0 is a handle
     rts
 
