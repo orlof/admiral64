@@ -17,7 +17,6 @@
 //     the JSR — an intervening JSR could overwrite them via its own alloc.
 //   - Returns new handle address in RV. ALWAYS a valid handle — OOM is a
 //     fatal panic, not a soft failure, so callers can assume success.
-//   - alloc_int is a thin wrapper: presets ALLOC_TYPE = TYPE_INT, then JMP alloc.
 //
 // OOM-triggered GC retry: on the first failed OOM check within a single alloc
 // call, we invoke gc_collect once and re-run the check. If the second check
@@ -273,16 +272,6 @@ _ra_set_tail:
     rts
 
 // -----------------------------------------------------------------------------
-// alloc_int — convenience wrapper: alloc() with type = TYPE_INT.
-//   in:  ALLOC_SIZE (word) preset by caller
-//   out: RV = new int handle. OOM is a fatal panic, not a return value.
-// -----------------------------------------------------------------------------
-alloc_int:
-    lda #TYPE_INT
-    sta ALLOC_TYPE
-    jmp alloc
-
-// -----------------------------------------------------------------------------
 // alloc_inline_int — allocate a TYPE_INT handle whose 32-bit value lives INLINE
 // in H_PTR (low 16 bits) + H_SIZE (high 16 bits). No data-heap payload is
 // carved and no O_LEN header is written, so NEXT_DATA is untouched.
@@ -406,27 +395,6 @@ aii_populate:
     // Append to reserved list (H_NEXT already 0).
     jsr _reserved_append
     jmp postamble
-
-// -----------------------------------------------------------------------------
-// alloc_int_a_deref_w2 — combined "size in A → 1-byte ALLOC_SIZE; alloc_int;
-// deref RV → W2" tail helper. Replaces the 12-byte sequence
-//     sta ALLOC_SIZE
-//     lda #0
-//     sta ALLOC_SIZE+1
-//     jsr alloc_int
-//     jsr deref_RV_to_W2
-// at every builtin that allocates a small TYPE_INT and writes its payload via
-// W2 (builtin_ord, type, int-from-bool, hex, etc.).
-//   in:  A = payload size in bytes (1..255)
-//   out: RV = new TYPE_INT handle; W2 = payload pointer; A = length low byte.
-//   clobbers: A, X, Y. Allocates → may GC; W0/W1/W3/B regs preserved by V4'.
-// -----------------------------------------------------------------------------
-alloc_int_a_deref_w2:
-    sta ALLOC_SIZE
-    lda #0
-    sta ALLOC_SIZE+1
-    jsr alloc_int
-    jmp deref_RV_to_W2
 
 // -----------------------------------------------------------------------------
 // heap_carve_payload — bump NEXT_DATA by ALLOC_SIZE + O_HEADER without carving

@@ -739,14 +739,15 @@ class Harness:
         return self.read_word(RV)
 
     def alloc_int(self, size: int) -> int:
-        """Call alloc_int with the given payload size. Returns RV.
+        """Allocate a heap-payload TYPE_INT of the given size and return RV.
 
-        NOTE: this allocates a *boxed* TYPE_INT (legacy shape). Real ints are
-        inline now — use make_int(value) to create one holding a value.
+        Test-only helper for exercising the allocator/GC with a TYPE_INT-tagged
+        heap object. Real ints are inline now (no production code path creates
+        boxed ints) — use make_int(value) for an actual integer value. This
+        helper exists purely to drive alloc/GC bookkeeping in tests that don't
+        care about the payload shape.
         """
-        self.write_word(ALLOC_SIZE_ZP, size & 0xFFFF)
-        self.call("alloc_int")
-        return self.read_word(RV)
+        return self.alloc(size, TYPE_INT)
 
     def make_int(self, value: int) -> int:
         """Allocate an inline TYPE_INT holding `value` (signed 32-bit). Returns RV."""

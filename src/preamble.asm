@@ -60,8 +60,8 @@
 //   arg_get(i, dest)              dest = tuple[i]                    (no bounds check)
 //   arg_get_or(i, fallback, dest) dest = tuple[i] if i < count, else fallback
 //
-// GC re-deref rule: any sub-call that may allocate (alloc, alloc_int, jsr to
-// another builtin, etc.) can move the tuple's payload via gc_compact. After
+// GC re-deref rule: any sub-call that may allocate (alloc, alloc_inline_int,
+// jsr to another builtin, etc.) can move the tuple's payload via gc_compact. After
 // such a call, the body must rerun the deref before another arg_get:
 //
 //     rs_peek(W0)        ; W0 = args tuple handle (still on RS top)

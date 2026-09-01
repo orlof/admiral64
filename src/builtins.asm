@@ -26,8 +26,8 @@
 //   b) Add `BUILTIN_<NAME>:` static + `STR_NAME_<NAME>:` static.
 //   c) Add a binding line in parser_eval's init.
 //
-// GC re-deref rule: any sub-call that may allocate (alloc, alloc_int, jsr to
-// another builtin, etc.) can move tuple payload via gc_compact. After such a
+// GC re-deref rule: any sub-call that may allocate (alloc, alloc_inline_int,
+// jsr to another builtin, etc.) can move tuple payload via gc_compact. After such a
 // call, W3 is stale. To re-read further args, either: (a) cache the arg
 // handles into ZP regs at the start (W0..W3 are saved/restored by all V4'
 // sub-calls), or (b) re-deref the args tuple via the RS root and refresh W3.

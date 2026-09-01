@@ -123,10 +123,10 @@ boot:
     jsr println_str
 
     // Banner line 2: "  64K RAM SYSTEM  " <heap-free> " HEAP BYTES FREE\n".
-    // Compute heap-free into B0:B1 BEFORE the alloc_int that follows — the
-    // int allocation itself reduces the count by SIZEOF_HANDLE + O_HEADER + 2,
-    // and we want the displayed number to reflect the pre-alloc state (the
-    // user-relevant ceiling).
+    // Compute heap-free into B0:B1 BEFORE the alloc_inline_int that follows —
+    // the int allocation itself reduces the count by SIZEOF_HANDLE, and we
+    // want the displayed number to reflect the pre-alloc state (the user-
+    // relevant ceiling).
     sec
     lda NEXT_HANDLE
     sbc NEXT_DATA
