@@ -50,6 +50,8 @@ wm_ih:     .byte 0       // interior height
 wm_ix:     .byte 0       // interior origin x (absolute)
 wm_t4:     .byte 0       // border/title scratch
 wm_attr_z: .byte 0       // ATTR: window z-index
+wm_boot_r: .byte 0       // wm_start: live cursor at WM boot (inherited by ROOT)
+wm_boot_c: .byte 0
 wm_attr_f: .byte 0       // ATTR: flags
 wm_iy:     .byte 0       // interior origin y (absolute)
 
@@ -1047,6 +1049,14 @@ _wbr_sides_done:
 wm_start:
     preamble_args(0, 0)
 
+    // ROOT inherits not just the screen contents but the LIVE cursor —
+    // otherwise the first USE(ROOT) would park the prompt at (0,0) on top
+    // of the boot banner. Capture before anything below moves it.
+    lda SCREEN_ROW
+    sta wm_boot_r
+    lda SCREEN_COL
+    sta wm_boot_c
+
     // MAP: 1000-byte STR, zero-filled (index 0 = ROOT owns everything).
     lda #<1000
     sta ALLOC_SIZE
@@ -1091,13 +1101,33 @@ wm_start:
     sta wm_root_h
     lda RV+1
     sta wm_root_h+1
-    // append to WINDOWS
+    // Seed ROOT's cursor with the captured live position.
+    lda RV
+    sta W0
+    lda RV+1
+    sta W0+1
+    lda wm_boot_r
+    ldx #WMK_R
+    jsr wm_dset_int_x
+    lda wm_root_h
+    sta W0
+    lda wm_root_h+1
+    sta W0+1
+    lda wm_boot_c
+    ldx #WMK_C
+    jsr wm_dset_int_x
+    // append to WINDOWS (root from the static — the cursor seeding above
+    // went through dict_set, which clobbers RV)
     lda wm_windows
     sta W1
     lda wm_windows+1
     sta W1+1
     rs_push(W1)
-    rs_push(RV)
+    lda wm_root_h
+    sta W1
+    lda wm_root_h+1
+    sta W1+1
+    rs_push(W1)
     jsr list_append
 
     // Bind global ROOT.

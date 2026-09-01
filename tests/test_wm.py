@@ -217,3 +217,16 @@ def test_repl_redraw_clips_to_window_width(h):
     assert scr(h, 16, 4) == 0x5D               # border intact
     # Next interior row untouched (no spill through the buffer stride).
     assert scr(h, 6, 5) == 0x20
+
+
+def test_root_inherits_live_cursor(h):
+    """The first USE(ROOT) must continue from where the pre-WM cursor was —
+    not jump to (0,0) over the boot banner (VICE finding)."""
+    src = ('CURSOR(3, 7)\n'
+           'P = WINDOW(20, 3, 10, 5, "T")\n'
+           'USE(ROOT)\n'
+           'PRINT "Z"')
+    run(h, src)
+    assert scr(h, 3, 7) == 0x1A          # 'Z' where the cursor was left
+    assert scr(h, 0, 0) in (0x00, 0x20)  # top-left untouched (py65 has no
+                                         # screen_init -> raw RAM default)
