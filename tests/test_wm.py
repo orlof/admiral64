@@ -201,19 +201,20 @@ def test_repl_line_editing_mirrors_into_window(h):
     assert scr(h, 8, 4) == 0x12                # 'R'
 
 
-def test_repl_redraw_clips_to_window_width(h):
-    """A line longer than the window is clipped at the right edge and must
-    not spill into the next buffer row (was: pad loop ran to column 39)."""
+def test_repl_redraw_scrolls_in_narrow_window(h):
+    """A line longer than the window horizontally scrolls: the prompt cell
+    turns into '<' and the tail stays visible at the cursor. Nothing spills
+    into the next buffer row (the original clip bug)."""
     from test_repl import _drive_read_line
     run(h, 'P = WINDOW(5, 3, 12, 6, "T")')     # interior 10 wide
     h.call("screen_put_char", a=0x3E)
     anchor = h.mpu.memory[0x33]
     h.mpu.memory[h.sym["repl_line_anchor_row"]] = anchor
     _drive_read_line(h, [ord("A")] * 15, anchor_row=anchor)
-    # Row 0 of the interior: '>' + 9 'A's, hard edge at the border.
-    assert scr(h, 6, 4) == 0x3E
-    assert scr(h, 7, 4) == 0x01
-    assert scr(h, 15, 4) == 0x01               # last interior column
+    # Scrolled view: col 0 = '<', then the LAST 8 chars + cursor cell.
+    assert scr(h, 6, 4) == 0x3C                # '<' scroll indicator
+    assert scr(h, 7, 4) == 0x01                # 'A'
+    assert scr(h, 14, 4) == 0x01               # last text column before cursor
     assert scr(h, 16, 4) == 0x5D               # border intact
     # Next interior row untouched (no spill through the buffer stride).
     assert scr(h, 6, 5) == 0x20

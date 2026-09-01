@@ -39,20 +39,23 @@
 #import "preamble.asm"
 #import "handle.asm"
 
-.const REPL_LINE_CAP = 38           // prompt(1) + line(38) + cursor(1) = 40 cols
-.const REPL_HIST_SLOTS = 4
+.const REPL_LINE_CAP = 64           // longer than the row: the editor
+                                    // horizontally scrolls (repl_view_shift)
+.const REPL_HIST_SLOTS = 2
 .const REPL_HIST_SLOT_SZ = 1 + REPL_LINE_CAP   // 1 length byte + chars
 
 // --- static state -----------------------------------------------------------
 // repl_line_buf and repl_hist_slots live in the unused datasette buffer
-// region ($033C-$03FD). Saves 194 bytes from the code segment. We don't
-// drive tape, so this RAM is otherwise idle. Reads are always preceded by
-// a write (line buf) or gated by repl_hist_count (slots), so no init needed.
-.label repl_hist_slots = $033C       // 156 bytes — ends at $03D7
-.label repl_line_buf   = $03D8       // 38 bytes  — ends at $03FD
+// region ($033C-$03FD, 194 bytes). We don't drive tape, so this RAM is
+// otherwise idle. Reads are always preceded by a write (line buf) or gated
+// by repl_hist_count (slots), so no init needed.
+// Layout: line 64 ($033C-$037B) + 2 history slots x 65 ($037C-$03FD).
+.label repl_line_buf   = $033C       // 64 bytes  — ends at $037B
+.label repl_hist_slots = $033C + REPL_LINE_CAP // 130 bytes — ends at $03FD
 
 repl_line_len:    .byte 0
 repl_line_pos:    .byte 0           // cursor index within line, 0..len
+repl_view_shift:  .byte 0           // leftmost visible buffer index (h-scroll)
 repl_line_anchor_row: .byte 0       // screen row the prompt lives on
 
 // History ring. `head` is the index of the newest stored entry; `count`
@@ -207,6 +210,7 @@ _rpl_read_line:
     lda #0
     sta repl_line_len
     sta repl_line_pos
+    sta repl_view_shift
     sta repl_hist_view               // each new line resets history walk
 
 _rrl_key_loop:
@@ -307,7 +311,7 @@ _rrl_left:
     lda repl_line_pos
     beq _rrl_back_to_top
     dec repl_line_pos
-    dec SCREEN_COL
+    jsr _rpl_redraw                  // handles h-scroll + cursor
     jmp _rrl_key_loop
 
 _rrl_right:
@@ -315,22 +319,19 @@ _rrl_right:
     cmp repl_line_len
     bcs _rrl_back_to_top             // pos already at end
     inc repl_line_pos
-    inc SCREEN_COL
+    jsr _rpl_redraw
     jmp _rrl_key_loop
 
 _rrl_home:
     lda #0
     sta repl_line_pos
-    lda #1                           // just past the '>' prompt
-    sta SCREEN_COL
+    jsr _rpl_redraw
     jmp _rrl_key_loop
 
 _rrl_end:
     lda repl_line_len
     sta repl_line_pos
-    clc
-    adc #1
-    sta SCREEN_COL
+    jsr _rpl_redraw                  // handles h-scroll + cursor
     jmp _rrl_key_loop
 
 // --- delete / insert-blank --------------------------------------------------
@@ -413,11 +414,20 @@ _rrl_hist_down_load:
 
 // --- finish -----------------------------------------------------------------
 _rrl_finish:
-    // Park the screen cursor at end-of-line so the caller's $0D advances
-    // past everything typed (not from wherever the user left the cursor).
+    // Park the screen cursor at end-of-line (clamped to the target width —
+    // the caller's $0D newline doesn't care, but the cell must be inside
+    // the window).
     lda repl_line_len
+    sec
+    sbc repl_view_shift
     clc
     adc #1
+    cmp wm_w
+    bcc !+
+    lda wm_w
+    sec
+    sbc #1
+!:
     sta SCREEN_COL
     rts
 
@@ -443,7 +453,41 @@ _rpl_redraw:
     sta SCREEN_ROW
     jsr scr_row_offset_to_w2         // W2 = target row base (+ WM ptrs)
 
-    ldx #0
+    // Horizontal scroll: keep the cursor inside the visible text columns
+    // (1 .. wm_w-1). shift <= pos and pos - shift <= wm_w - 2.
+    lda repl_view_shift
+    cmp repl_line_pos
+    bcc !+
+    beq !+
+    lda repl_line_pos                // shift > pos → shift = pos
+    sta repl_view_shift
+!:
+    lda repl_line_pos
+    sec
+    sbc repl_view_shift
+    sec
+    sbc wm_w
+    clc
+    adc #2                           // A = (pos-shift) - (wm_w-2)
+    bcc !+
+    beq !+
+    clc
+    adc repl_view_shift              // shift += overflow
+    sta repl_view_shift
+!:
+
+    // Prompt cell: '>' normally, '<' when scrolled (there is hidden text
+    // to the left).
+    ldy #0
+    lda repl_view_shift
+    beq !+
+    lda #$3C                         // '<'
+    .byte $2C                        // BIT abs — skip the lda below
+!:
+    lda #$3E                         // '>'
+    jsr _scr_write_cell
+
+    ldx repl_view_shift
 _rrd_loop:
     cpx repl_line_len
     bcs _rrd_pad
@@ -451,8 +495,10 @@ _rrd_loop:
     jsr petscii_to_screen_code       // X preserved, Y clobbered
     pha
     txa
+    sec
+    sbc repl_view_shift
     tay
-    iny                              // y = x + 1 (skip prompt cell)
+    iny                              // y = 1 + (x - shift)
     cpy wm_w
     bcs _rrd_clip                    // ran off the window's right edge
     pla
@@ -462,9 +508,11 @@ _rrd_loop:
 _rrd_clip:
     pla                              // balance the stash; stop painting
 _rrd_pad:
-    // Erase every cell from col `1 + len` through the target's right edge so
-    // a shrinking line doesn't leave the previous line's tail visible.
-    txa                              // x = number of painted chars
+    // Erase every cell from the first unpainted column through the target's
+    // right edge so a shrinking line doesn't leave a stale tail visible.
+    txa                              // x = last painted buffer index
+    sec
+    sbc repl_view_shift
     tay
     iny                              // y = first cell to clear
     lda #$20                         // screen-code space
@@ -476,16 +524,12 @@ _rrd_pad_loop:
     bne _rrd_pad_loop                // never wraps to 0 (wm_w <= 40)
 _rrd_pad_done:
 
-    // Cursor at 1 + pos, clamped inside the target.
+    // Cursor at 1 + (pos - shift); the clamp above guarantees it fits.
     lda repl_line_pos
+    sec
+    sbc repl_view_shift
     clc
     adc #1
-    cmp wm_w
-    bcc !+
-    lda wm_w
-    sec
-    sbc #1
-!:
     sta SCREEN_COL
     rts
 

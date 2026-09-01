@@ -146,11 +146,11 @@ def test_non_printable_chars_dropped(h):
 
 
 def test_buffer_full_drops_extra_chars(h):
-    """REPL_LINE_CAP = 38; extra chars beyond that are silently dropped."""
-    keys = [ord("x")] * 50
+    """REPL_LINE_CAP = 64; extra chars beyond that are silently dropped."""
+    keys = [ord("x")] * 80
     _drive_read_line(h, keys)
-    assert _len(h) == 38
-    assert _line(h) == b"x" * 38
+    assert _len(h) == 64
+    assert _line(h) == b"x" * 64
 
 
 # --- backspace / delete ------------------------------------------------------
@@ -249,10 +249,10 @@ def test_insert_blank_at_end(h):
 
 
 def test_insert_blank_full_buffer_noop(h):
-    keys = [ord("x")] * 38 + [PET_HOME, PET_INS]
+    keys = [ord("x")] * 64 + [PET_HOME, PET_INS]
     _drive_read_line(h, keys)
-    assert _len(h) == 38
-    assert _line(h) == b"x" * 38
+    assert _len(h) == 64
+    assert _line(h) == b"x" * 64
 
 
 # --- redraw / screen contents -------------------------------------------------
@@ -338,8 +338,8 @@ def test_history_save_increments_count(h):
 def test_history_count_caps_at_slots(h):
     for line in [b"a", b"b", b"c", b"d", b"e", b"f"]:
         _save_to_history(h, line)
-    # Ring is 4 slots; count saturates.
-    assert h.mpu.memory[h.sym["repl_hist_count"]] == 4
+    # Ring is 2 slots (traded depth for the 64-char line); count saturates.
+    assert h.mpu.memory[h.sym["repl_hist_count"]] == 2
 
 
 def test_history_up_recalls_newest(h):
@@ -358,7 +358,7 @@ def test_history_up_then_up_walks_older(h):
 
 
 def test_history_up_clamps_at_oldest(h):
-    """A third UP after only two stored entries should not crash or wrap."""
+    """Extra UPs after only two stored entries should not crash or wrap."""
     _save_to_history(h, b"a")
     _save_to_history(h, b"b")
     _drive_read_line(h, [PET_UP, PET_UP, PET_UP, PET_UP])
@@ -373,13 +373,13 @@ def test_history_down_returns_to_empty(h):
 
 
 def test_history_overflow_evicts_oldest(h):
-    """After 5 saves into a 4-slot ring, UP×4 reaches the 2nd entry, not the
+    """After 3 saves into a 2-slot ring, UP*2 reaches the 2nd entry, not the
     1st (which was rotated out)."""
-    for line in [b"one", b"two", b"three", b"four", b"five"]:
+    for line in [b"one", b"two", b"three"]:
         _save_to_history(h, line)
-    _drive_read_line(h, [PET_UP, PET_UP, PET_UP, PET_UP, PET_UP])
+    _drive_read_line(h, [PET_UP, PET_UP, PET_UP])
     assert _line(h) == b"two"
-    assert h.mpu.memory[h.sym["repl_hist_count"]] == 4
+    assert h.mpu.memory[h.sym["repl_hist_count"]] == 2
 
 
 def test_history_then_edit(h):
