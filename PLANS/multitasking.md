@@ -127,9 +127,28 @@ RV2 LEX_* CURRENT_SCOPE METHOD_RECEIVER SCREEN_ROW/COL` + HW-`SP` + oma
 ikkuna (WM-dict).
 
 Jaettua (ei vaihdeta): allokaattori + GC (`NEXT_HANDLE NEXT_DATA FREE_HEAD
-RESERVED_HEAD GC_COUNTER ALLOC_*`), `ROOT_SCOPE`? — **avoin kysymys**:
-jaettu globaali scope (taskit näkevät toistensa muuttujat; helppo, vaarallinen)
-vs. oma ROOT_SCOPE per task (eristys; IPC:ksi tarvitaan jokin kanava).
+RESERVED_HEAD GC_COUNTER ALLOC_*`).
+
+### Scope-analyysi (2026-09-01)
+
+Faktapohja: scope-ketju kulkee `_`-parent-linkillä (`scope_get` kävelee),
+funktioscopet saavat ROOT_SCOPEn vanhemmakseen, kirjoitus varjostaa
+sisimpään, `error_handler` palauttaa CURRENT_SCOPEn ROOT_SCOPEsta.
+
+| | 2: vain globaali | 3: vain prosessi | 1: globaali + prosessi |
+|---|---|---|---|
+| Toteutus | 0 t | **0 t** (ROOT/CURRENT_SCOPE jo vaihtolistalla) | +1 rivi (task-rootin `_` → jaettu dict; scope_get kävelee itsestään) |
+| Top-level-muuttujat | törmäävät (kahden shellin `I`, `TMP`...) — killeri | eristetty | eristetty (varjostus) |
+| Paniikki | resetoi jaettua | eristyy taskiin | eristyy taskiin |
+| Moduulikirjastot | 1 LOAD, mutta tilalliset moduulit (esim. `A.GO()` mutatoi `ME.LBL`) ja jaettu EDIT-payload kilpailevat | **ei muutoksia**: LOAD per task, yhdenmukainen plugin-instanssisäännön kanssa | luettavissa jaetusti, mutta mutaatio viittauksen läpi (`UI.X = 5`) osuu jaettuun → vaatii konvention "vain tilattomat jaetaan" |
+| Muisti | halvin | duplikaatio (UI ~100 t/task; EDIT 3,5 KB/käyttävä task — sääntö oli jo) | välissä |
+| NONE-rajoite | — | — | jaetun nimen varjostus NONElla puhkaisee ketjun |
+
+**Päätösesitys: 3 nyt.** 1 on 3:n yhteensopiva myöhempi laajennus
+(`_`-linkin lisäys ei muuta olemassa olevaa koodia); jakaminen tuodaan
+tarvittaessa eksplisiittisenä builtin-välitteisenä kanavana (`SYS`-dict
+tai SEND/RECV), jolloin se on opt-in eikä nimihaun sivuvaikutus.
+2 hylätään.
 
 GC-muutos: mark kävelee task-taulun kaikkien taskien aktiiviset RS-alueet
 (`RSP_i..RS_END_i`), ~50 t. FS ei ole GC:n skannaama ✓.
@@ -193,9 +212,9 @@ shell-/ohjelmainstansseja omissa ikkunoissaan (`SPAWN` shellistä).
 
 ## 8. Avoimet kysymykset
 
-1. Jaettu vai eriytetty `ROOT_SCOPE` (luku 3)? N taskilla jaettu
-   globaaliscope on selvästi vaarallisempi → todennäköisesti oma scope /
-   task + jaettu kanava (esim. `SYS`-dict) IPC:ksi.
+1. Scope: analysoitu luvussa 3 — esitys: vain prosessi-scope nyt,
+   jaettu read-through (`_`-linkki) mahdollisena laajennuksena myöhemmin.
+   Vahvistettava.
 2. `parser_exec`in tarkka sopimus — riittääkö `EXEC`ille sellaisenaan?
 3. HW-pino: puolitus vs. kopiointivaihto (luku 2) — mitattava
    mcdemo/neuron-tason ohjelmilla ennen valintaa.
