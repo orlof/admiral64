@@ -160,6 +160,31 @@ elinkaari (`SPAWN(F [, STACK])`, `EXIT`, siivous) ~150-200 t ≈
 elää WM-pluginissa, mutta `task_switch`in on oltava kernelissä — sitä
 kutsutaan `parser_stmt`istä.)
 
+## 3b. WM-yhteentoimivuus (katselmus 2026-09-01)
+
+- Taskin ZP-vaihtolistaan kuuluu myös WM:n kohdecache (BUF-osoitin, W, H,
+  R, C, ikkunaindeksi). `task_switch` **re-resolvaa tulevan taskin
+  kentät sen ikkunadictistä** (~30 t) — kattaa sekä toisen taskin
+  aiheuttamat GC-siirrot että WINDOWS-listan muutokset suspendin aikana.
+  Statement-atomisuus takaa, ettei lista/MAP muutu kesken timeslicen.
+- Sääntö: vain omistajataski sulkee ikkunansa.
+- Per-task-oletusikkuna: `SPAWN` luo taskille ikkunan ja sen ROOT on
+  taskin oman scopen muuttuja (prosessi-scope tekee tästä luontevan).
+- Fokusvaihto (C=+TAB) nostaa taskin ikkunan päällimmäiseksi
+  (WINDOWS-järjestys + REFRESH).
+- **EDIT ikkunanatiiviksi tässä vaiheessa** (WM-vaiheessa se on koko
+  ruudun modaali screen lockilla): (1) `SYS_SCR_ROW_W2_A` → rivin kanta
+  nykyisen ikkunan puskuriin (stride W), plugin ei muutu; (2) uusi
+  SYS-kysely: nykyisen kohteen W/H → EDITin ~10 geometria-immediatea
+  latauksiksi (~30 t pluginissa); (3) inline-GETIN → uusi
+  `SYS_KBD_GETCHAR`-slotti → kbd-yield + fokus ilmaiseksi;
+  (4) **edit_grow-korjaus**: paikallaan-bump nojaa invariantteihin
+  "puskuri ylin allokaatio" ja "sessiossa ei allokoida", jotka toinen
+  task rikkoo → grow palaa alloc+kopioi-malliin JA EDIT pinnaa
+  puskurinsa session ajaksi (uudet `SYS_PIN`/`SYS_UNPIN`-slotit, ~20 t —
+  ilman pinnausta B:n GC siirtää A:n puskuria ja A:n editoritila
+  roikkuu resumessa).
+
 ## 4. Blokkaavat kutsut
 
 Kaikki syöte kulkee `kbd_getchar`-spinin kautta → siitä yield-piste:

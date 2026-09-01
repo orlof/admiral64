@@ -112,3 +112,23 @@ poistuu.
    TYPE_CODE-recordiksi levylle).
 3. Siirrä ensin pieni builtin (esim. `SORT`) koko putken savutestinä.
 4. Sitten EDIT.
+
+## 9. EDIT ja ikkunointi/multitasking (katselmus 2026-09-01)
+
+Mitatut sidokset: ~10 käännösaikaista geometria-immediatea
+(`SCREEN_COLS/ROWS`), rivikanta `SYS_SCR_ROW_W2_A`n takana, kursori
+`SCREEN_ROW/COL` + kaksi slottia, näppäimet inline-`KERNAL_GETIN`.
+
+Vaiheistus:
+- **WM-vaihe:** EDIT pysyy koko ruudun modaalina; screen lock vaimentaa
+  muiden ikkunoiden write-throughin ja poistuminen ajaa `REFRESH()`in.
+  Nolla muutosta pluginiin.
+- **Multitasking-vaihe:** ikkunanatiivi — ks. PLANS/multitasking.md 3b
+  (rivikannan uudelleenkohdistus, W/H-kysely, `SYS_KBD_GETCHAR`,
+  edit_grow → alloc+kopioi + puskurin pinnaus `SYS_PIN`illä).
+  Palkinto: editori missä tahansa ikkunassa (split-screen editori+REPL).
+
+Kriittinen löydös: `edit_grow`in paikallaan-bump ja "ei allokaatioita
+sessiossa" -invariantti eivät kestä toista taskia — sekä bump-törmäys
+että GC-siirto suspendin aikana. Korjaus multitasking-vaiheessa
+pakollinen ennen kuin EDIT-sessio saa elää taustalla.

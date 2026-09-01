@@ -71,6 +71,22 @@ kun ikkunoita ei käytetä. Valinnainen sammutus (~40 t): `CLOSE(ROOT)` kun
 muita ikkunoita ei ole → ROOT-puskuri ruutuun, `MAP` vapaaksi, lippu pois;
 muuten WM jää päälle resetiin asti.
 
+## 2a2. GC ja ikkunan ZP-cache (katselmuslöydös 2026-09-01)
+
+`put_char`in ZP-cache sisältää raa'an `BUF`-osoittimen; lauseen keskellä
+tapahtuva allokaatio → kompaktointi voi siirtää puskurin ja cache roikkuu.
+Korjaus: `gc_compact`in häntä re-derefaa nykyisen ikkunan puskurin
+cacheen (~20 t; kernel pitää nykyisen ikkunan handlea globaalissa).
+Ikkunapuskureita EI pinnata — re-deref on halvempi eikä fragmentoi.
+
+## 2a3. Screen lock (EDIT ym. koko ruudun modaalit)
+
+Globaali lukkolippu: lukon aikana write-through ja `REFRESH` ohitetaan
+(tuloste kertyy puskureihin), ja lukon vapautus ajaa `REFRESH()`in.
+~15 t. EDIT käyttää tätä WM-vaiheessa; ikkunanatiivi EDIT tulee vasta
+multitasking-vaiheessa (ks. PLANS/edit-plugin.md luku 9 ja
+PLANS/multitasking.md).
+
 ## 2b. Milloin `REFRESH` tarvitaan
 
 Write-throughin ansiosta tavallinen tuloste ei tarvitse refreshiä.
@@ -139,6 +155,10 @@ Ikkunat saa sulkea missä järjestyksessä vain; päällekkäisyys ratkeaa
 z-järjestyksellä refreshissä.
 
 ## 4b. ROOT — komentotulkki on ikkuna
+
+*(Multitasking-huomio: N taskin maailmassa globaali ROOT korvautuu
+per-task-oletusikkunalla — kunkin taskin ROOT on sen oman prosessi-scopen
+muuttuja. Alla oleva kuvaa yksitaskivaiheen.)*
 
 WM:n käynnistyessä (2a) kernel luo `ROOT`in koko ruudun ikkunana ja vie
 sen globaaliksi nimeksi. REPL tekee
