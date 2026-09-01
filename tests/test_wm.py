@@ -175,3 +175,38 @@ def test_gc_pressure_keeps_window_alive(h):
     run(h, src, max_steps=60_000_000)
     assert scr(h, 6, 4) == 0x0F          # 'O'
     assert scr(h, 7, 4) == 0x0B          # 'K'
+
+
+def test_repl_line_editing_mirrors_into_window(h):
+    """Typed characters must be VISIBLE in a window: _rpl_redraw goes through
+    the write-through path, bounded by the window width (regression for the
+    invisible-typing bug found under VICE)."""
+    from test_repl import _drive_read_line
+    run(h, 'P = WINDOW(5, 3, 20, 8, "T")')     # current target = P's interior
+    # Simulate the prompt: '>' then read a line at the current cursor.
+    h.call("screen_put_char", a=0x3E)
+    anchor = h.mpu.memory[0x33]                # SCREEN_ROW (window-relative)
+    h.mpu.memory[h.sym["repl_line_anchor_row"]] = anchor
+    _drive_read_line(h, [ord("P"), ord("R")], anchor_row=anchor)
+    # Interior origin is (6,4); prompt at col 0, chars at cols 1..2 -> screen.
+    assert scr(h, 6, 4) == 0x3E                # '>'
+    assert scr(h, 7, 4) == 0x10                # 'P'
+    assert scr(h, 8, 4) == 0x12                # 'R'
+
+
+def test_repl_redraw_clips_to_window_width(h):
+    """A line longer than the window is clipped at the right edge and must
+    not spill into the next buffer row (was: pad loop ran to column 39)."""
+    from test_repl import _drive_read_line
+    run(h, 'P = WINDOW(5, 3, 12, 6, "T")')     # interior 10 wide
+    h.call("screen_put_char", a=0x3E)
+    anchor = h.mpu.memory[0x33]
+    h.mpu.memory[h.sym["repl_line_anchor_row"]] = anchor
+    _drive_read_line(h, [ord("A")] * 15, anchor_row=anchor)
+    # Row 0 of the interior: '>' + 9 'A's, hard edge at the border.
+    assert scr(h, 6, 4) == 0x3E
+    assert scr(h, 7, 4) == 0x01
+    assert scr(h, 15, 4) == 0x01               # last interior column
+    assert scr(h, 16, 4) == 0x5D               # border intact
+    # Next interior row untouched (no spill through the buffer stride).
+    assert scr(h, 6, 5) == 0x20

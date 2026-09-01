@@ -429,13 +429,19 @@ _rrl_finish:
 // stale glyphs left behind when the new line is shorter than the previous one
 // (a backspace, or a history recall onto a now-shorter buffer).
 //
-// Direct screen-RAM writes — REPL_LINE_CAP is single-row, so no scroll/wrap.
-//   clobbers: A, X, Y, W2.
+// Cells are written through _scr_write_cell so the WM write-through mirrors
+// them to the screen, and every column bound comes from the current target's
+// width (wm_w = 40 at boot → byte-identical to the old fullscreen behavior).
+// In a window narrower than the line, the tail beyond the last visible
+// column is simply not shown (the line buffer still holds it) — the REPL
+// has no horizontal scroll. Known limitation; use a wide window for the
+// REPL.
+//   clobbers: A, X, Y, W2 (+ WM row ptrs).
 // -----------------------------------------------------------------------------
 _rpl_redraw:
     lda repl_line_anchor_row
     sta SCREEN_ROW
-    jsr scr_row_offset_to_w2         // W2 = SCREEN_BASE + anchor_row*40
+    jsr scr_row_offset_to_w2         // W2 = target row base (+ WM ptrs)
 
     ldx #0
 _rrd_loop:
@@ -447,29 +453,39 @@ _rrd_loop:
     txa
     tay
     iny                              // y = x + 1 (skip prompt cell)
+    cpy wm_w
+    bcs _rrd_clip                    // ran off the window's right edge
     pla
-    sta (W2),y
+    jsr _scr_write_cell              // mirrors to screen when owned
     inx
     jmp _rrd_loop
+_rrd_clip:
+    pla                              // balance the stash; stop painting
 _rrd_pad:
-    // Erase every cell from col `1 + len` through col SCREEN_COLS - 1 so a
-    // shrinking line doesn't leave the previous line's tail visible. SCREEN_COLS
-    // is 40, the row's full width.
-    txa                              // x = len
+    // Erase every cell from col `1 + len` through the target's right edge so
+    // a shrinking line doesn't leave the previous line's tail visible.
+    txa                              // x = number of painted chars
     tay
-    iny                              // y = 1 + len, the first cell to clear
+    iny                              // y = first cell to clear
     lda #$20                         // screen-code space
 _rrd_pad_loop:
-    cpy #SCREEN_COLS
+    cpy wm_w
     bcs _rrd_pad_done
-    sta (W2),y
+    jsr _scr_write_cell
     iny
-    bne _rrd_pad_loop                // y < 40, never wraps to 0
+    bne _rrd_pad_loop                // never wraps to 0 (wm_w <= 40)
 _rrd_pad_done:
 
+    // Cursor at 1 + pos, clamped inside the target.
     lda repl_line_pos
     clc
     adc #1
+    cmp wm_w
+    bcc !+
+    lda wm_w
+    sec
+    sbc #1
+!:
     sta SCREEN_COL
     rts
 
