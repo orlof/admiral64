@@ -1,4 +1,4 @@
-# Kaksi taskia: statement-tason preemptio + Admiral-shell
+# N taskia: statement-tason preemptio + Admiral-shell
 
 Tila: luonnos (2026-09-01), muokataan. Edeltäjät: `PLANS/ui-primitives.md`
 (WM), `PLANS/edit-plugin.md` (plugin-ABI). Riippuvuusjärjestys:
@@ -19,7 +19,27 @@ palautettavissa `LEX_SRC_HANDLE`n kautta. Siksi:
   sulavasti. Yksittäinen pitkä builtin (esim. ison listan SORT) ei
   keskeydy — hyväksytään.
 
-## 1. Pinot — vastaus kysymykseen "paljonko kaksisuuntaiset maksaisivat"
+## 1. Pinot
+
+**Päähavainto:** kahden taskin raja oli staattisen puolituksen artefakti.
+`FSP`/`RSP` ovat ZP-osoittimia — pinot voivat asua missä tahansa, kunhan
+kiinteät `FS_*`/`RS_*`-vakiot (init, GC-kävely, ylivuotovahdit) muutetaan
+per-task-muuttujiksi. Valittu malli:
+
+- **Taskin pinot allokoidaan heapista luonnissa ja pinnataan**
+  (`FLAG_PINNED` + `gc_compact`-ohitus ovat jo olemassa). Task ≈ FS-lohko
+  (oletus 512 t, `SPAWN`-parametri) + RS-lohko (512 t) + HW-puskuri
+  (128 t) + ZP-save (~70 t) + ikkunaviite ≈ **~1,3 KB heapia / task**.
+- Pysyvän pinnauksen fragmentointihaitta on pieni: pinot asettuvat
+  matalalle luontihetkellä ja vapautuvat kokonaan taskin päättyessä.
+- 30 KB:n heapilla realistinen katto 3–5 taskia; raja on muisti, ei
+  osoitekartta.
+- GC:n mark: silmukka task-taulun yli, kunkin `RSP_i..RS_END_i`.
+
+Alla alkuperäinen kahden taskin vertailu taustaksi — puolitus (b) jää
+degeneroituneeksi erikoistapaukseksi eikä ole enää suositus.
+
+### Tausta: "paljonko kaksisuuntaiset stackit maksaisivat"
 
 Kasvusuunta on leivottu koodiin kolmessa kerroksessa:
 
@@ -44,10 +64,9 @@ tuleva pinokoodin muutos pitäisi tehdä kahdesti.
 | (b) Puolitus: eri init-arvot | **~0 t** | 0 | 512 t FS, 512 t RS |
 | (c) Task B:n pinot heapin alusta | ~10 t (init) | −2 KB heap | täydet 1 KB + 1 KB |
 
-Suositus: **(b) ensin**; jos 512 t osoittautuu ahtaaksi, (c) on
-kymmenen tavun muutos (B:n FS `$8800-$8C00`, RS `$8C00-$9000`,
-`HEAP_DATA_START` → `$9000`) — muisti on tässä halvempaa kuin koodi.
-(a) hylätään: hinta-hyötysuhde on huonoin ja riski suurin.
+(a) hylätään: hinta-hyötysuhde on huonoin ja riski suurin. (b) ja (c)
+korvautuvat yllä olevalla heap-allokoidulla mallilla, joka on (c):n
+N-yleistys.
 
 ## 2. Laitteistopino — miksi suspendoitu task tarvitsee oman tilan
 
@@ -80,18 +99,15 @@ Mitattu syvyysdata (py65, min-SP suorituksen aikana):
 
 Kaksi toteutusta ketjun säilyttämiselle:
 
-- **(i) puolitus**: ketju jää paikoilleen (A `S=$FF`, B `S=$7F`).
-  Nollakustannus vaihdossa; syvyys 128 t/task ≈ 10–12 sisäkkäistasoa
-  (sama luokka kuin FS-puolikkaan 23 kehystä).
-- **(ii) kopiointivaihto**: yksi jaettu pino; vaihdossa käytetty osa
-  kopioidaan taskin puskuriin ja toisen ketju takaisin. Mitatuilla
-  syvyyksillä 30–80 t → ~1–2 ms/vaihto; ei syvyysrajaa; +2×~128 t
-  puskureita + ~40 t koodia.
+- **(i) puolitus**: vain 2 taskia, syvyys 128 t/task. Hylätty — lukitsee
+  taskimäärän.
+- **(ii) kopiointivaihto** (valittu): yksi jaettu pino; vaihdossa käytetty
+  osa kopioidaan taskin puskuriin (task-oliossa heapissa) ja tulevan
+  taskin ketju takaisin. Mitatuilla syvyyksillä 30–80 t → ~1–2 ms/vaihto,
+  N:stä riippumaton; ei syvyysrajaa; ~128 t puskuri/task + ~40 t koodia.
 
-Valinta jätetään auki kunnes oikeiden ohjelmien (mcdemo, neuron) syvyys
-on mitattu; datan valossa (ii) voi olla parempi, koska kopioitavaa on
-vähän eikä syvyysraja puolitu. Kummassakin tapauksessa `preamble`en
-SP-alarajavahti (~10 t): ylivuoto panikoi siististi eikä korruptoi.
+`preamble`en SP-alarajavahti (~10 t): ylivuoto panikoi siististi eikä
+korruptoi.
 
 ## 3. Task-tila ja vaihto
 
@@ -104,11 +120,13 @@ RESERVED_HEAD GC_COUNTER ALLOC_*`), `ROOT_SCOPE`? — **avoin kysymys**:
 jaettu globaali scope (taskit näkevät toistensa muuttujat; helppo, vaarallinen)
 vs. oma ROOT_SCOPE per task (eristys; IPC:ksi tarvitaan jokin kanava).
 
-GC-muutos: mark kävelee molempien taskien aktiiviset RS-alueet
-(`RSP_A..$8800` ja `RSP_B..$8400`), ~30 t. FS ei ole GC:n skannaama ✓.
+GC-muutos: mark kävelee task-taulun kaikkien taskien aktiiviset RS-alueet
+(`RSP_i..RS_END_i`), ~50 t. FS ei ole GC:n skannaama ✓.
 
-Kustannusarvio kernelissä: vaihto ~150 t, ajastinlippu ~30 t, GC ~30 t,
-vahdit ~30 t, fokusreititys ~40 t ≈ **~300 t**. (WM:n päälle; osa voi
+Kustannusarvio kernelissä: vaihto ~150 t, ajastinlippu ~30 t, GC ~50 t,
+vahdit ~30 t, fokusreititys ~40 t, task-taulu + round-robin ~60 t,
+elinkaari (`SPAWN(F [, STACK])`, `EXIT`, siivous) ~150-200 t ≈
+**~550-600 t**. (WM:n päälle; osa voi
 elää WM-pluginissa, mutta `task_switch`in on oltava kernelissä — sitä
 kutsutaan `parser_stmt`istä.)
 
@@ -150,8 +168,8 @@ varmistettava). Tarvitaan:
    mahdolliset aliakset — käyttäjän muokattavissa.
 
 Hyöty taskeille: kun shell on Admiral-koodia, kaikki suoritus kulkee
-statement-rajojen läpi → kaikki on vaihdettavissa, ja "kaksi taskia" =
-kaksi shell-instanssia omissa ikkunoissaan.
+statement-rajojen läpi → kaikki on vaihdettavissa, ja taskit ovat
+shell-/ohjelmainstansseja omissa ikkunoissaan (`SPAWN` shellistä).
 
 ## 7. Toteutusjärjestys
 
@@ -164,7 +182,9 @@ kaksi shell-instanssia omissa ikkunoissaan.
 
 ## 8. Avoimet kysymykset
 
-1. Jaettu vai eriytetty `ROOT_SCOPE` (luku 3)?
+1. Jaettu vai eriytetty `ROOT_SCOPE` (luku 3)? N taskilla jaettu
+   globaaliscope on selvästi vaarallisempi → todennäköisesti oma scope /
+   task + jaettu kanava (esim. `SYS`-dict) IPC:ksi.
 2. `parser_exec`in tarkka sopimus — riittääkö `EXEC`ille sellaisenaan?
 3. HW-pino: puolitus vs. kopiointivaihto (luku 2) — mitattava
    mcdemo/neuron-tason ohjelmilla ennen valintaa.
