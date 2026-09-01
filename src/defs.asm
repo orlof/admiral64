@@ -134,11 +134,12 @@
 // --- Window-manager ZP (wm/screen.asm) ---------------------------------------
 // The output target ("current window") is described by statics in screen.asm
 // (wm_buf/wm_w/wm_h/...). These ZP cells are the per-character hot-path
-// scratch for the write-through path. $4B-$52 were free (BASIC FP scratch
-// starts at $53 and is save/restored around FP calls).
-.const WM_SCR_PTR = $4B   // word: screen row base for write-through
-.const WM_MAP_PTR = $4D   // word: MAP row base for write-through
-.const WM_FLAGS   = $4F   // byte: bit0 = WM on, bit1 = screen lock (EDIT)
+// scratch for the write-through path. $4C-$52 are free ($4B is
+// STOP_REQUESTED below; BASIC FP scratch starts at $53 and is
+// saved/restored around FP calls).
+.const WM_SCR_PTR = $4C   // word: screen row base for write-through
+.const WM_MAP_PTR = $4E   // word: MAP row base for write-through
+.const WM_FLAGS   = $50   // byte: bit0 = WM on, bit1 = screen lock (EDIT)
 
 // RUN/STOP latch. The IRQ handler polls CIA1 PRB row-7 directly each tick
 // and writes bit 7 here: $80 = STOP held, $00 = not held. parser_stmt then
@@ -349,7 +350,7 @@
 // Data grows UP from $8800 (right after FS at $8000-$83FF and RS at
 // $8400-$87FF); handles grow DOWN from $FFF8 — one byte below the NMI vector
 // at $FFFA. Net usable heap: ~30 KB.
-.const HEAP_DATA_START   = $8800   // data heap grows UP from here
+.const HEAP_DATA_START   = $8C00   // data heap grows UP from here
 .const HEAP_HANDLE_START = $FFF8   // text-config handle ceiling: grows DOWN
                                    // from here (just below the IRQ/NMI/RESET
                                    // vectors at $FFFA-$FFFF — RAM with $01=$34)

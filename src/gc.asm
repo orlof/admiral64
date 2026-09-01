@@ -44,6 +44,11 @@
 // -----------------------------------------------------------------------------
 gc_mark:
     // --- Phase 1: roots → gray. ------------------------------------
+    // Kernel-held window handles are roots too. Marked here, NOT at
+    // gc_mark_phase2 — phase 2 re-enters that label until a clean pass,
+    // and re-graying the roots each pass would never converge.
+    jsr wm_gc_mark_roots
+
     lda RSP
     sta W0
     lda RSP+1
@@ -483,6 +488,7 @@ gc_compact_advance:
     jmp gc_compact_loop
 
 gc_compact_done:
+    jsr wm_gc_rederef            // moved payloads → refresh WM raw pointers
     lda GC_DEST
     sta NEXT_DATA
     lda GC_DEST+1

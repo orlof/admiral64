@@ -421,8 +421,3 @@ _sscr_clr_done:
     jmp wm_blit_window
 _sscr_done:
     rts
-
-// Stub until wm.asm lands (milestone 2): unreachable while WM_FLAGS bit 0
-// stays clear.
-wm_blit_window:
-    rts
