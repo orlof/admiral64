@@ -131,6 +131,15 @@
 // instance's wait loop exits and restores the screen.
 .const NMI_PAUSED = $4A         // byte: 0 = idle, !0 = banner showing
 
+// --- Window-manager ZP (wm/screen.asm) ---------------------------------------
+// The output target ("current window") is described by statics in screen.asm
+// (wm_buf/wm_w/wm_h/...). These ZP cells are the per-character hot-path
+// scratch for the write-through path. $4B-$52 were free (BASIC FP scratch
+// starts at $53 and is save/restored around FP calls).
+.const WM_SCR_PTR = $4B   // word: screen row base for write-through
+.const WM_MAP_PTR = $4D   // word: MAP row base for write-through
+.const WM_FLAGS   = $4F   // byte: bit0 = WM on, bit1 = screen lock (EDIT)
+
 // RUN/STOP latch. The IRQ handler polls CIA1 PRB row-7 directly each tick
 // and writes bit 7 here: $80 = STOP held, $00 = not held. parser_stmt then
 // reads this byte and panics ERR_BREAK when bit 7 is set. We don't go via

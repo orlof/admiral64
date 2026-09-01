@@ -1510,7 +1510,7 @@ builtin_wset:
     sta B2                       // B2 = screen code
 
     lda B1
-    jsr scr_row_offset_to_w2_a   // W2 = SCREEN_BASE + row*40
+    jsr scr40_row_to_w2_a        // W2 = SCREEN_BASE + row*40 (fullscreen by contract)
     ldy B0
     lda B2
     sta (W2),y
@@ -1544,7 +1544,7 @@ builtin_wget:
     sta B1
 
     lda B1
-    jsr scr_row_offset_to_w2_a
+    jsr scr40_row_to_w2_a
     ldy B0
     lda (W2),y                   // screen code
     cmp #$20
