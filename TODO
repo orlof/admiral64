@@ -1,0 +1,31 @@
+1. Perusikkunointi
+
+P = WINDOW(5, 3, 20, 8, "TESTI")
+Odotus: reunus viivagrafiikalla, otsikko "TESTI" ylärivillä, sisus tyhjenee, ja kursori hyppää ikkunan sisään (WINDOW tekee ikkunasta tulostuskohteen).
+PRINT "HELLO"
+PRINT "MAAILMA"
+→ tekstin pitää pysyä ikkunan sisällä ja rivittyä/vierittyä sen rajoissa (kirjoita rivejä kunnes vierittää — reunuksen pitää pysyä ehjänä).
+
+2. Päällekkäisyys ja palautus
+
+USE(ROOT)
+Q = WINDOW(10, 5, 20, 6, "PAALLA")
+CLOSE(Q)
+→ Q piirtyy P:n päälle; CLOSE(Q) palauttaa alle jääneen sisällön (myös P:n reunuksen) täydellisesti.
+
+3. UI-kirjasto ja valikko — tärkein interaktiivinen testi
+
+UI = LOAD("UI")()
+C = UI.POPUP(T="FILE", I=["LOAD", "SAVE", "RUN", "QUIT"], X=2, Y=2, W=12)
+→ popup aukeaa, ensimmäinen rivi korostettuna (reverse). CRSR alas/ylös siirtää korostusta (ylhäältä ylös kiertää loppuun), RETURN valitsee (popup sulkeutuu, C = indeksi — REPL auto-printtaa sen), F3 peruu (−1). Katso ettei korostus jätä jälkiä.
+
+4. EDIT-lukko
+
+E = LOAD("EDIT")
+S = E("MUOKKAA TATA")
+→ editori ottaa koko ruudun (ikkunat katoavat),palaa ennalleen (ikkunat + sisällötrepaintattuna). Tämä testaa lukko/unlock-refresh-polun.
+
+5. Paniikkitoipuminen
+
+FOO
+(tuntematon nimi) → virheilmoituksen pitää näkypysyä käyttökelpoisena — ei ikkunan sisäänhukkunutta viestiä.
