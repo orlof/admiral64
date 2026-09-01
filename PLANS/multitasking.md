@@ -49,15 +49,23 @@ kymmenen tavun muutos (B:n FS `$8800-$8C00`, RS `$8C00-$9000`,
 `HEAP_DATA_START` → `$9000`) — muisti on tässä halvempaa kuin koodi.
 (a) hylätään: hinta-hyötysuhde on huonoin ja riski suurin.
 
-## 2. Laitteistopino — vastaus kysymykseen "miksi kaksi"
+## 2. Laitteistopino — miksi suspendoitu task tarvitsee oman tilan
 
-Ei tarvita kahta *pinoa* — tarvitaan kaksi *paikkaa suspendoidun taskin
-JSR-paluuketjulle*. Tulkki on syvästi rekursiivinen `$0100`-sivulla
-(Pratt-parseri: expression → led → eval → call → parser_stmt → ...), joten
-statement-rajalla suspendoidulla taskilla on kymmeniä paluuosoitteita
-pinossa. Ne on joko (i) jätettävä paikoilleen → sivun puolitus
-(A: `S=$FF`, B: `S=$7F`), tai (ii) kopioitava talteen vaihdossa →
-puskuri/task + ~1–3 ms/vaihto.
+**Ei blokkaavien kutsujen takia**, vaan koska tulkin jatkokohta elää
+natiivina rekursiona `$0100`-sivulla: rekursiivisesti laskeutuvan tulkin
+JSR-ketju (`parser_stmt → expression → led → eval → parser_stmt → ...`)
+peilaa Admiral-tason kutsusyvyyttä. Statement-raja on GC-turvallinen
+vaihtokohta, mutta ei natiivipinon pohja — sisäkkäisen funktion tai
+WHILE-rungon lauseiden välissä pinossa ovat kaikkien ulompien tasojen
+kehykset, ja ne on säilytettävä kunnes task jatkaa. Blokkaava `INPUT()`
+lausekkeen sisällä on vain tämän syvin erikoistapaus.
+
+Tarve katoaisi vain, jos (a) vaihdettaisiin vain ylimmän tason
+lauserajalla — jolloin pitkä ohjelma ei koskaan luovuta, preemptio katoaa
+— tai (b) tulkki kirjoitettaisiin ei-rekursiiviseksi (jatkokohta
+eksplisiittisesti FS:ssä; natiivipino tyhjä lauserajoilla). (b) olisi
+"oikea" ratkaisu ja tekisi vaihdosta pelkän ZP+FSP/RSP-swapin, mutta se
+on parserin/evalin uudelleenkirjoitus — rajattu pois.
 
 Mitattu syvyysdata (py65, min-SP suorituksen aikana):
 
@@ -67,16 +75,23 @@ Mitattu syvyysdata (py65, min-SP suorituksen aikana):
 | syvä lauseke `((((((1+2)*3+4)...` | 53 t |
 | 5 sisäkkäistä funktiokutsua | 49 t |
 | 8-tasoinen Admiral-rekursio | 81 t |
-| dict-metodi (`ME`) | 33 t |
 
-≈ 29 t pohja + 6–10 t per sisäkkäistaso. **128 t/task kattaa ~10–12
-sisäkkäistasoa** — sama suuruusluokka kuin FS-puolikkaan raja (512/22 ≈ 23
-kehystä), joten puolitus ei muodosta uutta pullonkaulaa. Syvempi rekursio
-vaatii joka tapauksessa vahdin: SP-alarajatarkistus `preamble`en → siisti
-`ERR_OOM`-tyylinen paniikki korruption sijaan (~10 t).
+≈ 29 t pohja + 6–10 t per Admiral-sisäkkäistaso.
 
-Valinta: **(i) puolitus** + vahti. (ii) jää varasuunnitelmaksi, jos
-mittaukset oikeissa ohjelmissa (mcdemo, neuron) näyttävät > 100 t.
+Kaksi toteutusta ketjun säilyttämiselle:
+
+- **(i) puolitus**: ketju jää paikoilleen (A `S=$FF`, B `S=$7F`).
+  Nollakustannus vaihdossa; syvyys 128 t/task ≈ 10–12 sisäkkäistasoa
+  (sama luokka kuin FS-puolikkaan 23 kehystä).
+- **(ii) kopiointivaihto**: yksi jaettu pino; vaihdossa käytetty osa
+  kopioidaan taskin puskuriin ja toisen ketju takaisin. Mitatuilla
+  syvyyksillä 30–80 t → ~1–2 ms/vaihto; ei syvyysrajaa; +2×~128 t
+  puskureita + ~40 t koodia.
+
+Valinta jätetään auki kunnes oikeiden ohjelmien (mcdemo, neuron) syvyys
+on mitattu; datan valossa (ii) voi olla parempi, koska kopioitavaa on
+vähän eikä syvyysraja puolitu. Kummassakin tapauksessa `preamble`en
+SP-alarajavahti (~10 t): ylivuoto panikoi siististi eikä korruptoi.
 
 ## 3. Task-tila ja vaihto
 
@@ -151,8 +166,8 @@ kaksi shell-instanssia omissa ikkunoissaan.
 
 1. Jaettu vai eriytetty `ROOT_SCOPE` (luku 3)?
 2. `parser_exec`in tarkka sopimus — riittääkö `EXEC`ille sellaisenaan?
-3. HW-pinon 128 t: mittattava mcdemo/neuron-tason ohjelmilla ennen
-   lukkoon lyöntiä (fallback: kopiointivaihto tai vaihtoehto 1c).
+3. HW-pino: puolitus vs. kopiointivaihto (luku 2) — mitattava
+   mcdemo/neuron-tason ohjelmilla ennen valintaa.
 4. Ajastimen lähde: IRQ on nyt käytössä ($0314-polku) — riittääkö nykyinen
    jiffy-IRQ lipun asettajaksi vai tuleeko WM:n myötä jotain muuta?
 5. Paniikki keskellä pluginia toisen taskin ollessa pinnattuna samassa
