@@ -174,12 +174,26 @@ _rpl_copy_done:
     // RS layout: push RV THREE times — once for print_value (consumed last),
     // once for the "_" name slot and once for the scope_set value (consumed
     // together first). scope_set leaves the bottom RV intact for print_value.
+    jsr repl_bind_print
+
+    jmp repl_loop
+
+
+// -----------------------------------------------------------------------------
+// repl_bind_print — REPL result semantics for the value in RV: if it isn't
+// NONE, bind it to `_` in the current scope and auto-print it. Shared by the
+// kernel REPL loop and builtin_exec (EXEC gives user shells the same
+// semantics). Caller context: callable from both V4' frames and the REPL's
+// flat loop — only V4' sub-calls inside.
+//   in:  RV = statement/turn result.   clobbers: A,X,Y, W's via sub-calls.
+// -----------------------------------------------------------------------------
+repl_bind_print:
     lda RV
     cmp #<NONE
     bne !bind+
     lda RV+1
     cmp #>NONE
-    beq _rpl_skip_bind
+    beq _rbp_skip
 !bind:
     jsr rs_push_rv                   // bottom: RV for print_value
     rs_push_const(STR_UNDERSCORE)
@@ -188,10 +202,70 @@ _rpl_copy_done:
     jsr print_value                  // pops the bottom RV, prints it
     lda #$0D
     jsr screen_put_char
-_rpl_skip_bind:
+_rbp_skip:
+    rts
 
-    jmp repl_loop
+// -----------------------------------------------------------------------------
+// repl_try_shell — panic-recovery hook: if the global SHELL exists, restart
+// it by executing the constant source "SHELL()". Guarded by
+// repl_shell_retry: set before the attempt, cleared by kbd_getchar once the
+// shell reaches an interactive wait — a shell that panics BEFORE reading a
+// key is broken, and a second panic falls through to the kernel REPL
+// instead of looping.
+//   Called from error_handler with freshly reset stacks; returns to caller
+//   (which falls into repl_loop) when there is no shell / the guard trips /
+//   the shell RETURNs deliberately.
+// -----------------------------------------------------------------------------
+repl_try_shell:
+    lda repl_shell_retry
+    bne _rts_give_up                 // previous restart never got to a key
+    // SHELL bound in ROOT_SCOPE?
+    lda ROOT_SCOPE
+    sta W0
+    lda ROOT_SCOPE+1
+    sta W0+1
+    rs_push(W0)
+    rs_push_const(STR_SHELL_NAME)
+    jsr dict_get                     // RV = value or NONE
+    lda RV
+    cmp #<NONE
+    bne !have+
+    lda RV+1
+    cmp #>NONE
+    beq _rts_no_shell
+!have:
+    lda #1
+    sta repl_shell_retry
+    rs_push_const(STR_SHELL_CALL)
+    jsr parser_exec                  // runs "SHELL()"; returns if it RETURNs
+_rts_no_shell:
+_rts_give_up:
+    lda #0
+    sta repl_shell_retry
+    rts
 
+repl_shell_retry: .byte 0
+
+// "SHELL" (the global name) and "SHELL()" (the restart source).
+STR_SHELL_NAME:
+    .word STR_SHELL_NAME_OBJ
+    .word 7
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_SHELL_NAME_OBJ:
+    .word 5
+    .text "SHELL"
+
+STR_SHELL_CALL:
+    .word STR_SHELL_CALL_OBJ
+    .word 9
+    .word 0
+    .byte TYPE_STR
+    .byte 0
+STR_SHELL_CALL_OBJ:
+    .word 7
+    .text "SHELL()"
 
 // -----------------------------------------------------------------------------
 // _rpl_read_line — read one editable line from the keyboard.

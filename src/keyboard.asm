@@ -22,6 +22,9 @@
 //   out: A = PETSCII byte (never zero).
 // -----------------------------------------------------------------------------
 kbd_getchar:
+    lda #0
+    sta repl_shell_retry             // interactive wait reached → a shell
+                                     // restart (if any) succeeded
     preamble_args(0, 0)
 kbd_getchar_spin:
     // Steady-state $01 = MEM_NORMAL ($34). Two INCs → $36 (KERNAL+I/O in)

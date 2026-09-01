@@ -1733,6 +1733,54 @@ _bcode_panic:
     jmp panic_type
 
 // =============================================================================
+// builtin_exec(src) — execute `src` in the ROOT scope with REPL semantics:
+// statements run one by one, the final non-NONE value is bound to `_` and
+// auto-printed. Always returns NONE (so shells built on EXEC never have to
+// store a NONE — the scope layer can't distinguish it from "missing").
+//
+// Runs in ROOT_SCOPE (Python-exec-style globals): a user shell's variables
+// must live in the root scope so they survive the shell call's own local
+// scope — and a panic-triggered shell restart.
+//
+// The caller sits mid-parse in its own source, so the outer lexer state is
+// saved around parser_exec (same discipline as stmt_while's re-lex).
+// =============================================================================
+builtin_exec:
+    jsr preamble_call_1_1_w0
+    ldy #H_TYPE
+    lda (W0),y
+    cmp #TYPE_STR
+    beq !+
+    jmp panic_type
+!:
+    // Swap to the root scope; keep the caller's scope on FS. (The handle
+    // value is stable and the scope object stays rooted via the call
+    // chain's RS entries.)
+    lda CURRENT_SCOPE
+    sta W2
+    lda CURRENT_SCOPE+1
+    sta W2+1
+    fs_push(W2)
+    lda ROOT_SCOPE
+    sta CURRENT_SCOPE
+    lda ROOT_SCOPE+1
+    sta CURRENT_SCOPE+1
+
+    jsr lexer_save                     // outer program's position → FS
+    jsr arg0_w0_push                   // RS: [..., src] for parser_exec
+    jsr parser_exec                    // consumes src; RV = last value
+    jsr lexer_restore
+
+    fs_pop(W2)
+    lda W2
+    sta CURRENT_SCOPE
+    lda W2+1
+    sta CURRENT_SCOPE+1
+
+    jsr repl_bind_print                // `_` + auto-print if RV != NONE
+    jmp postamble_return_none
+
+// =============================================================================
 // builtin_bitmap(on) — warm-restart Admiral into a heap config that does
 // (or doesn't) reserve VIC bitmap memory.
 //   falsy  → text-only / full-heap (handle ceiling $FFF8).
@@ -2043,6 +2091,9 @@ _bdir_disk_err:
 builtin_getc:
     preamble_call(0, 0)
 _bgc_spin:
+    // Interactive wait → any pending shell-restart guard is satisfied.
+    lda #0
+    sta repl_shell_retry
     inc $01                            // $34 → $35 → $36 (KERNAL+I/O in)
     inc $01
     jsr KERNAL_GETIN
@@ -2062,6 +2113,9 @@ _bgc_spin:
 // =============================================================================
 builtin_key:
     preamble_call(0, 0)
+    // Interactive wait → any pending shell-restart guard is satisfied.
+    lda #0
+    sta repl_shell_retry
     inc $01                            // $34 → $36 (KERNAL+I/O in)
     inc $01
     jsr KERNAL_GETIN
@@ -2126,6 +2180,9 @@ _bin_alloc_buf:
     sta B0                         // B0 = current length
 
 _bin_loop:
+    // Interactive wait → any pending shell-restart guard is satisfied.
+    lda #0
+    sta repl_shell_retry
     inc $01                            // $34 → $36 (KERNAL+I/O in)
     inc $01
     jsr KERNAL_GETIN

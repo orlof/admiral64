@@ -297,6 +297,11 @@ error_handler:
     lda #0
     sta ERROR_CODE
 
+    // User shell: if the global SHELL is bound, restart it (retry-guarded).
+    // Falls through to the kernel REPL when there is no shell, the shell
+    // RETURNed deliberately, or it crashed before reaching a key wait.
+    jsr repl_try_shell
+
     jmp repl_loop
 
 _err_nibble:
@@ -617,14 +622,14 @@ _nmi_save:
     lda #$20
     sta $0400+9
 
-    // FS_END = $8800, RS_END = $8C00 (literals — defined in stacks.asm but
+    // FS_END = $8C00, RS_END = $9000 (literals — defined in stacks.asm but
     // .const forward refs from admiral.asm can't resolve at this point in the
     // single-segment build; the real defs live there for everyone else).
     sec
     lda #$00
     sbc FSP
     sta W0
-    lda #$88
+    lda #$8C
     sbc FSP+1
     sta W0+1
     ldx #10
@@ -636,7 +641,7 @@ _nmi_save:
     lda #$00
     sbc RSP
     sta W0
-    lda #$8C
+    lda #$90
     sbc RSP+1
     sta W0+1
     ldx #15
