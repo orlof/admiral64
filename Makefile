@@ -14,9 +14,11 @@ VENV_PY      := .venv/bin/python3
 # Extensions packed as serialized objects (not source strings). Each must
 # correspond to an examples/<name>.admiral whose body ends with `RETURN <var>`.
 OBJECT_EXAMPLES := text hires mc
-# VICE's c1541 — install VICE and the binary is at this path on macOS.
-# Override with `make C1541=/path/to/c1541` for other locations.
-C1541        := /Applications/vice-arm64-gtk3-3.9/bin/c1541
+# VICE — install VICE and the binaries are at these paths on macOS.
+# Override with `make C1541=... X64=...` for other locations.
+VICE_BIN     := /Applications/vice-arm64-gtk3-3.9/bin
+C1541        := $(VICE_BIN)/c1541
+X64          := $(VICE_BIN)/x64sc
 
 PLUGIN_SRCS  := $(wildcard plugins/*.asm)
 PLUGIN_BINS  := $(patsubst plugins/%.asm,$(BUILD)/plugin_%.bin,$(PLUGIN_SRCS))
@@ -35,7 +37,7 @@ DISK := $(BUILD)/$(TOP).d64
 GENERATED := $(SRC)/tst_builtins.asm
 SOURCES   := $(filter-out $(GENERATED),$(wildcard $(SRC)/*.asm)) $(GENERATED)
 
-.PHONY: all prg disk clean test
+.PHONY: all prg disk clean test run
 
 all: $(DISK)
 
@@ -84,6 +86,11 @@ $(BUILD):
 
 test: $(PRG)
 	.venv/bin/pytest tests/ -v
+
+# Build the disk image and boot it in VICE (true-1541 emulation, autostart).
+# Detached: stdout/stderr must be redirected or make blocks on the open pipe.
+run: $(DISK)
+	$(X64) -autostart $(DISK) > /dev/null 2>&1 &
 
 clean:
 	rm -rf $(BUILD)
