@@ -76,6 +76,7 @@ TASK_SWITCH_PENDING: .byte 0
 // key via the IRQ. CBM_LAST latches the key level for edge detection.
 TASK_FOCUS: .byte 0
 CBM_LAST:   .byte 0
+WM_REFRESH_PENDING: .byte 0          // focus changed -> repaint colors
 
 // -----------------------------------------------------------------------------
 // task_init — boot: task 0 = the running REPL; others free.
@@ -86,6 +87,7 @@ task_init:
     sta TASK_SWITCH_PENDING
     sta TASK_FOCUS
     sta CBM_LAST
+    sta WM_REFRESH_PENDING
     ldx #MAX_TASKS-1
     lda #0
 _ti_clear:

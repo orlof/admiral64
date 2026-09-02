@@ -866,7 +866,88 @@ _wrf_blit_loop:
     inc wm_t2
     jmp _wrf_blit_loop
 _wrf_done:
+    jsr wm_color_pass
     jmp postamble
+
+// -----------------------------------------------------------------------------
+// wm_color_pass — paint color RAM ($D800) from the MAP: cells owned by the
+// FOCUSED task's window get white ($01), the rest light green (COLOR_FG). The
+// MAP is our per-cell owner "z-buffer", so this is a single 1000-cell walk.
+// Runs at $01=$35 (I/O in for color RAM). Leaf; clobbers A,X,Y,W0,W2,B0,B1,
+// $0A,$0B.
+// -----------------------------------------------------------------------------
+wm_color_pass:
+    // Focused window handle -> W0 (live if the focused task is running, else
+    // its saved current window).
+    lda TASK_FOCUS
+    cmp ts_cur
+    bne _wcp_saved
+    lda wm_cur_h
+    sta W0
+    lda wm_cur_h+1
+    sta W0+1
+    jmp _wcp_have
+_wcp_saved:
+    ldx TASK_FOCUS
+    lda t_wmcur_lo,x
+    sta W0
+    lda t_wmcur_hi,x
+    sta W0+1
+_wcp_have:
+    lda W0
+    ora W0+1
+    bne _wcp_find
+    lda #0                           // no window -> treat ROOT (index 0)
+    sta _wcp_idx
+    jmp _wcp_paint
+_wcp_find:
+    jsr wm_find_idx                  // A = index of focused window
+    sta _wcp_idx
+_wcp_paint:
+    lda wm_map_base
+    sta W2
+    lda wm_map_base+1
+    sta W2+1
+    lda #$00
+    sta $0A
+    lda #$D8
+    sta $0B                          // $0A:$0B = $D800 color RAM
+    lda #<1000
+    sta B0
+    lda #>1000
+    sta B1
+    inc $01                          // $34 -> $35 (I/O in for color RAM)
+    ldy #0
+_wcp_loop:
+    lda B0
+    ora B1
+    beq _wcp_done
+    lda (W2),y                       // MAP owner index
+    cmp _wcp_idx
+    beq _wcp_white
+    lda #COLOR_FG
+    .byte $2C                        // BIT abs — skip the 2-byte lda #imm
+_wcp_white:
+    lda #$01                         // white for the focused window
+    sta ($0A),y
+    inc W2
+    bne !+
+    inc W2+1
+!:
+    inc $0A
+    bne !+
+    inc $0B
+!:
+    lda B0
+    bne !+
+    dec B1
+!:
+    dec B0
+    jmp _wcp_loop
+_wcp_done:
+    dec $01                          // $35 -> $34
+    rts
+_wcp_idx: .byte 0
 
 // -----------------------------------------------------------------------------
 // wm_blit_one — repaint window W0 (z-index in A): border (if any) + interior

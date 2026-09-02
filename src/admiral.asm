@@ -462,6 +462,8 @@ irq_handler:
     and #$02                          // screen locked (EDIT)?
     bne _irq_cbm_held                 // locked → don't switch, but latch
     jsr task_focus_next
+    lda #1
+    sta WM_REFRESH_PENDING            // repaint focus colors at a safe point
 _irq_cbm_held:
     lda #$FF
     sta CBM_LAST

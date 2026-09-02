@@ -231,3 +231,48 @@ def test_root_inherits_live_cursor(h):
     assert scr(h, 3, 7) == 0x1A          # 'Z' where the cursor was left
     assert scr(h, 0, 0) in (0x00, 0x20)  # top-left untouched (py65 has no
                                          # screen_init -> raw RAM default)
+
+
+def col(h, c, r):
+    return h.mpu.memory[0xD800 + r * 40 + c] & 0x0F
+
+
+def test_focused_window_cells_are_white(h):
+    # The focused window's cells (border + interior) get white ($01); the rest
+    # (ROOT) stay light green (COLOR_FG $0D). Main (task 0) is focused and its
+    # current window is W, so W is white.
+    run(h, 'W = WINDOW(5, 3, 10, 5, "T")')
+    assert col(h, 6, 4) == 0x01        # W interior -> white (focused)
+    assert col(h, 5, 3) == 0x01        # W border corner -> white
+    assert col(h, 0, 0) == 0x0D        # ROOT area -> light green (unfocused)
+
+
+def test_unfocused_window_is_green(h):
+    # A task opens window B; main opens window A. Main (task 0) is focused, so
+    # A is white and B (the task's) is green.
+    src = ('SPAWN("B = WINDOW(20, 3, 10, 5, \\"B\\")\\nYIELD()")\n'
+           'YIELD()\n'                             # task opens B, yields (stays alive)
+           'A = WINDOW(2, 3, 10, 5, "A")')         # main opens A, refresh colors
+    run(h, src, max_steps=20_000_000)
+    assert col(h, 3, 4) == 0x01        # A interior -> white (main focused)
+    assert col(h, 21, 4) == 0x0D       # B interior -> green (task unfocused)
+
+
+def test_focus_change_recolors(h):
+    # Two windows (main's A, task's B). Move focus to the task, REFRESH(), and
+    # the colors flip: B white, A green.
+    src = ('SPAWN("B = WINDOW(20, 3, 10, 5, \\"B\\")\\nYIELD()")\n'
+           'YIELD()\n'
+           'A = WINDOW(2, 3, 10, 5, "A")')
+    from test_str import place_str
+    handle = place_str(h, 0x8A00, list(src.encode("ascii")))
+    h.rs_push(handle)
+    h.call("parser_eval", max_steps=20_000_000)
+    assert col(h, 3, 4) == 0x01 and col(h, 21, 4) == 0x0D    # A white, B green
+    # Hand focus to the task (index 1) and repaint via REFRESH().
+    h.mpu.memory[h.sym["TASK_FOCUS"]] = 1
+    r2 = place_str(h, 0x8A00, list(b"REFRESH()"))
+    h.rs_push(r2)
+    h.call("parser_eval", max_steps=8_000_000)
+    assert col(h, 21, 4) == 0x01       # B now white (task focused)
+    assert col(h, 3, 4) == 0x0D        # A now green

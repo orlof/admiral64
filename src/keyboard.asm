@@ -27,6 +27,17 @@ kbd_getchar:
                                      // restart (if any) succeeded
     preamble_args(0, 0)
 kbd_getchar_spin:
+    // A focus change (C= key) requests a color repaint — do it here, at a
+    // safe point (idle REPL/shells spin here), not in the IRQ.
+    lda WM_REFRESH_PENDING
+    beq _kgc_nofr
+    lda #0
+    sta WM_REFRESH_PENDING
+    lda WM_FLAGS
+    lsr
+    bcc _kgc_nofr
+    jsr wm_refresh
+_kgc_nofr:
     // Only the focused task reads the keyboard; others yield and wait.
     lda ts_cur
     cmp TASK_FOCUS
