@@ -10,7 +10,7 @@ ERR_DIV_ZERO = 0x02
 
 def run_div(h, a_bytes: list[int], b_bytes: list[int]) -> list[int]:
     rsp_initial = h.rsp
-    a = place_int(h, 0x8500, a_bytes)
+    a = place_int(h, 0x8800, a_bytes)
     b = place_int(h, 0x9100, b_bytes)
     h.rs_push(a)
     h.rs_push(b)
@@ -20,7 +20,7 @@ def run_div(h, a_bytes: list[int], b_bytes: list[int]) -> list[int]:
 
 
 def run_div_panic(h, a_bytes: list[int], b_bytes: list[int]) -> int:
-    a = place_int(h, 0x8500, a_bytes)
+    a = place_int(h, 0x8800, a_bytes)
     b = place_int(h, 0x9100, b_bytes)
     h.rs_push(a)
     h.rs_push(b)

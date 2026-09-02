@@ -165,6 +165,7 @@
 .const ERR_ARITY    = $06  // Wrong number of arguments to a builtin or user function
 .const ERR_DISK     = $07  // 1541/IEC error — DOS error channel reported a non-zero code
 .const ERR_BREAK    = $08  // User pressed Run/Stop — interpreter aborted at a parser_stmt boundary
+.const ERR_TASK     = $09  // SPAWN: no free task slot
 
 // --- Handle struct -----------------------------------------------------------
 .const H_PTR         = 0   // 2 bytes — pointer to heap object (header + payload)
@@ -350,7 +351,7 @@
 // Data grows UP from $8800 (right after FS at $8000-$83FF and RS at
 // $8400-$87FF); handles grow DOWN from $FFF8 — one byte below the NMI vector
 // at $FFFA. Net usable heap: ~30 KB.
-.const HEAP_DATA_START   = $9000   // data heap grows UP from here
+.const HEAP_DATA_START   = $9800   // data heap grows UP from here
 .const HEAP_HANDLE_START = $FFF8   // text-config handle ceiling: grows DOWN
                                    // from here (just below the IRQ/NMI/RESET
                                    // vectors at $FFFA-$FFFF — RAM with $01=$34)

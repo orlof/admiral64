@@ -139,6 +139,6 @@ def test_str_and_int_coexist_across_gc(h):
 # --- place_str helper round-trips --------------------------------------------
 
 def test_place_str_round_trip(h):
-    handle = place_str(h, 0x8500, [0x41, 0x42, 0x43])
+    handle = place_str(h, 0x8800, [0x41, 0x42, 0x43])
     assert h.mpu.memory[handle + H_TYPE] == TYPE_STR
     assert read_str(h, handle) == [0x41, 0x42, 0x43]

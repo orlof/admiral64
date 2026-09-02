@@ -21,7 +21,7 @@ def scr(h, col, row):
 
 def run(h, src, max_steps=8_000_000):
     payload = list(src.encode("ascii"))
-    handle = place_str(h, 0x8500, payload)
+    handle = place_str(h, 0x8800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=max_steps)
     return h.read_word(RV)
@@ -64,7 +64,7 @@ def test_bad_geometry_panics(h):
                 'WINDOW(0, 0, 2, 5, "T")',       # bordered w < 3
                 'WINDOW(0, 0, 0, 5)'):           # w == 0
         payload = list(src.encode("ascii"))
-        handle = place_str(h, 0x8500, payload)
+        handle = place_str(h, 0x8800, payload)
         h.rs_push(handle)
         with pytest.raises(Exception):
             h.call("parser_eval", max_steps=8_000_000)
@@ -132,7 +132,7 @@ def test_at_moves_cursor_of_current_window(h):
 
 def test_close_root_panics(h):
     payload = list('P = WINDOW(0,0,5,3)\nCLOSE(ROOT)'.encode("ascii"))
-    handle = place_str(h, 0x8500, payload)
+    handle = place_str(h, 0x8800, payload)
     h.rs_push(handle)
     with pytest.raises(Exception):
         h.call("parser_eval", max_steps=8_000_000)

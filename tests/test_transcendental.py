@@ -12,7 +12,7 @@ from test_str import place_str
 
 def _eval_float(h, source):
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x8500, payload)
+    handle = place_str(h, 0x8800, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     rv = h.read_word(RV)

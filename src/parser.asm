@@ -198,6 +198,16 @@ parser_stmt:
     bpl !nostop+
     jmp panic_break
 !nostop:
+    // Preemption: the IRQ sets TASK_SWITCH_PENDING; switch here, at a
+    // statement boundary, where live state is on FS/RS (GC-safe) and the
+    // shared allocator ZP is idle. Cleared before the switch so the running
+    // task doesn't immediately re-trip on resume.
+    lda TASK_SWITCH_PENDING
+    beq !nopre+
+    lda #0
+    sta TASK_SWITCH_PENDING
+    jsr task_switch
+!nopre:
     ldx LEX_TOKEN_KIND
     lda std_hi,x
     pha

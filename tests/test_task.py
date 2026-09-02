@@ -23,7 +23,7 @@ def scr(h, col, row):
 
 def run(h, src, max_steps=15_000_000):
     from test_str import place_str
-    handle = place_str(h, 0x8500, list(src.encode("ascii")))
+    handle = place_str(h, 0x8800, list(src.encode("ascii")))
     h.rs_push(handle)
     h.call("parser_eval", max_steps=max_steps)
 
@@ -90,3 +90,57 @@ def test_task_survives_gc_in_main(h):
            'YIELD()')                        # resume task; T[1] must be 8
     run(h, src, max_steps=30_000_000)
     assert scr(h, 0, 5) == 0x38            # '8'
+
+
+def test_three_tasks_spawn_and_run(h):
+    # Spawn three tasks (slots 1,2,3), each writes to a distinct screen row;
+    # round-robin YIELDs let each run once.
+    src = ('SPAWN("CURSOR(0,10)\\nPRINT \\"A\\"")\n'
+           'SPAWN("CURSOR(0,11)\\nPRINT \\"B\\"")\n'
+           'SPAWN("CURSOR(0,12)\\nPRINT \\"C\\"")\n'
+           'YIELD()\nYIELD()\nYIELD()')
+    run(h, src, max_steps=20_000_000)
+    assert scr(h, 0, 10) == 0x01       # 'A'
+    assert scr(h, 0, 11) == 0x02       # 'B'
+    assert scr(h, 0, 12) == 0x03       # 'C'
+
+
+def test_spawn_all_slots_then_full_errors(h):
+    # 3 spawnable slots (1..3); a 4th SPAWN with all busy panics ERR_TASK ($09).
+    import pytest as _pt
+    from test_str import place_str
+    from conftest import ERROR_CODE_ZP
+    body = 'WHILE 1:\\n  YIELD()'          # never exits → keeps its slot
+    src = (f'SPAWN("{body}")\nSPAWN("{body}")\nSPAWN("{body}")\nSPAWN("{body}")')
+    handle = place_str(h, 0x8800, list(src.encode("ascii")))
+    h.rs_push(handle)
+    with _pt.raises(Exception):
+        h.call("parser_eval", max_steps=8_000_000)
+    assert h.mpu.memory[ERROR_CODE_ZP] == 0x09    # ERR_TASK
+
+
+def test_preemption_switches_at_statement_boundary(h):
+    # No explicit YIELD in main. Simulate a periodic timer IRQ (set the flag
+    # every ~800 instructions); parser_stmt switches at statement boundaries.
+    # Main runs a long loop so the task gets preempted-in and finishes.
+    from test_str import place_str
+    src = ('SPAWN("CURSOR(0,13)\\nPRINT \\"P\\"")\n'
+           'i = 0\nWHILE i < 150:\n  i = i + 1')
+    handle = place_str(h, 0x8800, list(src.encode("ascii")))
+    h.rs_push(handle)
+    pend = h.sym["TASK_SWITCH_PENDING"]
+    sentinel = 0xFFFE
+    h.mpu.memory[0x0100 + h.mpu.sp] = (sentinel >> 8) & 0xFF
+    h.mpu.sp = (h.mpu.sp - 1) & 0xFF
+    h.mpu.memory[0x0100 + h.mpu.sp] = sentinel & 0xFF
+    h.mpu.sp = (h.mpu.sp - 1) & 0xFF
+    h.mpu.pc = h.sym["parser_eval"]
+    n = 0
+    for _ in range(15_000_000):
+        if h.mpu.pc == sentinel + 1:
+            break
+        n += 1
+        if n % 800 == 0:
+            h.mpu.memory[pend] = 1        # periodic timer tick
+        h.mpu.step()
+    assert scr(h, 0, 13) == 0x10          # 'P' — task ran with no explicit YIELD

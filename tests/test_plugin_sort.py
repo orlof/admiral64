@@ -98,7 +98,7 @@ def test_sort_mixed_calls_survive_gc(hs):
     )
     from test_str import place_str, read_str
     from conftest import RV
-    handle = place_str(hs, 0x8500, list(src.encode("ascii")))
+    handle = place_str(hs, 0x8800, list(src.encode("ascii")))
     hs.rs_push(handle)
     hs.call("parser_eval", max_steps=30_000_000)
     assert bytes(read_str(hs, hs.read_word(RV))) == b"abcdefgh"

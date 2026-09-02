@@ -17,9 +17,8 @@ sys.path.insert(0, 'tests')
 import test_parser as tp
 
 
-def test_len_returns_full_word_for_long_string(hfp):
+def test_len_returns_full_word_for_long_string(h):
     """A 300-char string built via repetition reports len 300, not 44."""
-    h = hfp
     src = (
         's = "abcdefghij" * 30\n'   # 300 bytes
         'LEN(s)'
@@ -27,9 +26,8 @@ def test_len_returns_full_word_for_long_string(hfp):
     assert tp._eval(h, src) == 300
 
 
-def test_len_returns_full_word_at_256_boundary(hfp):
+def test_len_returns_full_word_at_256_boundary(h):
     """The exact-256 boundary: len must return 256, not 0."""
-    h = hfp
     src = (
         's = "0123456789abcdef" * 16\n'  # 256 bytes
         'LEN(s)'
@@ -37,10 +35,9 @@ def test_len_returns_full_word_at_256_boundary(hfp):
     assert tp._eval(h, src) == 256
 
 
-def test_str_eq_distinguishes_long_strings(hfp):
+def test_str_eq_distinguishes_long_strings(h):
     """Two 300-char strings differing only in the high half compare unequal —
     the byte-only val_eq used to walk only the low 256 bytes and miss it."""
-    h = hfp
     src = (
         'a = "x" * 300\n'
         'b = "x" * 280 + "y" * 20\n'
@@ -50,9 +47,8 @@ def test_str_eq_distinguishes_long_strings(hfp):
     assert tp._eval(h, src) == 0
 
 
-def test_str_eq_long_equal_strings(hfp):
+def test_str_eq_long_equal_strings(h):
     """Two identical 300-char strings still compare equal."""
-    h = hfp
     src = (
         'a = "z" * 300\n'
         'b = "z" * 300\n'
@@ -61,9 +57,8 @@ def test_str_eq_long_equal_strings(hfp):
     assert tp._eval(h, src) == 1
 
 
-def test_str_cmp_long_string_difference_past_256(hfp):
+def test_str_cmp_long_string_difference_past_256(h):
     """Lex-compare must reach a difference at index 280 — used to be invisible."""
-    h = hfp
     src = (
         'a = "a" * 280 + "x"\n'
         'b = "a" * 280 + "y"\n'
@@ -73,9 +68,8 @@ def test_str_cmp_long_string_difference_past_256(hfp):
     assert tp._eval(h, src) == -1
 
 
-def test_list_append_grows_past_127_elements(hfp):
+def test_list_append_grows_past_127_elements(h):
     """Append more than 127 elements; len reports the full count, last index works."""
-    h = hfp
     src = (
         'l = []\n'
         'i = 0\n'
@@ -93,9 +87,8 @@ def test_list_append_grows_past_127_elements(hfp):
     assert result == 200
 
 
-def test_list_append_via_method_grows_past_127(hfp):
+def test_list_append_via_method_grows_past_127(h):
     """Same but uses .append() in-place (calls array_append directly)."""
-    h = hfp
     src = (
         'l = []\n'
         'i = 0\n'
@@ -108,9 +101,8 @@ def test_list_append_via_method_grows_past_127(hfp):
     assert result == 200
 
 
-def test_list_append_index_above_127(hfp):
+def test_list_append_index_above_127(h):
     """After appending past 127, accessing element 150 returns the right value."""
-    h = hfp
     src = (
         'l = []\n'
         'i = 0\n'
@@ -123,9 +115,8 @@ def test_list_append_index_above_127(hfp):
     assert result == 150
 
 
-def test_list_append_index_at_127_boundary(hfp):
+def test_list_append_index_at_127_boundary(h):
     """l[127] just at the boundary."""
-    h = hfp
     src = (
         'l = []\n'
         'i = 0\n'
@@ -138,9 +129,8 @@ def test_list_append_index_at_127_boundary(hfp):
     assert result == 127
 
 
-def test_list_append_index_at_128(hfp):
+def test_list_append_index_at_128(h):
     """l[128] — first index past byte boundary."""
-    h = hfp
     src = (
         'l = []\n'
         'i = 0\n'
@@ -153,9 +143,8 @@ def test_list_append_index_at_128(hfp):
     assert result == 128
 
 
-def test_list_append_index_zero_after_long_growth(hfp):
+def test_list_append_index_zero_after_long_growth(h):
     """l[0] should still be 0 after the list has grown past 127."""
-    h = hfp
     src = (
         'l = []\n'
         'i = 0\n'
@@ -168,9 +157,8 @@ def test_list_append_index_zero_after_long_growth(hfp):
     assert result == 0
 
 
-def test_list_repeat_past_127(hfp):
+def test_list_repeat_past_127(h):
     """[1] * 200 → 200-element list — array_repeat past the byte cap."""
-    h = hfp
     src = (
         'l = [1] * 200\n'
         'LEN(l)'
@@ -178,9 +166,8 @@ def test_list_repeat_past_127(hfp):
     assert tp._eval(h, src) == 200
 
 
-def test_list_repeat_index_past_127(hfp):
+def test_list_repeat_index_past_127(h):
     """l = [42] * 200; l[180] should be 42."""
-    h = hfp
     src = (
         'l = [42] * 200\n'
         'l[180]'
@@ -188,10 +175,9 @@ def test_list_repeat_index_past_127(hfp):
     assert tp._eval(h, src) == 42
 
 
-def test_str_repeat_past_127(hfp):
+def test_str_repeat_past_127(h):
     """`"a" * 200` is past the byte cap. Multiplier itself is now read as a
     16-bit signed word (was capped at 255 in the original byte-only path)."""
-    h = hfp
     src = (
         's = "a" * 200\n'
         'LEN(s)'
@@ -199,9 +185,8 @@ def test_str_repeat_past_127(hfp):
     assert tp._eval(h, src) == 200
 
 
-def test_str_repeat_past_byte_multiplier(hfp):
+def test_str_repeat_past_byte_multiplier(h):
     """Multiplier > 255 — exercises the word-aware multiplier path."""
-    h = hfp
     src = (
         's = "a" * 300\n'
         'LEN(s)'
@@ -209,9 +194,8 @@ def test_str_repeat_past_byte_multiplier(hfp):
     assert tp._eval(h, src, max_steps=20_000_000) == 300
 
 
-def test_list_del_past_127(hfp):
+def test_list_del_past_127(h):
     """del l[150] removes the right element from a 200-element list."""
-    h = hfp
     src = (
         'l = []\n'
         'i = 0\n'
@@ -224,9 +208,8 @@ def test_list_del_past_127(hfp):
     assert tp._eval(h, src, max_steps=20_000_000) == 151
 
 
-def test_list_del_decrements_len_past_127(hfp):
+def test_list_del_decrements_len_past_127(h):
     """After del at idx>127, len drops by exactly 1."""
-    h = hfp
     src = (
         'l = []\n'
         'i = 0\n'
@@ -239,206 +222,206 @@ def test_list_del_decrements_len_past_127(hfp):
     assert tp._eval(h, src, max_steps=20_000_000) == 199
 
 
-def test_long_string_literal_past_byte_cap(hfp):
+def test_long_string_literal_past_byte_cap(h):
     """A string literal of 300 chars survives the lexer (was truncated at 255).
     The lexer's _lgts_decode/copy loops used to be byte-only."""
     long_lit = '"' + 'K' * 300 + '"'
     src = f'LEN({long_lit})'
-    assert tp._eval(hfp, src) == 300
+    assert tp._eval(h, src) == 300
 
 
 # --- string methods on 300-char inputs --------------------------------------
 
-def test_str_upper_long(hfp):
+def test_str_upper_long(h):
     """str.upper on a 300-char string folds every letter, returns len 300."""
     src = 'LEN(("abc" * 100).UPPER())'
-    assert tp._eval(hfp, src) == 300
+    assert tp._eval(h, src) == 300
 
 
-def test_str_upper_long_first_byte(hfp):
+def test_str_upper_long_first_byte(h):
     """str.upper preserves position 0 ('a' → 'A' = 0x41)."""
     src = '("abc" * 100).UPPER()[0]'
-    assert tp._eval(hfp, src) == 0x41   # 'A'
+    assert tp._eval(h, src) == 0x41   # 'A'
 
 
-def test_str_upper_long_byte_past_127(hfp):
+def test_str_upper_long_byte_past_127(h):
     """str.upper output at idx > 127 must hold the upper-cased byte."""
     src = '("abc" * 100).UPPER()[200]'
     # cycle: pos 200 → pos%3 = 2 → 'c' → 'C' = 0x43
-    assert tp._eval(hfp, src) == 0x43
+    assert tp._eval(h, src) == 0x43
 
 
-def test_str_lower_long(hfp):
+def test_str_lower_long(h):
     """str.lower on a 300-char string returns len 300."""
     src = 'LEN(("ABC" * 100).LOWER())'
-    assert tp._eval(hfp, src) == 300
+    assert tp._eval(h, src) == 300
 
 
-def test_str_lower_long_byte_past_127(hfp):
+def test_str_lower_long_byte_past_127(h):
     """str.lower output at idx > 127 — byte 200 = pos%3=2 = 'C' → 'c' = 0x63."""
     src = '("ABC" * 100).LOWER()[200]'
-    assert tp._eval(hfp, src) == 0x63
+    assert tp._eval(h, src) == 0x63
 
 
-def test_str_find_long_haystack(hfp):
+def test_str_find_long_haystack(h):
     """find a needle past the byte boundary in a 300-char string."""
     src = '("a" * 200 + "needle").FIND("needle")'
-    assert tp._eval(hfp, src) == 200
+    assert tp._eval(h, src) == 200
 
 
-def test_str_find_with_start_past_127(hfp):
+def test_str_find_with_start_past_127(h):
     """find with start arg past the byte boundary (200) finds match at 250."""
     src = '("X" * 250 + "Y").FIND("Y", 200)'
-    assert tp._eval(hfp, src) == 250
+    assert tp._eval(h, src) == 250
 
 
-def test_str_find_with_end_past_127(hfp):
+def test_str_find_with_end_past_127(h):
     """find with end arg past the byte boundary still searches up to it."""
     src = '("X" * 250 + "Y").FIND("Y", 0, 251)'
-    assert tp._eval(hfp, src) == 250
+    assert tp._eval(h, src) == 250
 
 
-def test_str_find_with_end_excludes_match_past_127(hfp):
+def test_str_find_with_end_excludes_match_past_127(h):
     """end_excl past 127 still excludes the match exactly at end."""
     src = '("X" * 250 + "Y").FIND("Y", 0, 250)'
-    assert tp._eval(hfp, src) == -1
+    assert tp._eval(h, src) == -1
 
 
-def test_str_replace_many_matches(hfp):
+def test_str_replace_many_matches(h):
     """Replace with > 127 matches — match counter must be word-wide."""
     src = 'LEN(("a" * 300).REPLACE("a", "BC"))'
     # 300 single-char matches, each replaced by 2 chars → 600 bytes
-    assert tp._eval(hfp, src, max_steps=10_000_000) == 600
+    assert tp._eval(h, src, max_steps=10_000_000) == 600
 
 
-def test_str_replace_long_input_grows(hfp):
+def test_str_replace_long_input_grows(h):
     """Replace shrinks the string by the right amount on long input."""
     src = 'LEN(("abc" * 100).REPLACE("b", ""))'
     # 100 matches deleted; result is 200 chars
-    assert tp._eval(hfp, src, max_steps=10_000_000) == 200
+    assert tp._eval(h, src, max_steps=10_000_000) == 200
 
 
-def test_str_split_many_segments(hfp):
+def test_str_split_many_segments(h):
     """Split producing > 127 segments — segment-count must be word-wide."""
     src = 'LEN(("a, " * 200 + "end").SPLIT(", "))'
     # 200 separators → 201 segments
-    assert tp._eval(hfp, src, max_steps=10_000_000) == 201
+    assert tp._eval(h, src, max_steps=10_000_000) == 201
 
 
-def test_str_split_long_segment(hfp):
+def test_str_split_long_segment(h):
     """A single segment longer than 256 — segment-length math must be word-wide."""
     src = 'LEN(("a" * 300 + "," + "b" * 50).SPLIT(","))'
     # Two segments — verify count
-    assert tp._eval(hfp, src) == 2
+    assert tp._eval(h, src) == 2
 
 
-def test_str_split_first_long_segment_byte_count(hfp):
+def test_str_split_first_long_segment_byte_count(h):
     """The first 300-byte segment from split has length 300, not 44."""
     src = 'LEN(("a" * 300 + "," + "b" * 50).SPLIT(",")[0])'
-    assert tp._eval(hfp, src) == 300
+    assert tp._eval(h, src) == 300
 
 
-def test_str_startswith_long_prefix(hfp):
+def test_str_startswith_long_prefix(h):
     """startswith with a prefix that crosses the byte boundary works."""
     src = '("a" * 250).STARTSWITH("a" * 200)'
-    assert tp._eval(hfp, src) == 1
+    assert tp._eval(h, src) == 1
 
 
-def test_str_startswith_long_prefix_mismatch(hfp):
+def test_str_startswith_long_prefix_mismatch(h):
     """startswith returns False when the prefix differs at byte 200."""
     src = '("a" * 199 + "b" + "a" * 50).STARTSWITH("a" * 200)'
-    assert tp._eval(hfp, src) == 0
+    assert tp._eval(h, src) == 0
 
 
-def test_str_endswith_long_suffix(hfp):
+def test_str_endswith_long_suffix(h):
     """endswith with a suffix > 127 works."""
     src = '("a" * 250).ENDSWITH("a" * 200)'
-    assert tp._eval(hfp, src) == 1
+    assert tp._eval(h, src) == 1
 
 
-def test_str_endswith_long_suffix_mismatch(hfp):
+def test_str_endswith_long_suffix_mismatch(h):
     """endswith returns False when the suffix differs."""
     src = '("a" * 199 + "b" + "a" * 50).ENDSWITH("a" * 200)'
-    assert tp._eval(hfp, src) == 0
+    assert tp._eval(h, src) == 0
 
 
-def test_str_isalpha_long(hfp):
+def test_str_isalpha_long(h):
     """isalpha on a 300-letter string returns True."""
     src = '("a" * 300).ISALPHA()'
-    assert tp._eval(hfp, src) == 1
+    assert tp._eval(h, src) == 1
 
 
-def test_str_isalpha_long_with_late_digit(hfp):
+def test_str_isalpha_long_with_late_digit(h):
     """isalpha returns False when a digit appears past the byte boundary."""
     src = '("a" * 200 + "1" + "a" * 50).ISALPHA()'
-    assert tp._eval(hfp, src) == 0
+    assert tp._eval(h, src) == 0
 
 
-def test_str_isdigit_long(hfp):
+def test_str_isdigit_long(h):
     """isdigit on a 300-digit string returns True."""
     src = '("5" * 300).ISDIGIT()'
-    assert tp._eval(hfp, src) == 1
+    assert tp._eval(h, src) == 1
 
 
-def test_str_isdigit_long_with_late_letter(hfp):
+def test_str_isdigit_long_with_late_letter(h):
     """isdigit returns False when a letter appears past the byte boundary."""
     src = '("5" * 200 + "x" + "5" * 50).ISDIGIT()'
-    assert tp._eval(hfp, src) == 0
+    assert tp._eval(h, src) == 0
 
 
-def test_str_concat_past_byte_cap(hfp):
+def test_str_concat_past_byte_cap(h):
     """Concatenating two strings whose sum exceeds 255 chars yields full word len."""
     src = 'LEN("a" * 200 + "b" * 100)'
-    assert tp._eval(hfp, src) == 300
+    assert tp._eval(h, src) == 300
 
 
-def test_str_concat_byte_at_join(hfp):
+def test_str_concat_byte_at_join(h):
     """The byte right at the join boundary holds the second operand's first byte."""
     src = '("a" * 200 + "b" * 100)[200]'
-    assert tp._eval(hfp, src) == 0x62   # 'b'
+    assert tp._eval(h, src) == 0x62   # 'b'
 
 
-def test_str_index_past_127(hfp):
+def test_str_index_past_127(h):
     """Indexing a 300-char string at position 200 returns the right byte."""
     # "0123456789" * 30: pos 200 → 200 % 10 = 0 → '0' = 0x30
     src = '("0123456789" * 30)[200]'
-    assert tp._eval(hfp, src) == 0x30
+    assert tp._eval(h, src) == 0x30
 
 
-def test_str_in_long_haystack(hfp):
+def test_str_in_long_haystack(h):
     """`needle in long_str` finds a match past the byte boundary."""
     src = '"needle" IN ("X" * 250 + "needle")'
-    assert tp._eval(hfp, src) == 1
+    assert tp._eval(h, src) == 1
 
 
-def test_str_in_long_haystack_no_match(hfp):
+def test_str_in_long_haystack_no_match(h):
     """`needle in long_str` returns False when no match exists."""
     src = '"needle" IN ("X" * 300)'
-    assert tp._eval(hfp, src) == 0
+    assert tp._eval(h, src) == 0
 
 
 # --- 300-element list -------------------------------------------------------
 
-def test_list_repeat_300_indexing_past_127(hfp):
+def test_list_repeat_300_indexing_past_127(h):
     """[1,2,3]*100 has 300 elements; indexing at 250 follows the cycle."""
     src = '([1,2,3] * 100)[250]'
     # 250 % 3 = 1 → element 1 = 2
-    assert tp._eval(hfp, src) == 2
+    assert tp._eval(h, src) == 2
 
 
-def test_list_concat_long(hfp):
+def test_list_concat_long(h):
     """list_a + list_b past the byte boundary preserves total length."""
     src = 'LEN([1] * 200 + [2] * 100)'
-    assert tp._eval(hfp, src) == 300
+    assert tp._eval(h, src) == 300
 
 
-def test_list_concat_byte_at_join(hfp):
+def test_list_concat_byte_at_join(h):
     """list-concat boundary element is the first of the right operand."""
     src = '([1] * 200 + [2] * 100)[200]'
-    assert tp._eval(hfp, src) == 2
+    assert tp._eval(h, src) == 2
 
 
-def test_list_in_long(hfp):
+def test_list_in_long(h):
     """`x in long_list` finds a match past the byte boundary."""
     src = (
         'l = []\n'
@@ -448,30 +431,30 @@ def test_list_in_long(hfp):
         '    i = i + 1\n'
         '180 IN l'
     )
-    assert tp._eval(hfp, src, max_steps=20_000_000) == 1
+    assert tp._eval(h, src, max_steps=20_000_000) == 1
 
 
-def test_list_eq_distinguishes_long_lists(hfp):
+def test_list_eq_distinguishes_long_lists(h):
     """Two 200-element lists differing only past byte 127 compare unequal."""
     src = (
         'a = [0] * 200\n'
         'b = [0] * 199 + [1]\n'
         'a == b'
     )
-    assert tp._eval(hfp, src, max_steps=20_000_000) == 0
+    assert tp._eval(h, src, max_steps=20_000_000) == 0
 
 
-def test_list_eq_long_equal(hfp):
+def test_list_eq_long_equal(h):
     """Two identical 200-element lists compare equal."""
     src = (
         'a = [7] * 200\n'
         'b = [7] * 200\n'
         'a == b'
     )
-    assert tp._eval(hfp, src, max_steps=20_000_000) == 1
+    assert tp._eval(h, src, max_steps=20_000_000) == 1
 
 
-def test_list_for_loop_count_past_127(hfp):
+def test_list_for_loop_count_past_127(h):
     """Iterate a 200-element list and count elements seen."""
     src = (
         'l = []\n'
@@ -484,10 +467,10 @@ def test_list_for_loop_count_past_127(hfp):
         '    c = c + 1\n'
         'c'
     )
-    assert tp._eval(hfp, src, max_steps=50_000_000) == 200
+    assert tp._eval(h, src, max_steps=50_000_000) == 200
 
 
-def test_list_insert_past_127(hfp):
+def test_list_insert_past_127(h):
     """list.insert at idx > 127 places item correctly."""
     src = (
         'l = []\n'
@@ -498,10 +481,10 @@ def test_list_insert_past_127(hfp):
         'l.INSERT(150, 999)\n'
         'l[150]'
     )
-    assert tp._eval(hfp, src, max_steps=20_000_000) == 999
+    assert tp._eval(h, src, max_steps=20_000_000) == 999
 
 
-def test_list_insert_increments_len_past_127(hfp):
+def test_list_insert_increments_len_past_127(h):
     """After insert at idx > 127, len grows by exactly 1."""
     src = (
         'l = []\n'
@@ -512,46 +495,46 @@ def test_list_insert_increments_len_past_127(hfp):
         'l.INSERT(150, 999)\n'
         'LEN(l)'
     )
-    assert tp._eval(hfp, src, max_steps=20_000_000) == 201
+    assert tp._eval(h, src, max_steps=20_000_000) == 201
 
 
 # --- 300-element tuple ------------------------------------------------------
 
-def test_tuple_repeat_300_len(hfp):
+def test_tuple_repeat_300_len(h):
     """(1,2,3)*100 has 300 elements."""
     src = 'LEN((1,2,3) * 100)'
-    assert tp._eval(hfp, src) == 300
+    assert tp._eval(h, src) == 300
 
 
-def test_tuple_repeat_300_indexing_past_127(hfp):
+def test_tuple_repeat_300_indexing_past_127(h):
     """((1,2,3)*100)[250] follows the 3-cycle: 250%3=1 → 2."""
     src = '((1,2,3) * 100)[250]'
-    assert tp._eval(hfp, src) == 2
+    assert tp._eval(h, src) == 2
 
 
-def test_tuple_eq_distinguishes_long_tuples(hfp):
+def test_tuple_eq_distinguishes_long_tuples(h):
     """Two 300-element tuples differing past byte 127 compare unequal."""
     src = (
         'a = (1,) * 300\n'
         'b = (1,) * 299 + (2,)\n'
         'a == b'
     )
-    assert tp._eval(hfp, src, max_steps=20_000_000) == 0
+    assert tp._eval(h, src, max_steps=20_000_000) == 0
 
 
-def test_tuple_eq_long_equal(hfp):
+def test_tuple_eq_long_equal(h):
     """Two identical 300-element tuples compare equal."""
     src = (
         'a = (5,) * 300\n'
         'b = (5,) * 300\n'
         'a == b'
     )
-    assert tp._eval(hfp, src, max_steps=20_000_000) == 1
+    assert tp._eval(h, src, max_steps=20_000_000) == 1
 
 
 # --- 300-entry dict ---------------------------------------------------------
 
-# Dict tests use the `h` fixture (full ~30 KB heap, no BASIC ROM) — `hfp`'s
+# Dict tests use the `h` fixture (full ~30 KB heap, no BASIC ROM) — `h`'s
 # handle table at $A000 leaves only ~6 KB and a 300-entry dict (key+val ints
 # + pair tuples + handles) doesn't fit there.
 
@@ -746,21 +729,21 @@ def test_range_for_loop_descending(h):
 
 def test_range_no_args_is_arity_error(h):
     """range() panics ERR_ARITY."""
-    h.rs_push(tp.place_str(h, 0x8500, list(b"RANGE()")))
+    h.rs_push(tp.place_str(h, 0x8800, list(b"RANGE()")))
     h.call("parser_eval", expect_panic=True, max_steps=2_000_000)
     assert h.mpu.memory[0x27] == 0x06   # ERR_ARITY
 
 
 def test_range_four_args_is_arity_error(h):
     """range(0, 1, 2, 3) panics ERR_ARITY."""
-    h.rs_push(tp.place_str(h, 0x8500, list(b"RANGE(0, 1, 2, 3)")))
+    h.rs_push(tp.place_str(h, 0x8800, list(b"RANGE(0, 1, 2, 3)")))
     h.call("parser_eval", expect_panic=True, max_steps=2_000_000)
     assert h.mpu.memory[0x27] == 0x06   # ERR_ARITY
 
 
 def test_range_string_arg_is_type_error(h):
     """range('hi') panics ERR_TYPE."""
-    h.rs_push(tp.place_str(h, 0x8500, list(b'RANGE("hi")')))
+    h.rs_push(tp.place_str(h, 0x8800, list(b'RANGE("hi")')))
     h.call("parser_eval", expect_panic=True, max_steps=2_000_000)
     assert h.mpu.memory[0x27] == 0x05   # ERR_TYPE
 

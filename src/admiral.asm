@@ -180,6 +180,9 @@ boot:
 panic_break:
     lda #ERR_BREAK
     .byte $2C
+panic_task:
+    lda #ERR_TASK
+    .byte $2C
 panic_arity:
     lda #ERR_ARITY
     .byte $2C
@@ -445,6 +448,12 @@ irq_handler:
     and #$80                          // keep only bit 7 → $80 if pressed, 0 if not
     sta STOP_REQUESTED
 
+    // Preemptive multitasking time-slice: request a task switch at the next
+    // statement boundary. task_switch no-ops when task 0 is the only active
+    // task, so this is harmless in the single-task REPL. ~60 Hz granularity.
+    lda #1
+    sta TASK_SWITCH_PENDING
+
     jsr KERNAL_SCNKEY                 // populate $0277 buffer for kbd_getchar
 
     // F8 = "peek at the text REPL" toggle. KERNAL just decoded shift state and
@@ -623,14 +632,14 @@ _nmi_save:
     lda #$20
     sta $0400+9
 
-    // FS_END = $8C00, RS_END = $9000 (literals — defined in stacks.asm but
+    // FS_END = $9400, RS_END = $9800 (literals — defined in stacks.asm but
     // .const forward refs from admiral.asm can't resolve at this point in the
     // single-segment build; the real defs live there for everyone else).
     sec
     lda #$00
     sbc FSP
     sta W0
-    lda #$8C
+    lda #$94
     sbc FSP+1
     sta W0+1
     ldx #10
@@ -642,7 +651,7 @@ _nmi_save:
     lda #$00
     sbc RSP
     sta W0
-    lda #$90
+    lda #$98
     sbc RSP+1
     sta W0+1
     ldx #15

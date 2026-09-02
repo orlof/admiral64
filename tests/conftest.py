@@ -110,7 +110,7 @@ ERR_TYPE = 0x05
 ERR_ARITY = 0x06
 
 # Heap region bounds (must stay in sync with src/defs.asm).
-HEAP_DATA_START = 0x9000
+HEAP_DATA_START = 0x9800
 HEAP_HANDLE_START = 0xFFF8
 
 # C64 BASIC ROM image (8 KB, mapped at $A000-$BFFF when bit 0 of $01 is set).
@@ -879,6 +879,7 @@ def h(built) -> Harness:
     harness.call("_heap_apply")  # sets HEAP_TOP from GFX_CONFIG (0 → $FFF8 text)
     harness.call("alloc_init")
     harness.call("rnd_init")
+    harness.call("task_init")
     return harness
 
 
@@ -915,6 +916,7 @@ def hfp(built) -> Harness:
     harness.call("_heap_apply")  # sets HEAP_TOP from GFX_CONFIG (0 → $FFF8 text)
     harness.call("alloc_init")
     harness.call("rnd_init")
+    harness.call("task_init")
     # Move handle area below BASIC ROM so allocations don't trample ROM bytes
     # in the py65 image. NEXT_HANDLE = $A000 → first handle at $9FF8.
     harness.write_word(0x20, 0xA000)  # NEXT_HANDLE — must match defs.asm
@@ -946,6 +948,7 @@ def hd(built) -> Harness:
     harness.call("_heap_apply")  # sets HEAP_TOP from GFX_CONFIG (0 → $FFF8 text)
     harness.call("alloc_init")
     harness.call("rnd_init")
+    harness.call("task_init")
     return harness
 
 

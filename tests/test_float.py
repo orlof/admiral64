@@ -147,7 +147,7 @@ def test_alloc_value_is_zero(hfp):
 
 def test_unpack_to_fac1_one(hfp):
     """Hand-place 1.0, call _fp_unpack_to_fac1 with W2 = payload pointer."""
-    f = place_python_float(hfp, 0x8500, 1.0)
+    f = place_python_float(hfp, 0x8800, 1.0)
     obj = hfp.read_word(f + H_PTR)
     hfp.write_word(0x14, obj + O_HEADER)  # W2 = payload pointer
     hfp.call("_fp_unpack_to_fac1")
@@ -161,7 +161,7 @@ def test_unpack_to_fac1_one(hfp):
 
 
 def test_unpack_to_fac1_neg_one(hfp):
-    f = place_python_float(hfp, 0x8500, -1.0)
+    f = place_python_float(hfp, 0x8800, -1.0)
     obj = hfp.read_word(f + H_PTR)
     hfp.write_word(0x14, obj + O_HEADER)
     hfp.call("_fp_unpack_to_fac1")
@@ -171,7 +171,7 @@ def test_unpack_to_fac1_neg_one(hfp):
 
 
 def test_unpack_to_fac1_zero(hfp):
-    f = place_python_float(hfp, 0x8500, 0.0)
+    f = place_python_float(hfp, 0x8800, 0.0)
     obj = hfp.read_word(f + H_PTR)
     hfp.write_word(0x14, obj + O_HEADER)
     hfp.call("_fp_unpack_to_fac1")
@@ -181,7 +181,7 @@ def test_unpack_to_fac1_zero(hfp):
 
 
 def test_unpack_to_fac2_one(hfp):
-    f = place_python_float(hfp, 0x8500, 1.0)
+    f = place_python_float(hfp, 0x8800, 1.0)
     obj = hfp.read_word(f + H_PTR)
     hfp.write_word(0x14, obj + O_HEADER)
     hfp.call("_fp_unpack_to_fac2")
@@ -199,9 +199,9 @@ def test_pack_from_fac1_round_trip_one(hfp):
     hfp.mpu.memory[FAC1 + 4] = 0x00
     hfp.mpu.memory[FAC1 + 5] = 0x00
     # Destination buffer at $6000 — we'll just compare 5 bytes
-    hfp.write_word(0x14, 0x8500)
+    hfp.write_word(0x14, 0x8800)
     hfp.call("_fp_pack_from_fac1")
-    assert hfp.read_bytes(0x8500, 5) == [0x81, 0x00, 0x00, 0x00, 0x00]
+    assert hfp.read_bytes(0x8800, 5) == [0x81, 0x00, 0x00, 0x00, 0x00]
 
 
 def test_pack_from_fac1_neg_one(hfp):
@@ -210,9 +210,9 @@ def test_pack_from_fac1_neg_one(hfp):
     hfp.mpu.memory[FAC1 + 5] = 0xFF  # negative
     for off in (2, 3, 4):
         hfp.mpu.memory[FAC1 + off] = 0
-    hfp.write_word(0x14, 0x8500)
+    hfp.write_word(0x14, 0x8800)
     hfp.call("_fp_pack_from_fac1")
-    assert hfp.read_bytes(0x8500, 5) == [0x81, 0x80, 0x00, 0x00, 0x00]
+    assert hfp.read_bytes(0x8800, 5) == [0x81, 0x80, 0x00, 0x00, 0x00]
 
 
 def test_pack_from_fac1_zero_canonical(hfp):
@@ -223,9 +223,9 @@ def test_pack_from_fac1_zero_canonical(hfp):
     hfp.mpu.memory[FAC1 + 3] = 0xEF
     hfp.mpu.memory[FAC1 + 4] = 0x12
     hfp.mpu.memory[FAC1 + 5] = 0xFF
-    hfp.write_word(0x14, 0x8500)
+    hfp.write_word(0x14, 0x8800)
     hfp.call("_fp_pack_from_fac1")
-    assert hfp.read_bytes(0x8500, 5) == [0, 0, 0, 0, 0]
+    assert hfp.read_bytes(0x8800, 5) == [0, 0, 0, 0, 0]
 
 
 # --- int_to_float ------------------------------------------------------------
@@ -233,7 +233,7 @@ def test_pack_from_fac1_zero_canonical(hfp):
 
 def run_int_to_float(hfp, payload: list[int]) -> float:
     rsp_initial = hfp.rsp
-    x = place_int(hfp, 0x8500, payload)
+    x = place_int(hfp, 0x8800, payload)
     hfp.rs_push(x)
     hfp.call("int_to_float")
     assert hfp.rsp == rsp_initial, "int_to_float violated stack discipline"
@@ -305,7 +305,7 @@ def test_int_to_float_million(hfp):
 
 def run_float_to_int(hfp, value: float) -> list[int]:
     rsp_initial = hfp.rsp
-    f = place_python_float(hfp, 0x8500, value)
+    f = place_python_float(hfp, 0x8800, value)
     hfp.rs_push(f)
     hfp.call("float_to_int")
     assert hfp.rsp == rsp_initial, "float_to_int violated stack discipline"
@@ -357,7 +357,7 @@ def _decode_signed_le(bs: list[int]) -> int:
 
 def test_float_to_int_2_to_31(hfp):
     """2³¹ wraps to INT_MIN in fixed 32-bit (low 32 bits, signed)."""
-    f = place_python_float(hfp, 0x8500, 2_147_483_648.0)
+    f = place_python_float(hfp, 0x8800, 2_147_483_648.0)
     hfp.rs_push(f)
     hfp.call("float_to_int")
     bs = read_int(hfp, hfp.read_word(RV))
@@ -366,7 +366,7 @@ def test_float_to_int_2_to_31(hfp):
 
 def test_float_to_int_neg_2_to_31(hfp):
     """-2³¹ = -2147483648 — fits exactly as 4-byte signed."""
-    f = place_python_float(hfp, 0x8500, -2_147_483_648.0)
+    f = place_python_float(hfp, 0x8800, -2_147_483_648.0)
     hfp.rs_push(f)
     hfp.call("float_to_int")
     bs = read_int(hfp, hfp.read_word(RV))
@@ -375,7 +375,7 @@ def test_float_to_int_neg_2_to_31(hfp):
 
 def test_float_to_int_2_to_32(hfp):
     """2³² wraps to 0 (low 32 bits are all zero)."""
-    f = place_python_float(hfp, 0x8500, 4_294_967_296.0)
+    f = place_python_float(hfp, 0x8800, 4_294_967_296.0)
     hfp.rs_push(f)
     hfp.call("float_to_int")
     bs = read_int(hfp, hfp.read_word(RV))
@@ -384,7 +384,7 @@ def test_float_to_int_2_to_32(hfp):
 
 def test_float_to_int_neg_3_billion(hfp):
     """|x| > 2³¹ wraps mod 2³²: -3e9 → 1294967296."""
-    f = place_python_float(hfp, 0x8500, -3_000_000_000.0)
+    f = place_python_float(hfp, 0x8800, -3_000_000_000.0)
     hfp.rs_push(f)
     hfp.call("float_to_int")
     bs = read_int(hfp, hfp.read_word(RV))
@@ -393,7 +393,7 @@ def test_float_to_int_neg_3_billion(hfp):
 
 def test_float_to_int_one_e_12(hfp):
     """1e12 wraps to its low 32 bits, interpreted signed."""
-    f = place_python_float(hfp, 0x8500, 1e12)
+    f = place_python_float(hfp, 0x8800, 1e12)
     hfp.rs_push(f)
     hfp.call("float_to_int")
     bs = read_int(hfp, hfp.read_word(RV))
@@ -405,7 +405,7 @@ def test_float_to_int_one_e_12(hfp):
 
 def test_float_to_int_just_below_overflow(hfp):
     """2³¹ - 1 — exact in MS-Basic format (within 32 mantissa bits)."""
-    f = place_python_float(hfp, 0x8500, 2_147_483_647.0)
+    f = place_python_float(hfp, 0x8800, 2_147_483_647.0)
     hfp.rs_push(f)
     hfp.call("float_to_int")
     bs = read_int(hfp, hfp.read_word(RV))
@@ -449,7 +449,7 @@ def test_float_to_int_round_trip_small(hfp):
             payload = bs
         # int → float
         rsp = hfp.rsp
-        x = place_int(hfp, 0x8500, payload)
+        x = place_int(hfp, 0x8800, payload)
         hfp.rs_push(x)
         hfp.call("int_to_float")
         f_handle = hfp.read_word(RV)
@@ -479,7 +479,7 @@ def test_float_to_int_round_trip_small(hfp):
 
 def run_binop(hfp, op_label: str, left: float, right: float) -> float:
     rsp_initial = hfp.rsp
-    a = place_python_float(hfp, 0x8500, left)
+    a = place_python_float(hfp, 0x8800, left)
     b = place_python_float(hfp, 0x9100, right)
     hfp.rs_push(a)
     hfp.rs_push(b)
@@ -580,7 +580,7 @@ def test_div_two_negatives(hfp):
 
 def test_div_by_zero_panics(hfp):
     rsp_initial = hfp.rsp
-    a = place_python_float(hfp, 0x8500, 1.0)
+    a = place_python_float(hfp, 0x8800, 1.0)
     b = place_python_float(hfp, 0x9100, 0.0)
     hfp.rs_push(a)
     hfp.rs_push(b)
@@ -601,7 +601,7 @@ def test_div_one_third_close(hfp):
 
 def run_neg(hfp, value: float) -> float:
     rsp_initial = hfp.rsp
-    f = place_python_float(hfp, 0x8500, value)
+    f = place_python_float(hfp, 0x8800, value)
     hfp.rs_push(f)
     hfp.call("float_neg")
     assert hfp.rsp == rsp_initial
@@ -630,7 +630,7 @@ def test_neg_pi(hfp):
 
 def run_cmp(hfp, left: float, right: float) -> int:
     rsp_initial = hfp.rsp
-    a = place_python_float(hfp, 0x8500, left)
+    a = place_python_float(hfp, 0x8800, left)
     b = place_python_float(hfp, 0x9100, right)
     hfp.rs_push(a)
     hfp.rs_push(b)
@@ -673,7 +673,7 @@ def test_cmp_neg_two_lt_neg_one(hfp):
 
 def test_cmp_close_values(hfp):
     """Bit-exact compare — two slightly different values are not equal."""
-    a = place_python_float(hfp, 0x8500, 1.0)
+    a = place_python_float(hfp, 0x8800, 1.0)
     b = place_python_float(hfp, 0x9100, 1.0 + 1e-7)
     hfp.rs_push(a)
     hfp.rs_push(b)
@@ -687,7 +687,7 @@ def test_cmp_close_values(hfp):
 
 def run_to_str(hfp, value: float) -> str:
     rsp_initial = hfp.rsp
-    f = place_python_float(hfp, 0x8500, value)
+    f = place_python_float(hfp, 0x8800, value)
     hfp.rs_push(f)
     hfp.call("float_to_str")
     assert hfp.rsp == rsp_initial
@@ -745,32 +745,32 @@ def run_val_eq(hfp, a: int, b: int) -> int:
 
 
 def test_val_eq_same_handle(hfp):
-    f = place_python_float(hfp, 0x8500, 1.0)
+    f = place_python_float(hfp, 0x8800, 1.0)
     assert run_val_eq(hfp, f, f) == 1
 
 
 def test_val_eq_distinct_handles_same_value(hfp):
-    a = place_python_float(hfp, 0x8500, 1.0)
+    a = place_python_float(hfp, 0x8800, 1.0)
     b = place_python_float(hfp, 0x9100, 1.0)
     assert run_val_eq(hfp, a, b) == 1
 
 
 def test_val_eq_different_values(hfp):
-    a = place_python_float(hfp, 0x8500, 1.0)
+    a = place_python_float(hfp, 0x8800, 1.0)
     b = place_python_float(hfp, 0x9100, 2.0)
     assert run_val_eq(hfp, a, b) == 0
 
 
 def test_val_eq_int_vs_float_no_promotion(hfp):
     """Cross-type INT vs FLOAT: not equal (no promotion in v1)."""
-    i = place_int(hfp, 0x8500, [0x01])
+    i = place_int(hfp, 0x8800, [0x01])
     f = place_python_float(hfp, 0x9100, 1.0)
     assert run_val_eq(hfp, i, f) == 0
 
 
 def test_val_eq_float_zero_vs_static(hfp):
     """A freshly-placed 0.0 byte-equals FLOAT_ZERO."""
-    f = place_python_float(hfp, 0x8500, 0.0)
+    f = place_python_float(hfp, 0x8800, 0.0)
     fz = hfp.sym["FLOAT_ZERO"]
     assert run_val_eq(hfp, f, fz) == 1
 
@@ -786,26 +786,26 @@ def run_val_cmp(hfp, a: int, b: int) -> int:
 
 
 def test_val_cmp_floats_lt(hfp):
-    a = place_python_float(hfp, 0x8500, 1.0)
+    a = place_python_float(hfp, 0x8800, 1.0)
     b = place_python_float(hfp, 0x9100, 2.0)
     assert run_val_cmp(hfp, a, b) == 0xFF
 
 
 def test_val_cmp_floats_gt(hfp):
-    a = place_python_float(hfp, 0x8500, 2.0)
+    a = place_python_float(hfp, 0x8800, 2.0)
     b = place_python_float(hfp, 0x9100, 1.0)
     assert run_val_cmp(hfp, a, b) == 1
 
 
 def test_val_cmp_floats_eq(hfp):
-    a = place_python_float(hfp, 0x8500, 1.0)
+    a = place_python_float(hfp, 0x8800, 1.0)
     b = place_python_float(hfp, 0x9100, 1.0)
     assert run_val_cmp(hfp, a, b) == 0
 
 
 def test_val_cmp_int_vs_float_orders_by_type_tag(hfp):
     """No cross-type promotion: TYPE_INT ($20) < TYPE_FLOAT ($27)."""
-    i = place_int(hfp, 0x8500, [0x02])
+    i = place_int(hfp, 0x8800, [0x02])
     f = place_python_float(hfp, 0x9100, 1.0)
     # i is "less" because $20 < $27.
     assert run_val_cmp(hfp, i, f) == 0xFF
@@ -879,7 +879,7 @@ def test_float_one_static_type(hfp):
 def test_chained_ops(hfp):
     """(2 + 3) * (10 - 6) = 20"""
     rsp_initial = hfp.rsp
-    a = place_python_float(hfp, 0x8500, 2.0)
+    a = place_python_float(hfp, 0x8800, 2.0)
     b = place_python_float(hfp, 0x9100, 3.0)
     hfp.rs_push(a)
     hfp.rs_push(b)

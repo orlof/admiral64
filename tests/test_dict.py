@@ -99,7 +99,7 @@ def test_dict_alloc_is_empty(h):
 def test_get_missing_returns_none(h):
     d = h.alloc_dict()
     none_addr = h.sym["NONE"]
-    key = place_int(h, 0x8500, [0x42])
+    key = place_int(h, 0x8800, [0x42])
     assert call_dict_get(h, d, key) == none_addr
 
 
@@ -128,7 +128,7 @@ def test_set_then_get_with_static_key(h):
     """Static-handle keys also work — handle identity short-circuits val_cmp."""
     d = h.alloc_dict()
     int_1 = h.sym["INT_1"]
-    value = place_int(h, 0x8500, [0xAB])
+    value = place_int(h, 0x8800, [0xAB])
     call_dict_set(h, d, int_1, value)
     assert call_dict_get(h, d, int_1) == value
 
@@ -139,7 +139,7 @@ def test_set_then_get_with_static_key(h):
 def test_inserts_keep_keys_sorted(h):
     """Dict keeps keys sorted internally regardless of insertion order."""
     d = h.alloc_dict()
-    k3 = place_int(h, 0x8500, [0x03])
+    k3 = place_int(h, 0x8800, [0x03])
     k1 = place_int(h, 0x9100, [0x01])
     k2 = place_int(h, 0x9200, [0x02])
     v3 = place_int(h, 0x9300, [0xC3])
@@ -157,7 +157,7 @@ def test_inserts_keep_keys_sorted(h):
 
 def test_get_after_multi_insert(h):
     d = h.alloc_dict()
-    k1 = place_int(h, 0x8500, [0x01])
+    k1 = place_int(h, 0x8800, [0x01])
     k2 = place_int(h, 0x9100, [0x02])
     k3 = place_int(h, 0x9200, [0x03])
     v1 = place_int(h, 0x9300, [0xA1])
@@ -178,7 +178,7 @@ def test_get_after_multi_insert(h):
 
 def test_update_existing_key_does_not_grow(h):
     d = h.alloc_dict()
-    k = place_int(h, 0x8500, [0x42])
+    k = place_int(h, 0x8800, [0x42])
     v1 = place_int(h, 0x9100, [0x01])
     v2 = place_int(h, 0x9200, [0x02])
 
@@ -196,7 +196,7 @@ def test_update_existing_key_does_not_grow(h):
 
 def test_string_keys_sorted_lexicographically(h):
     d = h.alloc_dict()
-    apple = place_str(h, 0x8500, [ord(c) for c in "apple"])
+    apple = place_str(h, 0x8800, [ord(c) for c in "apple"])
     banana = place_str(h, 0x9100, [ord(c) for c in "banana"])
     cherry = place_str(h, 0x9200, [ord(c) for c in "cherry"])
     v1 = place_int(h, 0x9300, [1])
@@ -221,7 +221,7 @@ def test_bool_keys(h):
     d = h.alloc_dict()
     true_addr = h.sym["TRUE"]
     false_addr = h.sym["FALSE"]
-    v1 = place_int(h, 0x8500, [1])
+    v1 = place_int(h, 0x8800, [1])
     v2 = place_int(h, 0x9100, [2])
 
     call_dict_set(h, d, true_addr, v1)
@@ -238,7 +238,7 @@ def test_bool_keys(h):
 
 def test_tuple_keys(h):
     d = h.alloc_dict()
-    a = place_int(h, 0x8500, [0x01])
+    a = place_int(h, 0x8800, [0x01])
     b = place_int(h, 0x9100, [0x02])
     c = place_int(h, 0x9200, [0x03])
     k_ab = place_tuple(h, 0x9300, [a, b])
@@ -262,7 +262,7 @@ def test_mixed_type_keys(h):
     """val_cmp falls back to type-tag order for cross-type keys.
     TYPE_INT < TYPE_STR < TYPE_BOOL < TYPE_TUPLE numerically."""
     d = h.alloc_dict()
-    int_key = place_int(h, 0x8500, [0x05])
+    int_key = place_int(h, 0x8800, [0x05])
     str_key = place_str(h, 0x9100, [ord("z")])
     bool_key = h.sym["TRUE"]
     a = place_int(h, 0x9200, [1])
@@ -287,7 +287,7 @@ def test_mixed_type_keys(h):
 
 def test_del_removes_key(h):
     d = h.alloc_dict()
-    k1 = place_int(h, 0x8500, [0x01])
+    k1 = place_int(h, 0x8800, [0x01])
     k2 = place_int(h, 0x9100, [0x02])
     k3 = place_int(h, 0x9200, [0x03])
     v1 = place_int(h, 0x9300, [0xA1])
@@ -310,7 +310,7 @@ def test_del_removes_key(h):
 
 def test_del_missing_is_noop(h):
     d = h.alloc_dict()
-    k1 = place_int(h, 0x8500, [0x01])
+    k1 = place_int(h, 0x8800, [0x01])
     v1 = place_int(h, 0x9100, [0xA1])
     call_dict_set(h, d, k1, v1)
 
@@ -355,7 +355,7 @@ def test_many_inserts_stay_sorted(h):
 def test_val_eq_equal_dicts(h):
     d1 = h.alloc_dict()
     d2 = h.alloc_dict()
-    k1 = place_int(h, 0x8500, [0x01])
+    k1 = place_int(h, 0x8800, [0x01])
     v1 = place_int(h, 0x9100, [0xA1])
     k2 = place_int(h, 0x9200, [0x02])
     v2 = place_int(h, 0x9300, [0xA2])
@@ -376,7 +376,7 @@ def test_val_eq_equal_dicts(h):
 def test_val_eq_dicts_differ_in_value(h):
     d1 = h.alloc_dict()
     d2 = h.alloc_dict()
-    k = place_int(h, 0x8500, [0x01])
+    k = place_int(h, 0x8800, [0x01])
     v_a = place_int(h, 0x9100, [0xA1])
     v_b = place_int(h, 0x9200, [0xA2])
 
