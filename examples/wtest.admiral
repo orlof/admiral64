@@ -1,6 +1,7 @@
-# WTEST - windowing smoke test. Prints a rising counter inside a window;
-# the window scrolls within its own border. LOAD("WTEST")() to run.
-# (Infinite loop — RUN/STOP to break, or spawn it: SPAWN(LOAD("WTEST")).)
+# WTEST - WINDOWING SMOKE TEST. PRINTS A RISING COUNTER INSIDE A
+# WINDOW; THE WINDOW SCROLLS WITHIN ITS OWN BORDER.
+#   LOAD("WTEST")()          RUN IT (RUN/STOP TO BREAK), OR
+#   SPAWN(LOAD("WTEST"))     RUN IT AS A BACKGROUND TASK.
 W = WINDOW(10, 5, 20, 6, "TEST")
 T = 0
 WHILE TRUE:
