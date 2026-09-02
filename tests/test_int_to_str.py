@@ -19,7 +19,7 @@ def run_to_str(h, payload_bytes: list[int], max_steps: int = 100_000) -> list[in
     """Place an int with the given payload, call int_to_str, return the
     resulting string's payload bytes."""
     rsp_initial = h.rsp
-    x = place_int(h, 0x8900, payload_bytes)
+    x = place_int(h, 0x8A00, payload_bytes)
     h.rs_push(x)
     h.call("int_to_str", max_steps=max_steps)
     assert h.rsp == rsp_initial, (
@@ -32,7 +32,7 @@ def run_to_str(h, payload_bytes: list[int], max_steps: int = 100_000) -> list[in
 def run_to_str_and_handle(h, payload_bytes: list[int]) -> tuple[list[int], int]:
     """Like run_to_str but also returns the string handle address (for callers
     that want to check H_TYPE etc.)."""
-    x = place_int(h, 0x8900, payload_bytes)
+    x = place_int(h, 0x8A00, payload_bytes)
     h.rs_push(x)
     h.call("int_to_str")
     handle = h.read_word(RV)

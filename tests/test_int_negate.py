@@ -8,7 +8,7 @@ from test_int_add import place_int, read_int
 
 def run_negate(h, a_bytes: list[int]) -> list[int]:
     rsp_initial = h.rsp
-    a = place_int(h, 0x8900, a_bytes)
+    a = place_int(h, 0x8A00, a_bytes)
     h.rs_push(a)
     h.call("int_negate")
     assert h.rsp == rsp_initial, "int_negate violated stack discipline"

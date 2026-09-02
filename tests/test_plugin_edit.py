@@ -75,7 +75,7 @@ def test_edit_wrong_arg_type_panics(he):
     """edit(123) panics ERR_TYPE."""
     from conftest import ERROR_CODE_ZP, ERR_TYPE
     payload = list((LOADE + 'E(123)').encode("ascii"))
-    handle = place_str(he, 0x8900, payload)
+    handle = place_str(he, 0x8A00, payload)
     he.rs_push(handle)
     with pytest.raises(Exception):
         he.call("parser_eval", max_steps=2_000_000)

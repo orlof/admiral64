@@ -445,8 +445,31 @@ irq_handler:
     sta $DC00                         // PRA = select row 7
     lda $DC01                         // PRB pin state
     eor #$FF                          // invert: pressed-bit becomes 1
-    and #$80                          // keep only bit 7 → $80 if pressed, 0 if not
+    tax                               // X = pressed bits (bit7=STOP, bit5=C=)
+    and #$80                          // keep only bit 7 → $80 if pressed
     sta STOP_REQUESTED
+
+    // C= (Commodore) key tap cycles keyboard focus between tasks. Edge-
+    // detected (rising) and gated on the screen lock being clear (so EDIT,
+    // which is modal, isn't disturbed). bit 5 of the row-7 read = C= key.
+    txa
+    and #$20                          // C= pressed now?
+    tax
+    beq _irq_cbm_up
+    lda CBM_LAST
+    bne _irq_cbm_done                 // still held → no repeat
+    lda WM_FLAGS
+    and #$02                          // screen locked (EDIT)?
+    bne _irq_cbm_held                 // locked → don't switch, but latch
+    jsr task_focus_next
+_irq_cbm_held:
+    lda #$FF
+    sta CBM_LAST
+    jmp _irq_cbm_done
+_irq_cbm_up:
+    lda #0
+    sta CBM_LAST
+_irq_cbm_done:
 
     // Preemptive multitasking time-slice: request a task switch at the next
     // statement boundary. task_switch no-ops when task 0 is the only active

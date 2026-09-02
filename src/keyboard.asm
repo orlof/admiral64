@@ -27,6 +27,13 @@ kbd_getchar:
                                      // restart (if any) succeeded
     preamble_args(0, 0)
 kbd_getchar_spin:
+    // Only the focused task reads the keyboard; others yield and wait.
+    lda ts_cur
+    cmp TASK_FOCUS
+    beq _kgc_read
+    jsr task_switch
+    jmp kbd_getchar_spin
+_kgc_read:
     // Steady-state $01 = MEM_NORMAL ($34). Two INCs → $36 (KERNAL+I/O in)
     // for the GETIN call; two DECs back to $34.
     inc $01

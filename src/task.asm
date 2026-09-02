@@ -71,6 +71,12 @@ t_wmcur_hi:   .fill MAX_TASKS, 0
 // Preemption flag: set by the IRQ, checked (and cleared) at parser_stmt.
 TASK_SWITCH_PENDING: .byte 0
 
+// Keyboard focus: the task index whose kbd_getchar/GETC may read keys. Other
+// tasks' input waits (yields) until focused. Cycled by the C= (Commodore)
+// key via the IRQ. CBM_LAST latches the key level for edge detection.
+TASK_FOCUS: .byte 0
+CBM_LAST:   .byte 0
+
 // -----------------------------------------------------------------------------
 // task_init — boot: task 0 = the running REPL; others free.
 // -----------------------------------------------------------------------------
@@ -78,6 +84,8 @@ task_init:
     lda #0
     sta ts_cur
     sta TASK_SWITCH_PENDING
+    sta TASK_FOCUS
+    sta CBM_LAST
     ldx #MAX_TASKS-1
     lda #0
 _ti_clear:
@@ -86,6 +94,28 @@ _ti_clear:
     bpl _ti_clear
     lda #1
     sta t_state+0
+    rts
+
+// -----------------------------------------------------------------------------
+// task_focus_next — advance keyboard focus to the next active task (wraps).
+// Byte-only, IRQ-safe. Leaf.
+// -----------------------------------------------------------------------------
+task_focus_next:
+    ldx TASK_FOCUS
+    ldy #MAX_TASKS
+_tfn_loop:
+    inx
+    cpx #MAX_TASKS
+    bcc !+
+    ldx #0
+!:
+    lda t_state,x
+    bne _tfn_done
+    dey
+    bne _tfn_loop
+    ldx TASK_FOCUS                   // no other active task
+_tfn_done:
+    stx TASK_FOCUS
     rts
 
 // -----------------------------------------------------------------------------
@@ -283,6 +313,12 @@ task_exit:
     sta t_state,x
     jsr ts_pick_next                 // X = another active task (task 0 at worst)
     stx ts_target
+    // If the dying task held focus, hand it to the surviving target.
+    lda ts_cur
+    cmp TASK_FOCUS
+    bne !+
+    stx TASK_FOCUS
+!:
     jsr ts_load_target_zp
     sei
     ldx ts_target

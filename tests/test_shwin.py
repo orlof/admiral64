@@ -41,7 +41,7 @@ def test_shwin_opens_shell_window_in_bottom_right(hs):
     h = hs
     _stub_getin_queue(h, bytes([0] * 60))          # empty polls: shell INPUT yields
     src = 'SPAWN(LOAD("SHWIN"))\nX=0\nWHILE X<50:\n X=X+1'
-    handle = place_str(h, 0x8900, list(src.encode("ascii")))
+    handle = place_str(h, 0x8A00, list(src.encode("ascii")))
     h.rs_push(handle)
     sentinel = 0xFFFE
     h.mpu.memory[0x0100 + h.mpu.sp] = (sentinel >> 8) & 0xFF

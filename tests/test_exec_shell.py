@@ -59,7 +59,7 @@ def test_exec_from_function_writes_root_scope(h):
 def test_exec_type_panics(h):
     from conftest import ERR_TYPE
     payload = list('EXEC(123)'.encode("ascii"))
-    handle = place_str(h, 0x8900, payload)
+    handle = place_str(h, 0x8A00, payload)
     h.rs_push(handle)
     with pytest.raises(Exception):
         h.call("parser_eval", max_steps=2_000_000)
@@ -92,7 +92,7 @@ def _run_shell(h, shell_record, keys: bytes, steps=40_000_000):
     h.kernal_mock.files[b"SHELL"] = shell_record
     _stub_getin_queue(h, keys)
     src = 'SHELL = LOAD("SHELL")\nSHELL()'
-    handle = place_str(h, 0x8900, list(src.encode("ascii")))
+    handle = place_str(h, 0x8A00, list(src.encode("ascii")))
     h.rs_push(handle)
     sentinel = 0xFFFE
     h.mpu.memory[0x0100 + h.mpu.sp] = (sentinel >> 8) & 0xFF

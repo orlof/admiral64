@@ -2094,6 +2094,13 @@ _bgc_spin:
     // Interactive wait → any pending shell-restart guard is satisfied.
     lda #0
     sta repl_shell_retry
+    // Only the focused task reads the keyboard; others yield and wait.
+    lda ts_cur
+    cmp TASK_FOCUS
+    beq _bgc_read
+    jsr task_switch
+    jmp _bgc_spin
+_bgc_read:
     inc $01                            // $34 → $35 → $36 (KERNAL+I/O in)
     inc $01
     jsr KERNAL_GETIN

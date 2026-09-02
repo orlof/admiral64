@@ -83,7 +83,7 @@ def test_roundtrip_through_str_and_int(h):
 def test_div_by_zero_still_panics(h):
     from conftest import ERROR_CODE_ZP
     from test_str import place_str
-    handle = place_str(h, 0x8900, list(b"5 // 0"))
+    handle = place_str(h, 0x8A00, list(b"5 // 0"))
     h.rs_push(handle)
     h.call("parser_eval", expect_panic=True, max_steps=2_000_000)
     assert h.mpu.memory[ERROR_CODE_ZP] == 0x02  # ERR_DIV_ZERO

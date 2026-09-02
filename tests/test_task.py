@@ -23,7 +23,7 @@ def scr(h, col, row):
 
 def run(h, src, max_steps=15_000_000):
     from test_str import place_str
-    handle = place_str(h, 0x8900, list(src.encode("ascii")))
+    handle = place_str(h, 0x8A00, list(src.encode("ascii")))
     h.rs_push(handle)
     h.call("parser_eval", max_steps=max_steps)
 
@@ -112,7 +112,7 @@ def test_spawn_all_slots_then_full_errors(h):
     from conftest import ERROR_CODE_ZP
     body = 'WHILE 1:\\n  YIELD()'          # never exits → keeps its slot
     src = (f'SPAWN("{body}")\nSPAWN("{body}")\nSPAWN("{body}")\nSPAWN("{body}")')
-    handle = place_str(h, 0x8900, list(src.encode("ascii")))
+    handle = place_str(h, 0x8A00, list(src.encode("ascii")))
     h.rs_push(handle)
     with _pt.raises(Exception):
         h.call("parser_eval", max_steps=8_000_000)
@@ -126,7 +126,7 @@ def test_preemption_switches_at_statement_boundary(h):
     from test_str import place_str
     src = ('SPAWN("CURSOR(0,13)\\nPRINT \\"P\\"")\n'
            'i = 0\nWHILE i < 150:\n  i = i + 1')
-    handle = place_str(h, 0x8900, list(src.encode("ascii")))
+    handle = place_str(h, 0x8A00, list(src.encode("ascii")))
     h.rs_push(handle)
     pend = h.sym["TASK_SWITCH_PENDING"]
     sentinel = 0xFFFE
@@ -155,7 +155,7 @@ def test_getc_yields_to_task_while_waiting(hd):
     _stub_getin_queue(hd, bytes([0, 0, 0, 0, 0, ord("X")]))
     src = ('SPAWN("CURSOR(0,14)\\nPRINT \\"Y\\"")\n'
            'GETC()')
-    handle = place_str(hd, 0x8900, list(src.encode("ascii")))
+    handle = place_str(hd, 0x8A00, list(src.encode("ascii")))
     hd.rs_push(handle)
     hd.call("parser_eval", max_steps=15_000_000)
     assert scr(hd, 0, 14) == 0x19       # 'Y' — task ran during the GETC wait
@@ -177,3 +177,38 @@ def test_each_task_writes_to_its_own_window(h):
     # A's cell must NOT hold main's 'Y' and vice versa (no cross-write).
     assert scr(h, 3, 3) != 0x19
     assert scr(h, 21, 3) != 0x18
+
+
+def test_only_focused_task_reads_keyboard(hd):
+    # Focus gates the keyboard: task 0 (REPL) is focused at boot; a spawned
+    # task's GETC must NOT steal keys — it yields until focused. Here the
+    # spawned task loops GETC-ing into a screen cell; with focus on task 0
+    # it should read NOTHING even though keys are queued for task 0.
+    from test_parser import _stub_getin_queue
+    from test_str import place_str
+    _stub_getin_queue(hd, bytes([ord("A"), ord("B"), ord("C"), 0, 0, 0]))
+    # Task tries to GETC and mark row 15; main GETCs 3 keys (it is focused).
+    src = ('SPAWN("K = GETC()\\nCURSOR(0,15)\\nPRINT K")\n'
+           'A = GETC()\nB = GETC()\nC = GETC()\n'
+           'CURSOR(0,16)\nPRINT A')
+    handle = place_str(hd, 0x8A00, list(src.encode("ascii")))
+    hd.rs_push(handle)
+    hd.call("parser_eval", max_steps=20_000_000)
+    # Main (focused) got 'A'; the task never read (row 15 still blank).
+    assert scr(hd, 0, 16) == 0x01       # 'A' read by focused main
+    assert scr(hd, 0, 15) == 0x00       # task read nothing (unfocused)
+
+
+def test_focus_cycle_hands_keyboard_to_task(h):
+    # task_focus_next moves focus to the next active task; then that task's
+    # GETC reads while the (now unfocused) main would yield.
+    from test_parser import _stub_getin_queue
+    from test_str import place_str
+    _stub_getin_queue(h, bytes([ord("Z"), 0, 0]))
+    src = 'SPAWN("K = GETC()\\nCURSOR(0,17)\\nPRINT K")\nYIELD()'
+    handle = place_str(h, 0x8A00, list(src.encode("ascii")))
+    h.rs_push(handle)
+    # Simulate a C= tap: hand focus to task 1 before running.
+    h.mpu.memory[h.sym["TASK_FOCUS"]] = 1
+    h.call("parser_eval", max_steps=20_000_000)
+    assert scr(h, 0, 17) == 0x1A        # 'Z' read by the now-focused task

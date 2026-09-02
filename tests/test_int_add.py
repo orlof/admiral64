@@ -65,7 +65,7 @@ def read_int(h, handle_addr: int) -> list[int]:
 def run_add(h, a_bytes: list[int], b_bytes: list[int]) -> list[int]:
     """Invoke int_add via V3' ABI: args on RS, result in RV."""
     rsp_initial = h.rsp
-    a = place_int(h, 0x8900, a_bytes)
+    a = place_int(h, 0x8A00, a_bytes)
     b = place_int(h, 0x9100, b_bytes)
     h.rs_push(a)
     h.rs_push(b)

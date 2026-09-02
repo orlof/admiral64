@@ -84,14 +84,14 @@ def call_assign_panics(h, target: int, value: int, error_code: int) -> None:
 
 def test_alloc_ref_sets_type_tag(h):
     receiver = h.alloc_dict()
-    name = place_str(h, 0x8900, [0x41])
+    name = place_str(h, 0x8A00, [0x41])
     ref = call_alloc_ref(h, receiver, name)
     assert h.mpu.memory[ref + H_TYPE] == TYPE_REF
 
 
 def test_alloc_ref_payload_holds_receiver_and_name(h):
     receiver = h.alloc_dict()
-    name = place_str(h, 0x8900, [0x42])
+    name = place_str(h, 0x8A00, [0x42])
     ref = call_alloc_ref(h, receiver, name)
     assert read_tuple_slot(h, ref, 0) == receiver
     assert read_tuple_slot(h, ref, 1) == name
@@ -99,7 +99,7 @@ def test_alloc_ref_payload_holds_receiver_and_name(h):
 
 def test_alloc_ref_o_len_is_two(h):
     receiver = h.alloc_dict()
-    name = place_str(h, 0x8900, [0x43])
+    name = place_str(h, 0x8A00, [0x43])
     ref = call_alloc_ref(h, receiver, name)
     obj = h.read_word(ref + H_PTR)
     assert h.read_word(obj + O_LEN) == 2
@@ -110,14 +110,14 @@ def test_alloc_ref_o_len_is_two(h):
 
 def test_alloc_sub_sets_type_tag(h):
     container = h.alloc_list(0)
-    index = place_int(h, 0x8900, [0x00])
+    index = place_int(h, 0x8A00, [0x00])
     sub = call_alloc_sub(h, container, index)
     assert h.mpu.memory[sub + H_TYPE] == TYPE_SUB
 
 
 def test_alloc_sub_payload_holds_container_and_index(h):
     container = h.alloc_list(0)
-    index = place_int(h, 0x8900, [0x05])
+    index = place_int(h, 0x8A00, [0x05])
     sub = call_alloc_sub(h, container, index)
     assert read_tuple_slot(h, sub, 0) == container
     assert read_tuple_slot(h, sub, 1) == index
@@ -129,7 +129,7 @@ def test_alloc_sub_payload_holds_container_and_index(h):
 def test_assign_name_binds_in_scope(h):
     """assign(name_str, value) should call scope_set, binding name → value."""
     scope = setup_global_scope(h)
-    name = place_str(h, 0x8900, [0x78])  # "x"
+    name = place_str(h, 0x8A00, [0x78])  # "x"
     value = place_int(h, 0x8C00, [0x42])
 
     call_assign(h, name, value)
@@ -140,7 +140,7 @@ def test_assign_name_binds_in_scope(h):
 
 def test_assign_name_overwrites_existing(h):
     scope = setup_global_scope(h)
-    name = place_str(h, 0x8900, [0x79])  # "y"
+    name = place_str(h, 0x8A00, [0x79])  # "y"
     v1 = place_int(h, 0x8C00, [0x01])
     v2 = place_int(h, 0x8C40, [0x02])
 
@@ -156,7 +156,7 @@ def test_assign_ref_writes_to_receiver_dict(h):
     """assign(REF(d, "k"), v) → d["k"] = v."""
     receiver = h.alloc_dict()
     h.rs_push(receiver)  # root across alloc_ref
-    name = place_str(h, 0x8900, [0x6B])  # "k"
+    name = place_str(h, 0x8A00, [0x6B])  # "k"
     value = place_int(h, 0x8C00, [0x99])
 
     ref = call_alloc_ref(h, receiver, name)
@@ -172,7 +172,7 @@ def test_assign_ref_writes_to_receiver_dict(h):
 def test_assign_sub_list_writes_at_index(h):
     """assign(SUB(list, 1), v) → list[1] = v."""
     # Build a 3-element list [a, b, c].
-    a = place_int(h, 0x8900, [0x0A])
+    a = place_int(h, 0x8A00, [0x0A])
     b = place_int(h, 0x8C00, [0x0B])
     c = place_int(h, 0x8C40, [0x0C])
     lst = h.alloc_list(3)
@@ -202,7 +202,7 @@ def test_assign_sub_dict_inserts_pair(h):
     """assign(SUB(dict, key), value) → dict[key] = value."""
     d = h.alloc_dict()
     h.rs_push(d)
-    key = place_str(h, 0x8900, [0x6B])
+    key = place_str(h, 0x8A00, [0x6B])
     value = place_int(h, 0x8C00, [0x33])
     sub = call_alloc_sub(h, d, key)
     h.rs_push(sub)
@@ -216,14 +216,14 @@ def test_assign_sub_dict_inserts_pair(h):
 
 def test_assign_panics_on_unsupported_target_type(h):
     """An int as target → ERR_TYPE."""
-    target = place_int(h, 0x8900, [0x00])
+    target = place_int(h, 0x8A00, [0x00])
     value = place_int(h, 0x8C00, [0x01])
     call_assign_panics(h, target, value, ERR_TYPE)
 
 
 def test_assign_sub_panics_on_unsupported_container(h):
     """SUB(int, ...) is nonsensical — assign should ERR_TYPE."""
-    container = place_int(h, 0x8900, [0x00])
+    container = place_int(h, 0x8A00, [0x00])
     index = place_int(h, 0x8C00, [0x00])
     h.rs_push(container)
     sub = call_alloc_sub(h, container, index)
@@ -239,7 +239,7 @@ def test_assign_sub_panics_on_unsupported_container(h):
 def test_assign_tuple_unpacks_flat(h):
     """assign((x, y), (1, 2)) — both names bound."""
     scope = setup_global_scope(h)
-    nx = place_str(h, 0x8900, [0x78])  # "x"
+    nx = place_str(h, 0x8A00, [0x78])  # "x"
     ny = place_str(h, 0x8C00, [0x79])  # "y"
     target = place_tuple(h, 0x8C40, [nx, ny])
 
@@ -255,7 +255,7 @@ def test_assign_tuple_unpacks_flat(h):
 def test_assign_tuple_value_can_be_list(h):
     """assign((x, y), [1, 2]) — RHS is a list, also accepted."""
     scope = setup_global_scope(h)
-    nx = place_str(h, 0x8900, [0x78])
+    nx = place_str(h, 0x8A00, [0x78])
     ny = place_str(h, 0x8C00, [0x79])
     target = place_tuple(h, 0x8C40, [nx, ny])
 
@@ -274,7 +274,7 @@ def test_assign_tuple_value_can_be_list(h):
 def test_assign_tuple_nested(h):
     """assign((a, (b, c)), (1, (2, 3))) — nested unpack reaches all leaves."""
     scope = setup_global_scope(h)
-    na = place_str(h, 0x8900, [0x61])  # "a"
+    na = place_str(h, 0x8A00, [0x61])  # "a"
     nb = place_str(h, 0x8C00, [0x62])  # "b"
     nc = place_str(h, 0x8C40, [0x63])  # "c"
     inner_tgt = place_tuple(h, 0x8C80, [nb, nc])
@@ -295,7 +295,7 @@ def test_assign_tuple_nested(h):
 def test_assign_tuple_arity_mismatch_panics(h):
     """LHS and RHS must have the same length, else ERR_ARITY."""
     setup_global_scope(h)
-    nx = place_str(h, 0x8900, [0x78])
+    nx = place_str(h, 0x8A00, [0x78])
     ny = place_str(h, 0x8C00, [0x79])
     target = place_tuple(h, 0x8C40, [nx, ny])
 
@@ -310,7 +310,7 @@ def test_assign_tuple_arity_mismatch_panics(h):
 def test_assign_tuple_rhs_must_be_sequence(h):
     """RHS that isn't TYPE_TUPLE/LIST → ERR_TYPE."""
     setup_global_scope(h)
-    nx = place_str(h, 0x8900, [0x78])
+    nx = place_str(h, 0x8A00, [0x78])
     ny = place_str(h, 0x8C00, [0x79])
     target = place_tuple(h, 0x8C40, [nx, ny])
 
@@ -321,7 +321,7 @@ def test_assign_tuple_rhs_must_be_sequence(h):
 def test_assign_mixed_lvalue_kinds(h):
     """assign((name, dict[key]), (v1, v2)) — name lvalue + sub lvalue."""
     scope = setup_global_scope(h)
-    name = place_str(h, 0x8900, [0x78])  # "x"
+    name = place_str(h, 0x8A00, [0x78])  # "x"
 
     d = h.alloc_dict()
     h.rs_push(d)
