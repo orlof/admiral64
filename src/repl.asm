@@ -53,6 +53,15 @@
 .label repl_line_buf   = $033C       // 64 bytes  — ends at $037B
 .label repl_hist_slots = $033C + REPL_LINE_CAP // 130 bytes — ends at $03FD
 
+// --- per-task line-editor state -------------------------------------------
+// These 7 bytes + the 64-byte repl_line_buf at $033C are the in-progress
+// line edit. They are SAVED/RESTORED across task switches (ts_save_cur_zp /
+// ts_load_target_zp in task.asm, via the t_ledit table). Two concurrent
+// shells — the main REPL and a spawned shell's INPUT() — are each parked
+// mid-edit inside _rpl_read_line's kbd_getchar spin; without per-task state
+// they share one buffer and cross-write each other's text and windows. Keep
+// these 7 contiguous and in sync with REPL_LEDIT_N.
+repl_ledit_scalars:
 repl_line_len:    .byte 0
 repl_line_pos:    .byte 0           // cursor index within line, 0..len
 repl_view_shift:  .byte 0           // leftmost visible buffer index (h-scroll)
@@ -60,15 +69,17 @@ repl_base_col:    .byte 0           // screen column where editable text starts
                                     //  (past the prompt); captured at entry
 repl_prompt_last: .byte 0           // screencode shown at base_col-1 when NOT
                                     //  scrolled (the prompt's last cell)
-repl_scroll_tmp:  .byte 0           // h-scroll math scratch
 repl_line_anchor_row: .byte 0       // screen row the prompt lives on
+repl_hist_view:   .byte 0           // recall depth: 0 = current line, 1..count
+.const REPL_LEDIT_N = 7             // bytes of scalar editor state (above)
 
-// History ring. `head` is the index of the newest stored entry; `count`
-// caps at REPL_HIST_SLOTS. `view` walks the recall depth: 0 = the current
-// (in-progress) line, 1..count = history depths back from newest.
+// --- shared editor state ---------------------------------------------------
+repl_scroll_tmp:  .byte 0           // h-scroll math scratch (transient)
+// History ring (SHARED — one unified command history across all shells).
+// `head` is the index of the newest stored entry; `count` caps at
+// REPL_HIST_SLOTS. The per-task `repl_hist_view` above walks recall depth.
 repl_hist_count:  .byte 0
 repl_hist_head:   .byte 0
-repl_hist_view:   .byte 0
 
 // Recovery snapshot — captured ONCE at repl_main entry, after the root scope
 // is allocated and rs_push'd. error_handler restores from these to undo any

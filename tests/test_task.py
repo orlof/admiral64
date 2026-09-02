@@ -212,3 +212,48 @@ def test_focus_cycle_hands_keyboard_to_task(h):
     h.mpu.memory[h.sym["TASK_FOCUS"]] = 1
     h.call("parser_eval", max_steps=20_000_000)
     assert scr(h, 0, 17) == 0x1A        # 'Z' read by the now-focused task
+
+
+def test_line_editor_state_is_per_task(h):
+    """The in-progress line edit (repl_line_buf + anchor/base_col/len) must
+    round-trip per task. Two shells (main REPL + a spawned shell's INPUT) each
+    sit parked mid-edit inside _rpl_read_line; a shared buffer let one clobber
+    the other's anchor row, so the main line 'jumped' into the spawned
+    window. Verify the task switch saves/restores each task's edit state."""
+    LBUF = h.sym["repl_line_buf"]
+    LEN = h.sym["repl_line_len"]
+    ANCHOR = h.sym["repl_line_anchor_row"]
+    BASE = h.sym["repl_base_col"]
+    # Both tasks default to fullscreen (wm_cur_h == 0) so ts_load_target_zp's
+    # wm_reactivate takes the safe no-list path.
+    for slot in range(2):
+        h.mpu.memory[h.sym["t_wmcur_lo"] + slot] = 0
+        h.mpu.memory[h.sym["t_wmcur_hi"] + slot] = 0
+
+    # Task 0 is mid-edit on "MAIN" at anchor row 5, base col 1.
+    h.mpu.memory[ts := h.sym["ts_cur"]] = 0
+    for i, c in enumerate(b"MAIN"):
+        h.mpu.memory[LBUF + i] = c
+    h.mpu.memory[LEN] = 4
+    h.mpu.memory[ANCHOR] = 5
+    h.mpu.memory[BASE] = 1
+    h.call("ts_save_cur_zp")            # -> t_ledit[0]
+
+    # Switch in task 1 (fresh), then edit "SHELL" at anchor row 20, base col 2.
+    h.mpu.memory[h.sym["ts_target"]] = 1
+    h.call("ts_load_target_zp")
+    for i, c in enumerate(b"SHELL"):
+        h.mpu.memory[LBUF + i] = c
+    h.mpu.memory[LEN] = 5
+    h.mpu.memory[ANCHOR] = 20
+    h.mpu.memory[BASE] = 2
+    h.mpu.memory[ts] = 1
+    h.call("ts_save_cur_zp")            # -> t_ledit[1]
+
+    # Switch back to task 0: its edit must be exactly as left, not "SHELL".
+    h.mpu.memory[h.sym["ts_target"]] = 0
+    h.call("ts_load_target_zp")
+    assert bytes(h.mpu.memory[LBUF:LBUF + 4]) == b"MAIN"
+    assert h.mpu.memory[LEN] == 4
+    assert h.mpu.memory[ANCHOR] == 5    # not 20 — the bug's smoking gun
+    assert h.mpu.memory[BASE] == 1

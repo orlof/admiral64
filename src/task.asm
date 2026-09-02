@@ -22,6 +22,7 @@
 //   $C700-$C900  task 2 FS/RS
 //   $C900-$CB00  task 3 FS/RS
 //   $CB00-$CB50  indent-state save[0..3]  (17 B each; lexer indent stack)
+//   $CB50-$CC70  line-editor save[0..3]   (72 B each; repl_line_buf + scalars)
 // -----------------------------------------------------------------------------
 
 #importonce
@@ -62,6 +63,13 @@ t_rs_end_hi:  .byte >$9800, >$C700, >$C900, >$CB00
 // indent_depth 1 = 17 B, contiguous at `indent_stack`). 20 B/slot.
 t_indent_lo:  .byte <$CB00, <$CB14, <$CB28, <$CB3C
 t_indent_hi:  .byte >$CB00, >$CB14, >$CB28, >$CB3C
+// per-task save of the line editor: repl_line_buf (64 B, at $033C) followed
+// by the 7-byte scalar block (repl_ledit_scalars). 72 B/slot at $CB50..$CC6F.
+// Restored so two shells editing lines concurrently don't share one buffer.
+.const T_LEDIT_BUF_N = 64
+.const T_LEDIT_SCAL_N = 7        // = REPL_LEDIT_N (repl.asm); kept in sync
+t_ledit_lo:   .byte <$CB50, <$CB98, <$CBE0, <$CC28
+t_ledit_hi:   .byte >$CB50, >$CB98, >$CBE0, >$CC28
 // per-task saved current-window handle (wm_cur_h). buf/geometry are re-derived
 // from the handle on restore (a GC-moved buffer is handled), so only the
 // handle is saved. 0 = fullscreen (no window).
@@ -182,6 +190,32 @@ _tscz_ind:
     sta ($08),y
     dey
     bpl _tscz_ind
+    // line editor: repl_line_buf(64) + repl_ledit_scalars(7) -> t_ledit[cur]
+    ldx ts_cur
+    lda t_ledit_lo,x
+    sta $08
+    lda t_ledit_hi,x
+    sta $09
+    ldy #T_LEDIT_BUF_N - 1
+_tscz_lbuf:
+    lda repl_line_buf,y
+    sta ($08),y
+    dey
+    bpl _tscz_lbuf
+    // advance pointer past the 64-byte line buffer, then copy the 7 scalars
+    lda $08
+    clc
+    adc #T_LEDIT_BUF_N
+    sta $08
+    bcc !+
+    inc $09
+!:
+    ldy #T_LEDIT_SCAL_N - 1
+_tscz_lsc:
+    lda repl_ledit_scalars,y
+    sta ($08),y
+    dey
+    bpl _tscz_lsc
     // save current-window handle
     ldx ts_cur
     lda wm_cur_h
@@ -225,6 +259,31 @@ _tltz_ind:
     sta indent_stack,y
     dey
     bpl _tltz_ind
+    // t_ledit[target] -> repl_line_buf(64) + repl_ledit_scalars(7)
+    ldx ts_target
+    lda t_ledit_lo,x
+    sta WM_SCR_PTR
+    lda t_ledit_hi,x
+    sta WM_SCR_PTR+1
+    ldy #T_LEDIT_BUF_N - 1
+_tltz_lbuf:
+    lda (WM_SCR_PTR),y
+    sta repl_line_buf,y
+    dey
+    bpl _tltz_lbuf
+    lda WM_SCR_PTR
+    clc
+    adc #T_LEDIT_BUF_N
+    sta WM_SCR_PTR
+    bcc !+
+    inc WM_SCR_PTR+1
+!:
+    ldy #T_LEDIT_SCAL_N - 1
+_tltz_lsc:
+    lda (WM_SCR_PTR),y
+    sta repl_ledit_scalars,y
+    dey
+    bpl _tltz_lsc
     // restore current-window handle and re-derive buf/geometry from it
     ldx ts_target
     lda t_wmcur_lo,x
