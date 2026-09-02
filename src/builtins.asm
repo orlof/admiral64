@@ -2101,7 +2101,10 @@ _bgc_spin:
     dec $01
     dec $01
     pla
-    beq _bgc_spin
+    bne _bgc_got
+    jsr task_switch                    // blocking-call yield to other tasks
+    jmp _bgc_spin
+_bgc_got:
     sta B0
     jsr str_alloc_1_b0
     jmp postamble

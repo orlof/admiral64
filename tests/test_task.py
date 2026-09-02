@@ -144,3 +144,18 @@ def test_preemption_switches_at_statement_boundary(h):
             h.mpu.memory[pend] = 1        # periodic timer tick
         h.mpu.step()
     assert scr(h, 0, 13) == 0x10          # 'P' — task ran with no explicit YIELD
+
+
+def test_getc_yields_to_task_while_waiting(hd):
+    # GETC() spins on an empty keyboard; while waiting it must yield to a
+    # spawned task (blocking-call yield). Queue is empty ($00) for a few
+    # polls, then 'X'. The task prints during the empty polls.
+    from test_parser import _stub_getin_queue
+    from test_str import place_str
+    _stub_getin_queue(hd, bytes([0, 0, 0, 0, 0, ord("X")]))
+    src = ('SPAWN("CURSOR(0,14)\\nPRINT \\"Y\\"")\n'
+           'GETC()')
+    handle = place_str(hd, 0x8800, list(src.encode("ascii")))
+    hd.rs_push(handle)
+    hd.call("parser_eval", max_steps=15_000_000)
+    assert scr(hd, 0, 14) == 0x19       # 'Y' — task ran during the GETC wait

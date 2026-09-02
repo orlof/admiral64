@@ -36,7 +36,13 @@ kbd_getchar_spin:
     dec $01
     dec $01
     pla
-    beq kbd_getchar_spin
+    bne !+
+    // No key: yield to other tasks while we wait (blocking-call yield —
+    // preemption only fires at parser_stmt boundaries, and an idle prompt
+    // has none). task_switch is a cheap no-op when this is the only task.
+    jsr task_switch
+    jmp kbd_getchar_spin
+!:
     jmp postamble                    // postamble preserves A across the restore loop
 
 // -----------------------------------------------------------------------------

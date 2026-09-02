@@ -1,0 +1,8 @@
+# WTEST - windowing smoke test. Prints a rising counter inside a window;
+# the window scrolls within its own border. LOAD("WTEST")() to run.
+# (Infinite loop — RUN/STOP to break, or spawn it: SPAWN(LOAD("WTEST")).)
+W = WINDOW(10, 5, 20, 6, "TEST")
+T = 0
+WHILE TRUE:
+  PRINT T
+  T += 1
