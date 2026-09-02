@@ -65,6 +65,8 @@ BUILTINS = [
     ("ATTR",    "builtin_attr"),
     ("CUR",     "builtin_cur"),
     ("EXEC",    "builtin_exec"),
+    ("SPAWN",   "builtin_spawn"),
+    ("YIELD",   "builtin_yield"),
     ("KEY",     "builtin_key"),
     ("INPUT",   "builtin_input"),
     ("PEEK",    "builtin_peek"),

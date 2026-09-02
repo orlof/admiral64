@@ -48,48 +48,42 @@ gc_mark:
     // gc_mark_phase2 — phase 2 re-enters that label until a clean pass,
     // and re-graying the roots each pass would never converge.
     jsr wm_gc_mark_roots
+    jsr task_gc_mark_all             // every active task's RS is a root set
+    jmp gc_mark_phase2
 
-    lda RSP
-    sta W0
-    lda RSP+1
-    sta W0+1
-
-gc_mark_root_loop:
+// gc_mark_rs_range — gray every non-null handle in RS slots [W0 .. ($0A:$0B)).
+// Leaf; clobbers A, X, Y, W0, W1. (task.asm sets up W0/$0A/$0B per task.)
+gc_mark_rs_range:
+_gmrr_loop:
     sec
     lda W0
-    sbc #<RS_END
+    sbc $0A
     lda W0+1
-    sbc #>RS_END
-    bcs gc_mark_phase2
-
+    sbc $0B
+    bcs _gmrr_done                   // W0 >= end
     ldy #0
     lda (W0),y
     sta W1
     iny
     lda (W0),y
     sta W1+1
-
-    // Null roots are valid placeholders (e.g. _llp_str_call pushes a 0 in
-    // the `me` slot for non-method calls). Skip them — without this guard,
-    // `STA (W1),y` with W1=0 and Y=7 lands on ZP $07 (= FP+1) and silently
-    // corrupts the frame pointer mid-execution.
     lda W1
     ora W1+1
-    beq gc_mark_root_skip
-
+    beq _gmrr_skip                   // null placeholder root
     ldy #H_FLAGS
     lda (W1),y
     ora #FLAG_MARKED|FLAG_GRAY
     sta (W1),y
-
-gc_mark_root_skip:
+_gmrr_skip:
     clc
     lda W0
     adc #2
     sta W0
-    bcc gc_mark_root_loop
+    bcc _gmrr_loop
     inc W0+1
-    jmp gc_mark_root_loop
+    jmp _gmrr_loop
+_gmrr_done:
+    rts
 
     // --- Phase 2: drain gray → black, propagating to children. -----
 gc_mark_phase2:

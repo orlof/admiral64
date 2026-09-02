@@ -108,6 +108,7 @@ boot:
     jsr _heap_apply              // set HEAP_TOP from GFX_CONFIG (before alloc)
     jsr alloc_init
     jsr rnd_init
+    jsr task_init
 
     // Screen must init AFTER the software stacks + heap — print_str runs as
     // a V4' routine and expects FS/RS to be live. BASIC is already banked
@@ -775,6 +776,7 @@ _nmi_nib:
 #import "int_to_str.asm"
 #import "screen.asm"
 #import "wm.asm"
+#import "task.asm"
 #import "keyboard.asm"
 #import "print.asm"
 #import "lexer.asm"
