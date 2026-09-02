@@ -23,7 +23,7 @@ def scr(h, col, row):
 
 def run(h, src, max_steps=15_000_000):
     from test_str import place_str
-    handle = place_str(h, 0x8800, list(src.encode("ascii")))
+    handle = place_str(h, 0x8900, list(src.encode("ascii")))
     h.rs_push(handle)
     h.call("parser_eval", max_steps=max_steps)
 
@@ -112,7 +112,7 @@ def test_spawn_all_slots_then_full_errors(h):
     from conftest import ERROR_CODE_ZP
     body = 'WHILE 1:\\n  YIELD()'          # never exits → keeps its slot
     src = (f'SPAWN("{body}")\nSPAWN("{body}")\nSPAWN("{body}")\nSPAWN("{body}")')
-    handle = place_str(h, 0x8800, list(src.encode("ascii")))
+    handle = place_str(h, 0x8900, list(src.encode("ascii")))
     h.rs_push(handle)
     with _pt.raises(Exception):
         h.call("parser_eval", max_steps=8_000_000)
@@ -126,7 +126,7 @@ def test_preemption_switches_at_statement_boundary(h):
     from test_str import place_str
     src = ('SPAWN("CURSOR(0,13)\\nPRINT \\"P\\"")\n'
            'i = 0\nWHILE i < 150:\n  i = i + 1')
-    handle = place_str(h, 0x8800, list(src.encode("ascii")))
+    handle = place_str(h, 0x8900, list(src.encode("ascii")))
     h.rs_push(handle)
     pend = h.sym["TASK_SWITCH_PENDING"]
     sentinel = 0xFFFE
@@ -155,7 +155,25 @@ def test_getc_yields_to_task_while_waiting(hd):
     _stub_getin_queue(hd, bytes([0, 0, 0, 0, 0, ord("X")]))
     src = ('SPAWN("CURSOR(0,14)\\nPRINT \\"Y\\"")\n'
            'GETC()')
-    handle = place_str(hd, 0x8800, list(src.encode("ascii")))
+    handle = place_str(hd, 0x8900, list(src.encode("ascii")))
     hd.rs_push(handle)
     hd.call("parser_eval", max_steps=15_000_000)
     assert scr(hd, 0, 14) == 0x19       # 'Y' — task ran during the GETC wait
+
+
+def test_each_task_writes_to_its_own_window(h):
+    # The crash fix: current-window is per-task. Task 1 opens window A and
+    # prints into it; main opens window B and prints into it. Neither's output
+    # lands in the other's window (shared global current-window used to cross
+    # them and overflow a heap buffer -> GC JAM).
+    src = ('SPAWN("A = WINDOW(2, 2, 8, 4, \\"A\\")\\nPRINT \\"X\\"")\n'
+           'YIELD()\n'                                   # task: opens A, prints X, exits
+           'B = WINDOW(20, 2, 8, 4, "B")\n'
+           'PRINT "Y"')
+    run(h, src, max_steps=20_000_000)
+    # A interior origin (3,3); X there. B interior origin (21,3); Y there.
+    assert scr(h, 3, 3) == 0x18       # 'X' in task's window A
+    assert scr(h, 21, 3) == 0x19      # 'Y' in main's window B
+    # A's cell must NOT hold main's 'Y' and vice versa (no cross-write).
+    assert scr(h, 3, 3) != 0x19
+    assert scr(h, 21, 3) != 0x18

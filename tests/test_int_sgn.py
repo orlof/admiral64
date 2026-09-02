@@ -7,7 +7,7 @@ from test_int_add import place_int
 
 def run_sgn(h, a_bytes: list[int]) -> int:
     rsp_initial = h.rsp
-    a = place_int(h, 0x8800, a_bytes)
+    a = place_int(h, 0x8900, a_bytes)
     h.rs_push(a)
     h.call("int_sgn")
     assert h.rsp == rsp_initial, "int_sgn violated stack discipline"

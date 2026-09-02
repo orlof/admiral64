@@ -62,6 +62,11 @@ t_rs_end_hi:  .byte >$9800, >$C700, >$C900, >$CB00
 // indent_depth 1 = 17 B, contiguous at `indent_stack`). 20 B/slot.
 t_indent_lo:  .byte <$CB00, <$CB14, <$CB28, <$CB3C
 t_indent_hi:  .byte >$CB00, >$CB14, >$CB28, >$CB3C
+// per-task saved current-window handle (wm_cur_h). buf/geometry are re-derived
+// from the handle on restore (a GC-moved buffer is handled), so only the
+// handle is saved. 0 = fullscreen (no window).
+t_wmcur_lo:   .fill MAX_TASKS, 0
+t_wmcur_hi:   .fill MAX_TASKS, 0
 
 // Preemption flag: set by the IRQ, checked (and cleared) at parser_stmt.
 TASK_SWITCH_PENDING: .byte 0
@@ -145,6 +150,12 @@ _tscz_ind:
     sta ($08),y
     dey
     bpl _tscz_ind
+    // save current-window handle
+    ldx ts_cur
+    lda wm_cur_h
+    sta t_wmcur_lo,x
+    lda wm_cur_h+1
+    sta t_wmcur_hi,x
     rts
 
 ts_load_target_zp:
@@ -182,7 +193,13 @@ _tltz_ind:
     sta indent_stack,y
     dey
     bpl _tltz_ind
-    rts
+    // restore current-window handle and re-derive buf/geometry from it
+    ldx ts_target
+    lda t_wmcur_lo,x
+    sta wm_cur_h
+    lda t_wmcur_hi,x
+    sta wm_cur_h+1
+    jmp wm_reactivate                // (rts from there)
 
 // -----------------------------------------------------------------------------
 // task_switch — round-robin to the next active task; no-op if alone. The HW-
@@ -335,6 +352,32 @@ _tgma_next:
     bne _tgma_loop
     rts
 
+// -----------------------------------------------------------------------------
+// task_set_others_root_window — set the saved current-window of every active
+// task EXCEPT the running one to the ROOT handle (A:X). Called from wm_start:
+// tasks that were fullscreen default to the ROOT console once the WM starts.
+// -----------------------------------------------------------------------------
+task_set_others_root_window:
+    sta _tsorw_lo
+    stx _tsorw_hi
+    ldy #0
+_tsorw_loop:
+    cpy ts_cur
+    beq _tsorw_next
+    lda t_state,y
+    beq _tsorw_next
+    lda _tsorw_lo
+    sta t_wmcur_lo,y
+    lda _tsorw_hi
+    sta t_wmcur_hi,y
+_tsorw_next:
+    iny
+    cpy #MAX_TASKS
+    bne _tsorw_loop
+    rts
+_tsorw_lo: .byte 0
+_tsorw_hi: .byte 0
+
 // =============================================================================
 // Builtins.
 // =============================================================================
@@ -466,6 +509,23 @@ _bsp_hwhi:
     sta $C000,y
     lda #$FD
     sta t_hwsp,x
+
+    // Default current window: the ROOT console if the WM is running, else
+    // fullscreen (0). The task can open its own window with WINDOW().
+    ldx _bsp_slot
+    lda WM_FLAGS
+    lsr
+    bcc _bsp_win0
+    lda wm_root_h
+    sta t_wmcur_lo,x
+    lda wm_root_h+1
+    sta t_wmcur_hi,x
+    jmp _bsp_win_done
+_bsp_win0:
+    lda #0
+    sta t_wmcur_lo,x
+    sta t_wmcur_hi,x
+_bsp_win_done:
 
     // Clean lexer indent state for the fresh task: all zero (depth 0,
     // stack[0]=0). parser_exec/lexer_init will set it up on entry.

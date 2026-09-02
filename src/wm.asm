@@ -636,6 +636,79 @@ _wu_no_writeback:
     jmp postamble_pop_rv             // RV = old; postamble drops [new]
 
 // -----------------------------------------------------------------------------
+// wm_reactivate — set the live output-target statics (wm_buf/w/h/x0/y0/idx/
+// wm_curbuf_h) from the current window handle in wm_cur_h, WITHOUT touching
+// the cursor (SCREEN_ROW/COL are per-task ZP state) and WITHOUT the cursor
+// writeback wm_use does. Used by the task switch to reattach a task to its
+// window (re-derives buf from the handle, so a GC-moved buffer is handled).
+// wm_cur_h == 0 -> fullscreen ($0400, 40x25). Plain subroutine.
+// -----------------------------------------------------------------------------
+wm_reactivate:
+    lda wm_cur_h
+    ora wm_cur_h+1
+    bne _wra_windowed
+    // fullscreen pseudo-window
+    lda #<SCREEN_BASE
+    sta wm_buf
+    lda #>SCREEN_BASE
+    sta wm_buf+1
+    lda #SCREEN_COLS
+    sta wm_w
+    lda #SCREEN_ROWS
+    sta wm_h
+    lda #0
+    sta wm_x0
+    sta wm_y0
+    sta wm_idx
+    rts
+_wra_windowed:
+    lda wm_cur_h
+    sta W0
+    lda wm_cur_h+1
+    sta W0+1
+    jsr wm_find_idx
+    sta wm_idx
+    lda wm_cur_h
+    sta W0
+    lda wm_cur_h+1
+    sta W0+1
+    jsr wm_interior
+    lda wm_ix
+    sta wm_x0
+    lda wm_iy
+    sta wm_y0
+    lda wm_iw
+    sta wm_w
+    lda wm_ih
+    sta wm_h
+    lda wm_cur_h
+    sta W0
+    lda wm_cur_h+1
+    sta W0+1
+    ldx #WMK_BUF
+    jsr wm_dget_x                    // RV = buf handle
+    lda RV
+    sta wm_curbuf_h
+    sta W0
+    lda RV+1
+    sta wm_curbuf_h+1
+    sta W0+1
+    jsr deref_W0_to_W2
+    lda W2
+    sta wm_buf
+    lda W2+1
+    sta wm_buf+1
+    rts
+
+// -----------------------------------------------------------------------------
+// wm_start_set_others_root — when the WM first starts, every OTHER active
+// task (which was fullscreen, wm_cur_h saved as 0) defaults to the ROOT
+// console. Sets their saved wm_cur_h to wm_root_h. Called from wm_start.
+// -----------------------------------------------------------------------------
+wm_start_set_others_root:
+    jmp task_set_others_root_window  // (task.asm; A:X = root handle)
+
+// -----------------------------------------------------------------------------
 // wm_find_idx — A = z-index of the window in W0 within WINDOWS.
 // Panics ERR_TYPE if not found. Plain subroutine (calls V4' list ops).
 //   in: W0 = window dict.  clobbers: A,X,Y,W1-W3 (via list_get); W0 preserved.
@@ -1148,8 +1221,7 @@ wm_start:
     rs_push(W1)
     jsr dict_set
 
-    // WM on, then make ROOT current (wm_use needs the flag for nothing, but
-    // the write-through path needs map_base valid — it is).
+    // WM on, then make ROOT current.
     lda WM_FLAGS
     ora #1
     sta WM_FLAGS
@@ -1158,6 +1230,11 @@ wm_start:
     lda wm_root_h+1
     sta W0+1
     jsr wm_use
+
+    // Every other active task was fullscreen — default it to the ROOT console.
+    lda wm_root_h
+    ldx wm_root_h+1
+    jsr task_set_others_root_window
 
     jmp postamble
 

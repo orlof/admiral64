@@ -729,21 +729,21 @@ def test_range_for_loop_descending(h):
 
 def test_range_no_args_is_arity_error(h):
     """range() panics ERR_ARITY."""
-    h.rs_push(tp.place_str(h, 0x8800, list(b"RANGE()")))
+    h.rs_push(tp.place_str(h, 0x8900, list(b"RANGE()")))
     h.call("parser_eval", expect_panic=True, max_steps=2_000_000)
     assert h.mpu.memory[0x27] == 0x06   # ERR_ARITY
 
 
 def test_range_four_args_is_arity_error(h):
     """range(0, 1, 2, 3) panics ERR_ARITY."""
-    h.rs_push(tp.place_str(h, 0x8800, list(b"RANGE(0, 1, 2, 3)")))
+    h.rs_push(tp.place_str(h, 0x8900, list(b"RANGE(0, 1, 2, 3)")))
     h.call("parser_eval", expect_panic=True, max_steps=2_000_000)
     assert h.mpu.memory[0x27] == 0x06   # ERR_ARITY
 
 
 def test_range_string_arg_is_type_error(h):
     """range('hi') panics ERR_TYPE."""
-    h.rs_push(tp.place_str(h, 0x8800, list(b'RANGE("hi")')))
+    h.rs_push(tp.place_str(h, 0x8900, list(b'RANGE("hi")')))
     h.call("parser_eval", expect_panic=True, max_steps=2_000_000)
     assert h.mpu.memory[0x27] == 0x05   # ERR_TYPE
 

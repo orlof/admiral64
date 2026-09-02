@@ -168,14 +168,14 @@ def test_eof_on_empty_file(hd):
 def _eval_no_result(h, source: str) -> None:
     """Evaluate Admiral source for side effects only (matches test_parser)."""
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x8800, payload)
+    handle = place_str(h, 0x8900, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
 
 
 def _eval_panics_with(h, source: str, expected: int) -> None:
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x8800, payload)
+    handle = place_str(h, 0x8900, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000, expect_panic=True)
     assert h.mpu.memory[ERROR_CODE_ZP] == expected, (
@@ -398,7 +398,7 @@ def test_save_oversized_name_raises_type_err(hd):
 def _eval(h, source: str) -> int:
     """Evaluate Admiral source, return RV decoded as int."""
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x8800, payload)
+    handle = place_str(h, 0x8900, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     return _read_int(h, h.read_word(RV))
@@ -412,7 +412,7 @@ def _read_str_payload(h, handle_addr: int) -> bytes:
 
 def _eval_str(h, source: str) -> bytes:
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x8800, payload)
+    handle = place_str(h, 0x8900, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     return _read_str_payload(h, h.read_word(RV))
@@ -420,7 +420,7 @@ def _eval_str(h, source: str) -> bytes:
 
 def _eval_handle(h, source: str) -> int:
     payload = list(source.encode("ascii"))
-    handle = place_str(h, 0x8800, payload)
+    handle = place_str(h, 0x8900, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=2_000_000)
     return h.read_word(RV)

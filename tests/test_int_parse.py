@@ -34,7 +34,7 @@ def _read_int(h, handle: int) -> int:
     return int.from_bytes(payload, "little", signed=True)
 
 
-def _stage_span(h, text: str, addr: int = 0x8800) -> int:
+def _stage_span(h, text: str, addr: int = 0x8900) -> int:
     """Place raw byte span at addr, set W0 = addr. Returns length."""
     payload = list(text.encode("ascii"))
     for i, b in enumerate(payload):
