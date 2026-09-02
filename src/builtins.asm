@@ -2146,122 +2146,61 @@ _bky_empty:
 //
 // Mirrors Admiral's `built_in_input` (builtin.dasm16:135).
 // =============================================================================
-.const INPUT_CAP = 80
-
+// builtin_input([prompt]) — print the optional prompt, then read one edited
+// line through the shared assembly line editor (_rpl_read_line): cursor keys,
+// history recall, live cursor, WM-aware redraw + horizontal scroll. Returns
+// the line as a TYPE_STR (without the trailing newline).
+//
+// The editor uses the REPL's line buffer + history ring — so a program's
+// INPUT shares the machine's command history. That is exactly right for a
+// shell; harmless for a prompt (empty history, or old commands recalled).
+// Line length caps at REPL_LINE_CAP (64).
 builtin_input:
     preamble_call(0, 1)
 
+    // Print the prompt (if any) so the cursor lands at the text start column.
     lda B7
-    beq _bin_alloc_buf
-
-    // Validate prompt is TYPE_STR; print it.
+    beq _bin_no_prompt
     arg_get(0, W0)
     ldy #H_TYPE
     lda (W0),y
     cmp #TYPE_STR
-    beq _bin_print_prompt
+    beq !+
     jmp panic_type
-_bin_print_prompt:
+!:
     jsr arg0_w0_push
     jsr print_str
+_bin_no_prompt:
 
-_bin_alloc_buf:
-    // Allocate INPUT_CAP-byte STR. We write actual content as we go and trim
-    // O_LEN at the end. Root the handle on RS so GC during the loop (none
-    // expected, but defense in depth) keeps the payload alive.
-    lda #INPUT_CAP
+    // Anchor the editor on the prompt's row; base_col/prompt_last are
+    // captured by _rpl_read_line from the live cursor + screen.
+    lda SCREEN_ROW
+    sta repl_line_anchor_row
+    jsr _rpl_read_line               // fills repl_line_buf / repl_line_len
+
+    // Copy repl_line_buf[0..len) into a fresh TYPE_STR.
+    lda repl_line_len
     sta ALLOC_SIZE
     lda #0
     sta ALLOC_SIZE+1
-    jsr str_alloc
-    rs_push(RV)                    // RS: [..., buf]
-
-    lda #0
-    sta B0                         // B0 = current length
-
-_bin_loop:
-    // Interactive wait → any pending shell-restart guard is satisfied.
-    lda #0
-    sta repl_shell_retry
-    inc $01                            // $34 → $36 (KERNAL+I/O in)
-    inc $01
-    jsr KERNAL_GETIN
-    pha
-    dec $01
-    dec $01
-    pla
-    beq _bin_loop
-
-    cmp #$0D
-    beq _bin_return
-    cmp #$14
-    beq _bin_del
-
-    // Append (if room). Storage is PETSCII uppercase ($41-$5A), which is
-    // exactly what KERNAL_GETIN returns from the keyboard — no fold needed.
-    sta B1                         // save char
-    lda B0
-    cmp #INPUT_CAP
-    bcs _bin_loop                  // full — drop the keypress
-
-    rs_peek(W0)
-    jsr deref_W0_to_W2             // W2 = buf payload
-    ldy B0
-    lda B1
-    sta (W2),y
-    inc B0
-
-    lda B1
-    jsr screen_put_char
-    jmp _bin_loop
-
-_bin_del:
-    lda B0
-    beq _bin_loop                  // empty buffer → ignore DEL
-    dec B0
-
-    // Walk cursor back one cell. At col 0, wrap to previous row's last col.
-    // If already at top-left we just stop walking (rare; the user is wiping
-    // out a multi-line entry from the start).
-    lda SCREEN_COL
-    bne _bin_del_dec_col
-    lda SCREEN_ROW
-    beq _bin_del_blank             // at (0,0) — leave cursor; still blank cell
-    dec SCREEN_ROW
-    lda #SCREEN_COLS - 1
-    sta SCREEN_COL
-    jmp _bin_del_blank
-_bin_del_dec_col:
-    dec SCREEN_COL
-_bin_del_blank:
-    jsr scr_row_offset_to_w2
-    ldy SCREEN_COL
-    lda #$20
-    sta (W2),y
-    jmp _bin_loop
-
-_bin_return:
-    // Trim the buffer's O_LEN to the actual length.
-    rs_peek(W0)
-    ldy #H_PTR
-    lda (W0),y
-    sta W2
-    iny
-    lda (W0),y
-    sta W2+1
-    ldy #O_LEN
-    lda B0
+    jsr str_alloc                    // RV = new STR (may GC; buf is static)
+    rs_push(RV)                      // RS: [args, result]
+    jsr deref_RV_to_W2               // W2 = payload
+    ldy #0
+_bin_copy:
+    cpy repl_line_len
+    bcs _bin_copy_done
+    lda repl_line_buf,y
     sta (W2),y
     iny
-    lda #0
-    sta (W2),y
+    jmp _bin_copy
+_bin_copy_done:
 
-    // Echo the closing newline so subsequent print starts on a fresh row.
+    // Echo the closing newline so subsequent output starts on a fresh row.
     lda #$0D
     jsr screen_put_char
 
-    jmp postamble_peek_rv
-
+    jmp postamble_pop_rv             // RV = result
 
 // =============================================================================
 // Method-style builtins. Receiver is tuple slot 0 — `led_dot` stages

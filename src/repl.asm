@@ -56,6 +56,11 @@
 repl_line_len:    .byte 0
 repl_line_pos:    .byte 0           // cursor index within line, 0..len
 repl_view_shift:  .byte 0           // leftmost visible buffer index (h-scroll)
+repl_base_col:    .byte 0           // screen column where editable text starts
+                                    //  (past the prompt); captured at entry
+repl_prompt_last: .byte 0           // screencode shown at base_col-1 when NOT
+                                    //  scrolled (the prompt's last cell)
+repl_scroll_tmp:  .byte 0           // h-scroll math scratch
 repl_line_anchor_row: .byte 0       // screen row the prompt lives on
 
 // History ring. `head` is the index of the newest stored entry; `count`
@@ -281,6 +286,21 @@ STR_SHELL_CALL_OBJ:
 // UP/DOWN). Calls into screen / kbd routines. No allocation.
 // -----------------------------------------------------------------------------
 _rpl_read_line:
+    // Text starts at the current cursor column (caller printed the prompt);
+    // capture it and the char sitting just left of it (restored as the
+    // non-scrolled indicator cell). Generalizes the old hardcoded 1-col '>'
+    // prompt so INPUT can pass an arbitrary prompt string.
+    lda SCREEN_COL
+    sta repl_base_col
+    beq _rrl_no_prompt
+    lda repl_line_anchor_row
+    sta SCREEN_ROW
+    jsr scr_row_offset_to_w2
+    ldy repl_base_col
+    dey
+    lda (W2),y
+    sta repl_prompt_last
+_rrl_no_prompt:
     lda #0
     sta repl_line_len
     sta repl_line_pos
@@ -495,7 +515,7 @@ _rrl_finish:
     sec
     sbc repl_view_shift
     clc
-    adc #1
+    adc repl_base_col
     cmp wm_w
     bcc !+
     lda wm_w
@@ -527,8 +547,8 @@ _rpl_redraw:
     sta SCREEN_ROW
     jsr scr_row_offset_to_w2         // W2 = target row base (+ WM ptrs)
 
-    // Horizontal scroll: keep the cursor inside the visible text columns
-    // (1 .. wm_w-1). shift <= pos and pos - shift <= wm_w - 2.
+    // Horizontal scroll: keep the cursor inside the text columns
+    // [base_col .. wm_w). textwidth = wm_w - base_col.
     lda repl_view_shift
     cmp repl_line_pos
     bcc !+
@@ -536,30 +556,39 @@ _rpl_redraw:
     lda repl_line_pos                // shift > pos → shift = pos
     sta repl_view_shift
 !:
+    lda wm_w
+    sec
+    sbc repl_base_col
+    sta repl_scroll_tmp              // textwidth
     lda repl_line_pos
     sec
-    sbc repl_view_shift
+    sbc repl_view_shift              // A = cursor's visible offset
+    cmp repl_scroll_tmp
+    bcc !+                           // offset < textwidth → visible
+    // offset >= textwidth → shift = pos - textwidth + 1
+    lda repl_line_pos
     sec
-    sbc wm_w
+    sbc repl_scroll_tmp
     clc
-    adc #2                           // A = (pos-shift) - (wm_w-2)
-    bcc !+
-    beq !+
-    clc
-    adc repl_view_shift              // shift += overflow
+    adc #1
     sta repl_view_shift
 !:
 
-    // Prompt cell: '>' normally, '<' when scrolled (there is hidden text
-    // to the left).
-    ldy #0
+    // Indicator cell at base_col-1: the prompt's last char normally, '<'
+    // when text is scrolled off to the left. Skipped when base_col == 0.
+    lda repl_base_col
+    beq _rrd_after_ind
+    tay
+    dey                              // y = base_col - 1
     lda repl_view_shift
-    beq !+
-    lda #$3C                         // '<'
-    .byte $2C                        // BIT abs — skip the lda below
-!:
-    lda #$3E                         // '>'
+    beq _rrd_ind_prompt
+    lda #$3C                         // '<'  ($3C: petscii == screencode)
+    jmp _rrd_ind_write
+_rrd_ind_prompt:
+    lda repl_prompt_last             // restore the prompt's last cell
+_rrd_ind_write:
     jsr _scr_write_cell
+_rrd_after_ind:
 
     ldx repl_view_shift
 _rrd_loop:
@@ -571,8 +600,9 @@ _rrd_loop:
     txa
     sec
     sbc repl_view_shift
+    clc
+    adc repl_base_col                // y = base_col + (x - shift)
     tay
-    iny                              // y = 1 + (x - shift)
     cpy wm_w
     bcs _rrd_clip                    // ran off the window's right edge
     pla
@@ -587,8 +617,9 @@ _rrd_pad:
     txa                              // x = last painted buffer index
     sec
     sbc repl_view_shift
+    clc
+    adc repl_base_col                // y = first cell to clear
     tay
-    iny                              // y = first cell to clear
     lda #$20                         // screen-code space
 _rrd_pad_loop:
     cpy wm_w
@@ -598,12 +629,12 @@ _rrd_pad_loop:
     bne _rrd_pad_loop                // never wraps to 0 (wm_w <= 40)
 _rrd_pad_done:
 
-    // Cursor at 1 + (pos - shift); the clamp above guarantees it fits.
+    // Cursor at base_col + (pos - shift); the clamp above guarantees it fits.
     lda repl_line_pos
     sec
     sbc repl_view_shift
     clc
-    adc #1
+    adc repl_base_col
     sta SCREEN_COL
     rts
 

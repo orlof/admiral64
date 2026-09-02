@@ -51,6 +51,9 @@ def _drive_read_line(h, keys: list[int], anchor_row: int = 0,
     h.mpu.memory[SCREEN_ROW_ZP] = anchor_row
     h.mpu.memory[SCREEN_COL_ZP] = 1
     h.mpu.memory[sym["repl_line_anchor_row"]] = anchor_row
+    # Mimic repl_loop's printed '>' prompt cell (base_col-1 = 0) so the
+    # editor's indicator-restore sees it.
+    h.mpu.memory[0x0400 + anchor_row * 40 + 0] = 0x3E   # '>'  screencode
 
     # NOTE: don't wipe repl_hist_count/head/view here — tests that pre-seed
     # history via `_save_to_history` must keep that state across this call.

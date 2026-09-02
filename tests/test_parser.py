@@ -4551,16 +4551,15 @@ def test_input_prompt_wrong_type_panics(h):
     assert h.mpu.memory[ERROR_CODE_ZP] == ERR_TYPE
 
 
-def test_input_caps_at_80(h):
-    """Buffer caps at 80 chars; further keystrokes (before RETURN) are dropped."""
+def test_input_caps_at_64(h):
+    """INPUT now uses the shared line editor: cap = REPL_LINE_CAP (64)."""
     _stub_getin_queue(h, b'A' * 90 + b'\r')
     payload = list('LEN(INPUT())'.encode("ascii"))
     handle = place_str(h, 0x8500, payload)
     h.rs_push(handle)
     h.call("parser_eval", max_steps=10_000_000)
     rv = h.read_word(RV)
-    # LEN(...) is an inline int; value = H_PTR(lo16) | H_SIZE(hi16)<<16.
-    assert (h.read_word(rv) | (h.read_word(rv + 2) << 16)) == 80
+    assert (h.read_word(rv) | (h.read_word(rv + 2) << 16)) == 64
 
 
 
@@ -4752,3 +4751,17 @@ def test_print_trailing_comma_suppresses_newline(h):
     h.call("parser_eval", max_steps=2_000_000)
     screen = h.mpu.memory[0x0400:0x0400 + 8]
     assert bytes(screen[:4]) == bytes([0x01, 0x02, 0x03, 0x04])  # ABCD together
+
+
+def test_input_supports_cursor_editing(h):
+    """INPUT routes through the full line editor: cursor-left + insert edits
+    the line instead of storing the cursor byte literally."""
+    CRSR_LEFT = 0x9D
+    # Type "AC", move left once, insert "B" -> "ABC".
+    _stub_getin_queue(h, bytes([ord("A"), ord("C"), CRSR_LEFT, ord("B"), 0x0D]))
+    payload = list('INPUT()'.encode("ascii"))
+    handle = place_str(h, 0x8500, payload)
+    h.rs_push(handle)
+    h.call("parser_eval", max_steps=10_000_000)
+    from test_str import read_str
+    assert bytes(read_str(h, h.read_word(RV))) == b"ABC"
